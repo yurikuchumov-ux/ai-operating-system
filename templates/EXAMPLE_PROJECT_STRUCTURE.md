@@ -1,8 +1,9 @@
 # Пример структуры нового проекта
 
-Рекомендуемая минимальная структура для проекта, созданного из AI Operating System Template Repository:
+Рекомендуемая минимальная структура для проекта, созданного из AI Operating
+System Template Repository:
 
-```
+```text
 new-project/
 ├── README.md                 (из templates/README.md)
 ├── AGENTS.md                  (из templates/AGENTS.md)
