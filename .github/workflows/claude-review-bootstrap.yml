@@ -1,0 +1,50 @@
+name: Claude Review Bootstrap
+
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+  id-token: write
+
+jobs:
+  review:
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out pull request
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - name: Run independent Claude review
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            REPO: ${{ github.repository }}
+            PR NUMBER: ${{ github.event.pull_request.number }}
+
+            Perform an independent review of this pull request.
+
+            Check:
+            - compliance with the linked Issue and declared scope;
+            - whether only intended files changed;
+            - security and absence of secrets;
+            - consistency with existing AI Operating System rules;
+            - whether the change is clear, complete, and non-contradictory.
+
+            Do not modify files, create commits, push, merge, or change repository settings.
+
+            Submit exactly one formal GitHub review:
+            - APPROVE if there are no blocking issues;
+            - REQUEST_CHANGES if blocking issues exist.
+
+            Use `gh pr review` to submit the formal review.
+          claude_args: |
+            --max-turns 6
+            --allowedTools "Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr review:*)"
