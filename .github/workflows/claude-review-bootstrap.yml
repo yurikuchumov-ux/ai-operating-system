@@ -52,15 +52,9 @@ jobs:
           test -n "$OUTPUT"
           verdict=$(printf '%s' "$OUTPUT" | jq -er '.verdict')
           summary=$(printf '%s' "$OUTPUT" | jq -er '.summary')
+          body=$(printf '**Claude independent review: %s**\n\n%s' "$verdict" "$summary")
 
-          case "$verdict" in
-            APPROVE) event=APPROVE ;;
-            REQUEST_CHANGES) event=REQUEST_CHANGES ;;
-            *) echo "Unexpected verdict: $verdict" >&2; exit 1 ;;
-          esac
-
-          jq -n --arg body "$summary" --arg event "$event" \
-            '{body: $body, event: $event}' \
+          jq -n --arg body "$body" '{body: $body, event: "COMMENT"}' \
             | gh api --method POST \
                 -H "Accept: application/vnd.github+json" \
                 "/repos/$REPO/pulls/$PR/reviews" \
