@@ -26,15 +26,16 @@ jobs:
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           github_token: ${{ github.token }}
+          track_progress: true
+          use_sticky_comment: true
           prompt: |
             Independently review PR #11 against Issue #10.
             Read only the PR metadata and diff. Check precedence, tracking/pinned modes,
             compatibility policy, security constraints, contradictions with AI_OS.md,
             and sufficiency for downstream automation. Do not edit files or merge.
-            Post exactly one concise top-level PR comment using gh pr comment.
-            The comment must contain: verdict: APPROVE or REQUEST_CHANGES; findings;
-            and required changes if any.
+            Finish with a concise verdict containing APPROVE or REQUEST_CHANGES,
+            findings, and required changes if any.
           claude_args: |
             --max-turns 4
-            --allowedTools "Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*)"
+            --allowedTools "Bash(gh pr view:*),Bash(gh pr diff:*)"
             --disallowedTools "Edit,Write,NotebookEditCell"
