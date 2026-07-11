@@ -7,6 +7,7 @@ on:
 permissions:
   contents: read
   pull-requests: write
+  issues: write
   id-token: write
 
 jobs:
@@ -23,41 +24,24 @@ jobs:
           persist-credentials: false
 
       - name: Run independent Claude review
-        id: claude
         uses: anthropics/claude-code-action@e90deca47693f9457b72f2b53c17d7c445a87342 # v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ github.token }}
           prompt: |
             Perform an independent review of PR #${{ github.event.pull_request.number }}.
             Check compliance with Issue #8, verify that only AI_OS.md is in the intended final scope,
             confirm existing rules are not weakened, and assess the new Capability Discovery First
             and Automation First principles for clarity, completeness, and contradictions.
+
             Do not modify files, create commits, push, merge, or change repository settings.
-            Return only the requested structured result.
+
+            After completing the review, publish exactly one top-level PR comment using `gh pr comment`.
+            The comment must start with `CLAUDE_REVIEW_RESULT:` and then contain:
+            - `VERDICT: APPROVE` or `VERDICT: REQUEST_CHANGES`;
+            - a concise evidence-based summary;
+            - blocking findings, or `Blocking findings: none`.
           claude_args: |
-            --max-turns 6
-            --allowedTools "Bash(gh pr diff:*),Bash(gh pr view:*)"
+            --max-turns 8
+            --allowedTools "Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr comment:*)"
             --disallowedTools "Edit,Write,NotebookEditCell"
-            --json-schema '{"type":"object","properties":{"verdict":{"type":"string","enum":["APPROVE","REQUEST_CHANGES"]},"summary":{"type":"string"}},"required":["verdict","summary"]}'
-
-      - name: Publish formal GitHub review
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          EXECUTION_FILE: ${{ steps.claude.outputs.execution_file }}
-          REPO: ${{ github.repository }}
-          PR: ${{ github.event.pull_request.number }}
-        run: |
-          set -euo pipefail
-          test -f "$EXECUTION_FILE"
-          output=$(jq -cer '.[] | select(.type == "result") | .structured_output' "$EXECUTION_FILE" | tail -n 1)
-          test -n "$output"
-          verdict=$(printf '%s' "$output" | jq -er '.verdict')
-          summary=$(printf '%s' "$output" | jq -er '.summary')
-          body=$(printf '**Claude independent review: %s**\n\n%s' "$verdict" "$summary")
-
-          jq -n --arg body "$body" '{body: $body, event: "COMMENT"}' \
-            | gh api --method POST \
-                -H "Accept: application/vnd.github+json" \
-                "/repos/$REPO/pulls/$PR/reviews" \
-                --input -
