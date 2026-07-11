@@ -44,14 +44,16 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          OUTPUT: ${{ steps.claude.outputs.structured_output }}
+          EXECUTION_FILE: ${{ steps.claude.outputs.execution_file }}
           REPO: ${{ github.repository }}
           PR: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
-          test -n "$OUTPUT"
-          verdict=$(printf '%s' "$OUTPUT" | jq -er '.verdict')
-          summary=$(printf '%s' "$OUTPUT" | jq -er '.summary')
+          test -f "$EXECUTION_FILE"
+          output=$(jq -cer '.[] | select(.type == "result") | .structured_output' "$EXECUTION_FILE" | tail -n 1)
+          test -n "$output"
+          verdict=$(printf '%s' "$output" | jq -er '.verdict')
+          summary=$(printf '%s' "$output" | jq -er '.summary')
           body=$(printf '**Claude independent review: %s**\n\n%s' "$verdict" "$summary")
 
           jq -n --arg body "$body" '{body: $body, event: "COMMENT"}' \
