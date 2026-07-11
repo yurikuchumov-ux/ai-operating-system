@@ -22,37 +22,18 @@ jobs:
           fetch-depth: 1
 
       - name: Independent architecture review
-        id: claude
         uses: anthropics/claude-code-action@6902c227aaa9536481b99d56f3014bbbad6c6da8
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           prompt: |
-            Independently review PR #11 against Issue #10. Read only PR metadata and diff.
-            Check precedence, tracking/pinned modes, compatibility policy, security constraints,
-            contradictions with AI_OS.md, and sufficiency for downstream automation.
-            Do not edit files, comment, review, or merge. Return only the requested JSON.
+            Independently review PR #11 against Issue #10.
+            Read only the PR metadata and diff. Check precedence, tracking/pinned modes,
+            compatibility policy, security constraints, contradictions with AI_OS.md,
+            and sufficiency for downstream automation. Do not edit files or merge.
+            Post exactly one concise top-level PR comment using gh pr comment.
+            The comment must contain: verdict: APPROVE or REQUEST_CHANGES; findings;
+            and required changes if any.
           claude_args: |
-            --max-turns 3
-            --allowedTools "Bash(gh pr view:*),Bash(gh pr diff:*)"
+            --max-turns 4
+            --allowedTools "Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*)"
             --disallowedTools "Edit,Write,NotebookEditCell"
-            --json-schema '{"type":"object","properties":{"verdict":{"type":"string","enum":["APPROVE","REQUEST_CHANGES"]},"summary":{"type":"string"}},"required":["verdict","summary"]}'
-
-      - name: Publish review result
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          STRUCTURED_OUTPUT: ${{ steps.claude.outputs.structured_output }}
-          EXECUTION_FILE: ${{ steps.claude.outputs.execution_file }}
-          REPO: ${{ github.repository }}
-          PR: ${{ github.event.pull_request.number }}
-        run: |
-          set -euo pipefail
-          output="$STRUCTURED_OUTPUT"
-          if [ -z "$output" ] || [ "$output" = "null" ]; then
-            test -f "$EXECUTION_FILE"
-            output=$(jq -cer 'if type == "array" then .[] else . end | select(.type == "result") | .structured_output' "$EXECUTION_FILE" | tail -n 1)
-          fi
-          verdict=$(printf '%s' "$output" | jq -er '.verdict')
-          summary=$(printf '%s' "$output" | jq -er '.summary')
-          body=$(printf '**Claude independent review — %s**\n\n%s' "$verdict" "$summary")
-          gh api --method POST "/repos/$REPO/issues/$PR/comments" -f body="$body"
