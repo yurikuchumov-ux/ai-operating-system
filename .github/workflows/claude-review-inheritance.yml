@@ -30,12 +30,12 @@ jobs:
           use_sticky_comment: true
           prompt: |
             Independently review PR #11 against Issue #10.
-            Read only the PR metadata and diff. Check precedence, tracking/pinned modes,
-            compatibility policy, security constraints, contradictions with AI_OS.md,
-            and sufficiency for downstream automation. Do not edit files or merge.
-            Finish with a concise verdict containing APPROVE or REQUEST_CHANGES,
-            findings, and required changes if any.
+            Read Issue #10, the PR metadata, and the diff. Check precedence,
+            tracking/pinned modes, compatibility policy, security constraints,
+            contradictions with AI_OS.md, and sufficiency for downstream automation.
+            Do not edit files or merge. Finish with a concise verdict containing
+            APPROVE or REQUEST_CHANGES, findings, and required changes if any.
           claude_args: |
-            --max-turns 4
-            --allowedTools "Bash(gh pr view:*),Bash(gh pr diff:*)"
+            --max-turns 12
+            --allowedTools "Bash(gh issue view:*),Bash(gh pr view:*),Bash(gh pr diff:*)"
             --disallowedTools "Edit,Write,NotebookEditCell"
