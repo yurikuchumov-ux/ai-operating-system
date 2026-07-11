@@ -43,13 +43,15 @@ jobs:
       - name: Publish formal GitHub review
         shell: bash
         env:
-          GH_TOKEN: ${{ steps.claude.outputs.github_token }}
+          GH_TOKEN: ${{ github.token }}
           OUTPUT: ${{ steps.claude.outputs.structured_output }}
           REPO: ${{ github.repository }}
           PR: ${{ github.event.pull_request.number }}
         run: |
-          verdict=$(jq -r '.verdict' <<<"$OUTPUT")
-          summary=$(jq -r '.summary' <<<"$OUTPUT")
+          set -euo pipefail
+          test -n "$OUTPUT"
+          verdict=$(printf '%s' "$OUTPUT" | jq -er '.verdict')
+          summary=$(printf '%s' "$OUTPUT" | jq -er '.summary')
 
           case "$verdict" in
             APPROVE) event=APPROVE ;;
