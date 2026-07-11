@@ -42,11 +42,17 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           STRUCTURED_OUTPUT: ${{ steps.claude.outputs.structured_output }}
+          EXECUTION_FILE: ${{ steps.claude.outputs.execution_file }}
           REPO: ${{ github.repository }}
           PR: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
-          verdict=$(printf '%s' "$STRUCTURED_OUTPUT" | jq -er '.verdict')
-          summary=$(printf '%s' "$STRUCTURED_OUTPUT" | jq -er '.summary')
+          output="$STRUCTURED_OUTPUT"
+          if [ -z "$output" ] || [ "$output" = "null" ]; then
+            test -f "$EXECUTION_FILE"
+            output=$(jq -cer 'if type == "array" then .[] else . end | select(.type == "result") | .structured_output' "$EXECUTION_FILE" | tail -n 1)
+          fi
+          verdict=$(printf '%s' "$output" | jq -er '.verdict')
+          summary=$(printf '%s' "$output" | jq -er '.summary')
           body=$(printf '**Claude independent review — %s**\n\n%s' "$verdict" "$summary")
           gh api --method POST "/repos/$REPO/issues/$PR/comments" -f body="$body"
