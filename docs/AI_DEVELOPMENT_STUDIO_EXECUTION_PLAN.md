@@ -588,13 +588,17 @@ Point totals never override a hard gate. MVP readiness additionally requires:
 
 The plan requires these independent implementation tasks:
 
-1. task/result schemas and validators;
-2. truthful verifier plus failure propagation;
-3. voice-agent non-production freeze and canonical naming corrections;
-4. voice-agent fail-closed security evidence pack;
-5. deployment/audit-evidence preservation;
-6. enforceable actor separation and repository protection decision;
-7. readiness evidence registry and reporting.
+1. [AI OS #18: versioned schemas and truthful verifier](https://github.com/yurikuchumov-ux/ai-operating-system/issues/18);
+2. [AI OS #19: terminal failure propagation](https://github.com/yurikuchumov-ux/ai-operating-system/issues/19);
+3. [voice #11: non-production claim freeze](https://github.com/yurikuchumov-ux/-ai-development-studio/issues/11);
+4. [voice #9: fail-closed security evidence pack](https://github.com/yurikuchumov-ux/-ai-development-studio/issues/9);
+5. [voice #10: deployment/audit-evidence preservation](https://github.com/yurikuchumov-ux/-ai-development-studio/issues/10);
+6. [AI OS #20: canonical repository naming](https://github.com/yurikuchumov-ux/ai-operating-system/issues/20);
+7. [AI OS #21: objective readiness evidence registry](https://github.com/yurikuchumov-ux/ai-operating-system/issues/21).
+
+Enforceable actor separation and the private-repository protection decision are
+acceptance dependencies across these Issues. They require a Product Owner
+policy decision before implementation can claim readiness.
 
 Issue creation does not count as delegation. Implementation starts only when a
 real Actions adapter returns a run ID and execution ID. At this snapshot, no
