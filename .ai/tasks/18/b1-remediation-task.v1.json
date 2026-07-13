@@ -3,10 +3,10 @@
   "task_id": "yurikuchumov-ux/ai-operating-system#18",
   "repository": "yurikuchumov-ux/ai-operating-system",
   "issue_number": 18,
-  "objective": "Implement the bounded B1 human-supervised harness and trusted always-run result finalizer",
+  "objective": "Remediate the bounded B1 finalizer after exact-SHA review without expanding bootstrap scope",
   "change_policy": {
     "change_required": true,
-    "policy_exception_id": "bootstrap-b1-owner-2026-07-13",
+    "policy_exception_id": "bootstrap-b1-remediation-owner-2026-07-13",
     "no_change": {
       "allowed": false,
       "reason_codes": [],
@@ -15,7 +15,7 @@
   },
   "base_ref": "main",
   "base_sha": "065f5a75e75c10cadb977c84b54ff75f645e40c5",
-  "branch": "agent/issue-18-b1-finalizer",
+  "branch": "agent/issue-18-b1-finalizer-v2",
   "allowed_paths": [
     "CHANGELOG.md",
     "contracts/README.md",
@@ -33,9 +33,9 @@
   ],
   "risk_class": "L1",
   "executor": {
-    "adapter": "human-supervised-claude-code",
-    "version": "2.1.197-pro-b1",
-    "max_attempts": 3,
+    "adapter": "human-supervised-codex",
+    "version": "remediation-cycle-2-attempt-1",
+    "max_attempts": 1,
     "timeout_seconds": 1800
   },
   "acceptance_criteria": [
@@ -95,5 +95,5 @@
   },
   "external_side_effects": "forbidden",
   "created_by": "github:yurikuchumov-ux/codex-chief-architect",
-  "created_at": "2026-07-13T12:23:43Z"
+  "created_at": "2026-07-13T13:27:04Z"
 }
