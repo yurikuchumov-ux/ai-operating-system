@@ -131,6 +131,7 @@ owner-approved control is proven for the private repository.
 | [#11 AI OS inheritance](https://github.com/yurikuchumov-ux/ai-operating-system/pull/11) | open Draft, latest check green | hold; revalidate action pins, enforcement and Actions-first compatibility after P0; green review is not merge authority |
 | [#13 Executor Orchestrator](https://github.com/yurikuchumov-ux/ai-operating-system/pull/13) | open Draft, check shown green | freeze; do not merge; retain as architecture research because standalone orchestration is a v1 non-goal |
 | [#15 Independent audit](https://github.com/yurikuchumov-ux/ai-operating-system/pull/15) | open Draft, no checks | keep Draft; correct repository names, add evidence classification and supply-chain/runner/prompt-injection risks before independent review |
+| [#17 Execution plan](https://github.com/yurikuchumov-ux/ai-operating-system/pull/17) | open Draft; external review requested changes at `0677b5338ddc9b0a3424874d5a12ab3dd8db108b` | address findings in a new commit; no merge; repeat independent review at the new exact head SHA |
 
 No PR in this table is closed or merged by this plan.
 
@@ -218,7 +219,14 @@ equivalent immutable workflow input generated from a validated Issue form.
   "repository": "yurikuchumov-ux/ai-operating-system",
   "issue_number": 123,
   "objective": "One testable outcome",
-  "change_required": true,
+  "change_policy": {
+    "change_required": true,
+    "no_change": {
+      "allowed": false,
+      "reason_codes": [],
+      "required_evidence_types": []
+    }
+  },
   "base_ref": "main",
   "base_sha": "40-character-lowercase-sha",
   "branch": "agent/issue-123-short-name",
@@ -231,10 +239,41 @@ equivalent immutable workflow input generated from a validated Issue form.
     "max_attempts": 3,
     "timeout_seconds": 1200
   },
-  "required_checks": [
-    {"id": "unit", "command_id": "repo.unit", "required": true}
+  "acceptance_criteria": [
+    {
+      "id": "AC-1",
+      "predicate_id": "git.diff.non_empty",
+      "parameters": {},
+      "required": true,
+      "linked_checks": ["unit"]
+    }
   ],
-  "reviewer_class": "independent-engineering",
+  "required_checks": [
+    {
+      "id": "unit",
+      "command_id": "repo.unit",
+      "required": true,
+      "expected_postconditions": [
+        {
+          "predicate_id": "process.exit_code.equals",
+          "parameters": {"value": 0}
+        },
+        {
+          "predicate_id": "artifact.sha256.matches",
+          "parameters": {"artifact_id": "unit-output"}
+        }
+      ]
+    }
+  ],
+  "review_policy": {
+    "reviewer_class": "independent-engineering",
+    "policy_id": "review-independence.v1",
+    "forbidden_lineage_overlaps": [
+      "agent_runtime_id",
+      "credential_principal"
+    ],
+    "minimum_distinct_human_operators": 0
+  },
   "external_side_effects": "forbidden",
   "created_by": "github-login",
   "created_at": "RFC3339 timestamp"
@@ -248,7 +287,14 @@ The validator fails before execution when:
 - the schema version is unsupported;
 - repository is not an explicit allowlisted canonical name;
 - `base_sha` is not the resolved commit for `base_ref`;
-- objective or acceptance checks are empty;
+- objective or `acceptance_criteria` are empty;
+- an acceptance criterion uses an unknown `predicate_id`, lacks deterministic
+  parameters, or is not linked to the checks that produce its evidence;
+- a required check lacks closed, deterministic `expected_postconditions`;
+- `change_policy.change_required=true` while
+  `change_policy.no_change.allowed=true` without a policy exception;
+- no-change is allowed but its reason-code enum or required evidence types are
+  empty;
 - allowed paths are empty for a change task;
 - allowed and denied paths overlap ambiguously;
 - workflow, security, deployment or governance paths are writable under an
@@ -256,16 +302,30 @@ The validator fails before execution when:
 - the executor adapter or immutable version is unknown;
 - timeout or attempts exceed policy;
 - external side effects are not explicitly forbidden or separately approved;
-- author and required reviewer identity classes cannot be separated.
+- author and required reviewer lineage cannot satisfy `review_policy` for the
+  declared risk class.
 
 The Issue text is user input. It must never be interpolated into a shell command
 or granted authority to override workflow policy.
 
+### 6.2 Predicate and command registries
+
+`predicate_id` and `command_id` values come from versioned, repository-owned
+registries. Free text cannot define pass conditions. Each predicate declares
+input types, deterministic evaluation, failure code and evidence requirements.
+Unknown identifiers fail closed.
+
+Acceptance is conjunctive for all required criteria. A criterion result must be
+traceable to one or more required checks or to a verifier-owned Git predicate.
+
 ## 7. Versioned execution result contract
 
-Every executor invocation must produce exactly one `result.v1.json`, even on
-failure. The orchestrator job, not the model, supplies immutable identity and
-Git fields where possible.
+Every started execution must end with exactly one `result.v1.json`. A trusted
+always-run wrapper/finalizer outside the model process owns this artifact and
+supplies identity, timing and Git observations. The executor only writes a raw
+candidate output. If the finalizer cannot run because of runner or platform
+loss, the missing artifact is itself a terminal verification failure and can
+never produce success.
 
 ```json
 {
@@ -276,8 +336,14 @@ Git fields where possible.
   "attempt": 1,
   "executor": {
     "adapter": "claude-code-actions",
-    "actor_id": "verified-identity",
-    "adapter_version": "immutable-version"
+    "adapter_version": "immutable-version",
+    "identity": {
+      "operator_principal": "github:user-id",
+      "agent_runtime_id": "provider:model:session-id",
+      "credential_principal": "github-app:installation-id",
+      "delegation_parent": "execution-or-owner-event-id",
+      "role": "author"
+    }
   },
   "started_at": "RFC3339 timestamp",
   "finished_at": "RFC3339 timestamp",
@@ -285,7 +351,19 @@ Git fields where possible.
   "head_sha": "40-character-lowercase-sha-or-null",
   "status": "change_proposed",
   "terminal_reason": "completed",
+  "no_change_reason": null,
+  "no_change_evidence": [],
+  "authored_commits": ["40-character-lowercase-sha"],
   "changed_files": ["path/file"],
+  "acceptance_results": [
+    {
+      "id": "AC-1",
+      "predicate_id": "git.diff.non_empty",
+      "passed": true,
+      "observed": {"changed_file_count": 1},
+      "evidence_artifact_ids": ["unit-output"]
+    }
+  ],
   "checks": [
     {
       "id": "unit",
@@ -295,48 +373,103 @@ Git fields where possible.
     }
   ],
   "artifacts": [
-    {"path": "artifacts/unit.txt", "sha256": "64-character-hash"}
+    {
+      "id": "unit-output",
+      "path": "artifacts/unit.txt",
+      "sha256": "64-character-hash"
+    }
   ],
+  "finalized_by": {
+    "component_id": "result-finalizer.v1",
+    "credential_principal": "github-actions:job-identity"
+  },
   "warnings": [],
   "error": null
 }
 ```
 
-Allowed `status` values are `change_proposed`, `no_change_required`, `failed`,
-`cancelled`, and `blocked`. Natural-language summaries are optional and never
+`status` is a closed enum: `change_proposed`, `no_change_required`, `failed`,
+`cancelled`, or `blocked`. Natural-language summaries are optional and never
 authoritative.
 
-Allowed `terminal_reason` values include `completed`, `max_turns`, `timeout`,
-`missing_commit`, `missing_artifact`, `empty_diff`, `scope_violation`,
-`check_failed`, `cancelled_by_owner`, `adapter_error`, and
-`reviewer_unavailable`.
+`terminal_reason` is a closed enum: `completed`, `approved_no_change`,
+`max_turns`, `timeout`, `missing_commit`, `missing_artifact`, `empty_diff`,
+`scope_violation`, `ref_history_unverifiable`, `acceptance_failed`,
+`identity_unverifiable`, `check_failed`, `cancelled_by_owner`, `adapter_error`,
+`runner_lost`, or `reviewer_unavailable`. An unknown value is represented only
+as `adapter_error` with the raw provider value in a non-authoritative diagnostic
+field; unknown values fail closed.
 
-## 8. Canonical task state machine
+`no_change_reason` must be null unless `status=no_change_required`. When set, it
+must be one of the task's allowed reason codes and every required no-change
+evidence type must be represented in `no_change_evidence` and linked to a
+hash-addressed artifact. Every required acceptance criterion has exactly one
+result with its predicate ID, observed value and deterministic evidence.
 
-The workflow publishes one authoritative Check Run plus an append-only result
-artifact. Comments are projections only.
+## 8. Canonical task and execution state machines
+
+Task lifecycle and execution-attempt lifecycle are separate. A task publishes
+one aggregate Check Run named `task/<task_id>`. Every attempt publishes its own
+immutable Check Run named `execution/<execution_id>` and one append-only result
+artifact. Comments are projections only and are never authoritative state.
+
+### 8.1 TaskState
+
+`TaskState` is a closed enum: `REQUESTED`, `VALIDATED`, `ACTIVE`,
+`REVIEW_REQUIRED`, `CHANGES_REQUESTED`, `OWNER_DECISION`, `DONE`, `CANCELLED`,
+`BLOCKED`, or `REJECTED`.
 
 | Source | Event and guard | Target | Required evidence |
 | --- | --- | --- | --- |
-| `REQUESTED` | task schema passes | `VALIDATED` | normalized task artifact and resolved base SHA |
-| `REQUESTED` | validation fails | `FAILED` | validation error list |
-| `VALIDATED` | checkout is clean and exactly at base SHA | `RUNNING` | execution ID and runner metadata |
-| `VALIDATED` | checkout or adapter cannot start | `FAILED` | terminal reason |
-| `RUNNING` | executor returns candidate result | `VERIFYING` | raw result artifact, branch ref |
-| `RUNNING` | max turns, timeout, cancellation or adapter error | `FAILED` or `CANCELLED` | terminal result artifact |
-| `VERIFYING` | every deterministic postcondition passes | `CHANGE_PROPOSED` or `NO_CHANGE_REQUIRED` | verifier report and evidence hashes |
-| `VERIFYING` | any required postcondition fails | `FAILED` | failing invariant and observed value |
-| `CHANGE_PROPOSED` | Draft PR created at verified head SHA | `REVIEW_REQUIRED` | PR URL and head SHA |
-| `REVIEW_REQUIRED` | eligible independent reviewer approves exact head SHA | `OWNER_DECISION` | review ID, actor and reviewed SHA |
-| `REVIEW_REQUIRED` | reviewer requests changes | `CHANGES_REQUESTED` | review ID and findings |
-| `CHANGES_REQUESTED` | next attempt is below policy limit and uses new evidence | `RUNNING` | new execution ID and attempt number |
-| `CHANGES_REQUESTED` | three attempts failed | `BLOCKED` | handoff artifact and replacement executor requirement |
-| `OWNER_DECISION` | owner merges exact reviewed SHA | `DONE` | merge commit and owner actor |
+| `REQUESTED` | task contract passes validation | `VALIDATED` | normalized task artifact, task hash and resolved base SHA |
+| `REQUESTED` | validation fails | `REJECTED` | closed validation error codes |
+| `VALIDATED` | first execution is created | `ACTIVE` | new execution ID and attempt number |
+| `ACTIVE` | execution succeeds with verified change or allowed no-change | `REVIEW_REQUIRED` | execution check, verifier report, Draft PR or no-change review artifact |
+| `ACTIVE` | execution fails and retry policy permits a new attempt with material evidence | `ACTIVE` | terminal result plus a different execution ID |
+| `ACTIVE` | three attempts fail, or a non-retryable invariant fails | `BLOCKED` | aggregate attempt history and handoff requirement |
+| `REVIEW_REQUIRED` | eligible reviewer approves exact verified SHA or no-change result | `OWNER_DECISION` | review attestation and reviewed subject hash |
+| `REVIEW_REQUIRED` | eligible reviewer requests changes | `CHANGES_REQUESTED` | review attestation and closed finding IDs |
+| `CHANGES_REQUESTED` | a new attempt is authorized within retry policy | `ACTIVE` | new execution ID, new material evidence and updated base/head binding |
+| `CHANGES_REQUESTED` | retry policy is exhausted | `BLOCKED` | aggregate attempt history and replacement-executor requirement |
+| `OWNER_DECISION` | owner merges exact reviewed SHA or accepts reviewed no-change | `DONE` | owner event and merge commit or accepted result hash |
 | `OWNER_DECISION` | owner declines or closes | `CANCELLED` | owner event |
 
-`FAILED`, `BLOCKED`, `CANCELLED`, and `DONE` are terminal for an execution ID.
-A retry always receives a new execution ID. A fourth attempt is forbidden unless
-the owner records new material evidence and selects a replacement executor.
+`DONE`, `CANCELLED`, `BLOCKED`, and `REJECTED` are terminal TaskStates. A failed
+execution never directly marks a task `DONE` or `REJECTED`.
+
+### 8.2 ExecutionState
+
+`ExecutionState` is a closed enum: `CREATED`, `RUNNING`, `FINALIZING`,
+`VERIFYING`, `SUCCEEDED`, `FAILED`, `CANCELLED`, or `BLOCKED`.
+
+| Source | Event and guard | Target | Required evidence |
+| --- | --- | --- | --- |
+| `CREATED` | clean ephemeral checkout is exactly at task base SHA | `RUNNING` | runner identity, checkout observation and execution ID |
+| `CREATED` | checkout or adapter cannot start | `FINALIZING` | closed terminal reason candidate |
+| `RUNNING` | executor exits or is interrupted | `FINALIZING` | raw candidate output and trusted observations available so far |
+| `FINALIZING` | trusted wrapper writes exactly one result artifact | `VERIFYING` | result hash and finalizer identity |
+| `FINALIZING` | finalizer or runner is lost | `FAILED` | platform job conclusion plus `missing_artifact` or `runner_lost` projection |
+| `VERIFYING` | every required invariant and acceptance predicate passes | `SUCCEEDED` | `verification.v1.json` and evidence hashes |
+| `VERIFYING` | any required invariant fails | `FAILED` | failed predicate ID, observed value and terminal reason |
+| `VERIFYING` | owner cancellation is authenticated | `CANCELLED` | owner event |
+| `VERIFYING` | required external prerequisite is unavailable and non-retryable | `BLOCKED` | prerequisite ID and evidence |
+
+`SUCCEEDED`, `FAILED`, `CANCELLED`, and `BLOCKED` are terminal for one immutable
+execution ID. A retry always receives a new execution ID, result artifact and
+execution Check Run; prior checks are never overwritten. The task Check Run
+aggregates attempt checks and is the authoritative task projection. A fourth
+attempt is forbidden unless the owner records new material evidence and selects
+a replacement executor.
+
+### 8.3 Result-to-state aggregation
+
+| Result status | ExecutionState | TaskState projection |
+| --- | --- | --- |
+| `change_proposed` | `SUCCEEDED` | `REVIEW_REQUIRED` |
+| `no_change_required` | `SUCCEEDED` | `REVIEW_REQUIRED` |
+| `failed` | `FAILED` | `ACTIVE` when a policy-compliant retry exists; otherwise `BLOCKED` |
+| `cancelled` | `CANCELLED` | `CANCELLED` only for an authenticated owner cancellation; otherwise `ACTIVE` or `BLOCKED` |
+| `blocked` | `BLOCKED` | `BLOCKED` |
 
 ## 9. Truthful verifier requirements
 
@@ -345,13 +478,14 @@ authoring model's conclusion as a pass condition.
 
 ### 9.1 Required inputs
 
-- validated task artifact and its SHA-256 hash;
-- GitHub event payload;
+- validated task artifact, acceptance criteria, no-change policy and SHA-256
+  hash;
+- persisted GitHub event payload and before/after ref observations;
 - immutable base SHA;
 - executor result artifact;
 - checked-out repository and candidate branch;
-- required check evidence;
-- verified author identity and reviewer policy.
+- required check and acceptance evidence;
+- verified author identity lineage, reviewer policy and applicable risk class.
 
 ### 9.2 Mandatory postconditions
 
@@ -364,24 +498,31 @@ The verifier must independently prove:
 5. result `base_sha` equals the validated base SHA;
 6. observed branch head equals result `head_sha`;
 7. a change task has a new commit and non-empty diff;
-8. a no-change task explicitly permits `no_change_required` and provides a
-   deterministic reason;
+8. a no-change task explicitly permits `no_change_required`, uses an allowed
+   reason code and supplies every required evidence type;
 9. every changed path is allowed and no denied path changed;
-10. commits contain no merge commit or force-push evidence unless policy allows
-    it;
+10. branch history contains no merge commit or prohibited force push, proven
+    from persisted event before/after SHAs, Git ancestry and GitHub audit/event
+    telemetry when available;
 11. every required command ID ran through a repository-defined command map;
 12. every required check exited zero and its evidence hash matches;
-13. required artifacts exist, are non-empty, scanned, and hash-valid;
-14. no secret or prohibited personal data is present in diff or artifacts;
-15. max-turns, timeout, missing commit, missing artifact, empty required diff,
+13. every required acceptance criterion has exactly one passing result linked to
+    valid check or verifier-owned Git evidence;
+14. required artifacts exist, are non-empty, scanned, and hash-valid;
+15. no secret or prohibited personal data is present in diff or artifacts;
+16. max-turns, timeout, missing commit, missing artifact, empty required diff,
     adapter error, and check failure produce a failed workflow conclusion;
-16. the Draft PR, when created, points to the verified head SHA;
-17. reviewer identity differs from every authoring identity in execution
-    lineage;
-18. owner merge is possible only for the exact reviewed SHA.
+17. executor and reviewer identity records contain verifiable operator,
+    runtime, credential, delegation-parent and authored-commit lineage;
+18. the Draft PR, when created, points to the verified head SHA;
+19. reviewer eligibility passes the machine-readable policy for the risk class;
+20. owner merge is possible only for the exact reviewed SHA.
 
 The verifier writes `verification.v1.json` and fails the job on any violated
-invariant. Its exit code, not an agent message, controls the Check Run.
+invariant. It records the evaluated predicate IDs, observed values and evidence
+hashes. Its exit code, not an agent message, controls the Check Run. When
+force-push telemetry is missing, stale or inconsistent, a task that forbids
+force pushes fails closed with `ref_history_unverifiable`.
 
 ### 9.3 P0 regression fixtures
 
@@ -394,10 +535,17 @@ At minimum, tests must cover:
 - commit exists but result artifact is absent;
 - result artifact exists but required evidence file is absent;
 - empty diff when `change_required=true`;
+- allowed no-change with complete reason/evidence and disallowed no-change;
+- missing or duplicate acceptance result;
 - changed file outside `allowed_paths`;
 - forged `head_sha`;
 - failing required command hidden by a green agent step;
+- runner loss before the trusted finalizer writes an artifact;
+- unknown `terminal_reason`;
+- task retry where one failed execution is followed by a distinct successful
+  execution without overwriting the first check;
 - author attempting to review its own head SHA;
+- reviewer with unverifiable credential or delegation lineage;
 - a new commit pushed after approval and before merge.
 
 ## 10. Actor separation and trust boundaries
@@ -416,6 +564,59 @@ Credentials are short-lived, repository-scoped and job-specific. Authoring jobs
 do not receive merge, administration, environment deployment, or unrelated
 repository access. Workflow-file changes require a higher risk class and human
 review.
+
+### 10.1 Machine-readable identity and review attestation
+
+Every author, verifier, reviewer and merger event records:
+
+- `operator_principal`: stable human or service owner identity;
+- `agent_runtime_id`: provider, model/tool and immutable execution/session ID;
+- `credential_principal`: GitHub App, workflow OIDC subject or user credential;
+- `delegation_parent`: authenticated owner event or prior execution ID;
+- `role`: one closed role value;
+- `authored_commits`: commits attributable to that lineage.
+
+An independent review produces `review-attestation.v1.json`:
+
+```json
+{
+  "task_id": "yurikuchumov-ux/ai-operating-system#123",
+  "review_id": "immutable-review-id",
+  "reviewed_sha": "40-character-lowercase-sha",
+  "reviewer_identity": {
+    "operator_principal": "human-or-service-principal",
+    "agent_runtime_id": "provider:model:session-id",
+    "credential_principal": "github-or-oidc-principal",
+    "delegation_parent": "owner-event-id",
+    "role": "reviewer"
+  },
+  "eligibility": {
+    "policy_id": "review-independence.v1",
+    "risk_class": "L1",
+    "overlap_results": [],
+    "eligible": true,
+    "reason_codes": []
+  }
+}
+```
+
+Missing or unknown identity fields make the reviewer ineligible. The verifier
+recomputes overlap against all execution lineage and authored commits; a model
+or human assertion of independence is not proof.
+
+### 10.2 Risk-class separation rules
+
+| Risk | Minimum eligible separation |
+| --- | --- |
+| `L0` planning/documentation | reviewer uses a different agent runtime/context, authored no commits under review and has read-only review authority; the same human operator is allowed only with explicit manual provenance |
+| `L1` normal code | different runtime/session and credential principal, no authored commits, read-only reviewer, deterministic verifier and enforced branch gates; same operator is allowed only when repository protection prevents self-approval and bypass |
+| `L2` security, identity, data or workflow policy | distinct qualified human operator plus separate runtime and credential lineage |
+| `L3` deployment, production or irreversible effects | all `L2` controls plus a different human merger and protected environment approval |
+
+The external GPT review of this planning PR is evidence for an `L0` manual
+review only after its exact reviewed SHA and provenance are recorded. It is not
+evidence of automated delegation, verifier implementation or repository branch
+enforcement.
 
 **BLOCKER:** current branch settings do not enforce these rules. P0 must either
 enable enforceable protection on the public control repositories or prove an
@@ -488,6 +689,35 @@ proven:
 - human confirmation for irreversible or high-risk actions;
 - negative security tests in an independently verified PR.
 
+### 11.4 Threat-model boundary and severity policy
+
+The security boundary is explicit. Conditionally trusted components are the
+GitHub control plane, pinned deterministic verifier/finalizer code and
+authenticated owner events. Untrusted inputs include Issue and PR text, model
+output, public callers, vendor callbacks, external artifacts, dependency
+output, transcripts and tool arguments. Protected assets are credentials,
+repository write authority, tenant and personal data, booking/message/payment
+actions and audit evidence.
+
+Threat actors include anonymous callers, authenticated cross-tenant callers,
+malicious prompt or transcript content, compromised dependencies or runners,
+stale/replayed callbacks and credential misuse by an insider. Exposure modes
+are closed values: `local`, `development`, `tunnel`, `public_test`, and
+`production`. A control proven in one mode is not inherited by a more exposed
+mode without explicit evidence.
+
+| Severity | Reproducible impact threshold |
+| --- | --- |
+| `critical` | unauthenticated irreversible action, cross-tenant control, secret compromise, or broad personal-data disclosure |
+| `high` | authentication/authorization bypass, meaningful personal-data exposure or loss, or corruption of booking/audit integrity |
+| `medium` | limited tenant, availability, rate-limit or observability impact with effective compensating controls |
+| `low` | documentation or user-experience defect that crosses no security boundary |
+
+Unknown severity is treated as `high` until triaged. Any unresolved `critical`
+or `high` finding affecting an exposed route fails readiness. Residual risk
+requires an owner acceptance record with finding IDs, compensating controls,
+scope, expiry and immutable evidence; expiry returns the gate to failed.
+
 ## 12. Delivery priorities
 
 ### P0 — make claims safe and the loop truthful
@@ -508,6 +738,27 @@ proven:
 P0 implementation is decomposed into separate Issues. Each Issue has its own
 branch, result artifact, verifier evidence and Draft PR. No combined P0 mega-PR
 is permitted.
+
+### 12.1 Explicit bootstrap protocol
+
+The verifier cannot truthfully prove itself before its contracts, fixtures and
+trusted wrapper exist. Bootstrap is therefore a bounded, owner-approved
+exception protocol, not a claim that the normal delivery loop already works.
+
+| Phase | Issue | Deliverable | Temporary exception | Compensating controls | Exit criterion |
+| --- | --- | --- | --- | --- | --- |
+| `B0` | AI OS #18 | schemas, registries, offline validators and immutable fixtures | no real adapter or verifier run is claimed | clean manual checkout, exact SHA, hashes, owner authorization and independent read-only review | positive/negative schema fixtures pass at one exact SHA |
+| `B1` | AI OS #18 | human-supervised harness and trusted always-run finalizer | independent verifier is not yet authoritative | restricted credentials, append-only raw/result artifacts, manual Git postconditions; no merge until `B2` | finalizer emits one valid artifact for success, executor failure and timeout fixtures |
+| `B2` | AI OS #18 | deterministic verifier evaluated against bootstrap fixtures | verifier is not yet self-hosted by the normal loop | independent exact-SHA review and fixture oracle defined outside author output | all normative verifier fixtures pass and review attestation is eligible |
+| `B3` | AI OS #19 | end-to-end terminal failure propagation | no additional exception beyond reviewed bootstrap components | real run/execution IDs and immutable artifacts | max-turns, timeout, missing commit/artifact and empty diff all make execution and task checks fail correctly |
+| `B4` | AI OS #20 | canonical naming change as first low-risk canary | none | full task/result/verifier/review contract | canary reaches owner decision with no state/Git disagreement |
+
+The dependency DAG is `PR #17 approval -> B0 -> B1 -> B2 -> B3 -> B4 -> normal
+self-hosted P0 work`. AI OS #18 is limited to `B0`–`B2`; #19 owns `B3`; #20
+owns `B4`. The owner must record the bootstrap exception before `B0`. It expires
+automatically after `B4`, and it never permits production deployment, merge
+without independent review, or a claim of real adapter delegation before a run
+and execution ID exist.
 
 ### P1 — secure and repeatable MVP
 
@@ -554,26 +805,55 @@ Readiness uses fixed binary evidence gates. A category earns either all assigned
 points or zero; partial or subjective credit is forbidden. An evidence URL must
 identify an immutable SHA, workflow run, artifact, review, or repository rule.
 
-| Category | Points | Pass condition | Baseline |
-| --- | ---: | --- | --- |
-| versioned task/result contracts | 10 | schemas, validators, positive and negative fixtures pass | 0 — not implemented on `main` |
-| truthful execution loop | 20 | three change tasks complete with no state/Git disagreement | 0 — false-success fixture exists |
-| independent verifier | 15 | all P0 failure fixtures produce correct conclusions | 0 — no verifier |
-| actor separation | 10 | author cannot satisfy review/merge gate for own SHA | 0 — branches unprotected |
-| clean checkout and credentials | 10 | exact base SHA, ephemeral runner and least privilege proven | 0 — no end-to-end contract |
-| template repeatability | 8 | three fresh template tasks produce verified Draft PRs | 0 — POCs only |
-| AI OS inheritance | 7 | immutable contract consumption and acceptance tests pass | 0 — PRs unmerged/failed |
-| voice authentication/authorization | 8 | all negative auth and tenant tests pass | 0 — fail-open paths exist |
-| booking safety | 5 | invariant, idempotency and concurrency tests pass | 0 — not implemented |
-| PII and observability | 4 | inventory, redaction, retention and safe event tests pass | 0 — raw JSONL payloads |
-| deployment and audit evidence | 3 | deployment preserves immutable evidence and rollback proof | 0 — destructive directory replacement |
+| Gate ID | Category | Points | Reproducible pass predicate | Freshness and invalidation |
+| --- | --- | ---: | --- | --- |
+| `G-CONTRACT-01` | versioned task/result contracts | 10 | schemas, registries and validators at the subject SHA pass 100% of positive and negative fixtures | evidence ≤30 days; expires on schema, registry or validator change |
+| `G-LOOP-01` | truthful execution loop | 20 | three consecutive change tasks across at least two repositories have distinct execution IDs and no state/Git disagreement | last run ≤30 days; expires on loop policy/code change or any later false success |
+| `G-VERIFY-01` | independent verifier | 15 | every normative P0 fixture, including run `29190170902`, produces its declared terminal result at the verifier SHA | evidence ≤30 days; expires on verifier or predicate change |
+| `G-ACTOR-01` | actor separation | 10 | ruleset/branch API evidence plus negative self-review and post-approval-push tests prove bypass is impossible | settings evidence ≤7 days; expires on ruleset or review-policy change |
+| `G-ISOLATION-01` | clean checkout and credentials | 10 | declared permission manifest equals observed job permissions; exact base SHA, clean ephemeral workspace and network policy fixtures pass | evidence ≤30 days; expires on workflow or action-pin change |
+| `G-TEMPLATE-01` | template repeatability | 8 | three tasks with distinct task/execution IDs use fresh ephemeral checkouts from recorded `main` SHAs and produce verified Draft PRs | evidence ≤30 days; expires on template/workflow change |
+| `G-INHERIT-01` | AI OS inheritance | 7 | pinned contract SHA is reachable and compatibility/precedence fixtures pass in every consumer | evidence ≤30 days; expires on contract or consumer-ref change |
+| `G-VOICE-AUTH-01` | voice authentication/authorization | 8 | negative authentication, action/object authorization and tenant-isolation tests cover every non-health route across at least two synthetic tenants | evidence ≤14 days; expires on route or auth-code change |
+| `G-BOOKING-01` | booking safety | 5 | validation, idempotency, concurrent double-booking, timezone and DST fixtures all pass | evidence ≤14 days; expires on booking schema/storage change |
+| `G-PII-01` | PII and observability | 4 | inventory, redaction, retention/deletion/access fixtures pass and a synthetic scan finds no prohibited data | evidence ≤14 days; expires on logging or data-policy change |
+| `G-DEPLOY-01` | deployment and audit evidence | 3 | two deploy-and-rollback fixtures preserve hash-addressed evidence and contain no raw personal data or secrets | evidence ≤30 days; expires on deployment or evidence-storage change |
 
 Current verified readiness is **0 of 100 evidence points**. This is not an
 estimate of engineering effort. It means none of the target categories has yet
 passed its complete acceptance condition on a protected, independently verified
 path.
 
-### 14.1 Mandatory release gates
+### 14.1 Evidence registry contract
+
+Every score is derived from an append-only `readiness-evidence.v1.json` record:
+
+```json
+{
+  "gate_id": "G-CONTRACT-01",
+  "policy_version": "readiness.v1",
+  "subject_sha": "40-character-lowercase-sha",
+  "status": "pass",
+  "predicate_results": [
+    {"predicate_id": "fixture.pass_rate.equals", "observed": 1.0, "passed": true}
+  ],
+  "evidence": [
+    {"type": "workflow_artifact", "url": "immutable-url", "sha256": "64-character-hash"}
+  ],
+  "evaluated_at": "RFC3339 timestamp",
+  "expires_at": "RFC3339 timestamp",
+  "owner": "credential-principal"
+}
+```
+
+Gate status is a closed enum: `pass`, `fail`, or `expired`. Every declared
+predicate must pass; missing, mutable, stale or hash-mismatched evidence yields
+zero points. Fixture diversity requirements in the gate table are conjunctive.
+A “protected, independently verified path” means the exact subject SHA is bound
+to an enforced ruleset, required verifier Check Run, eligible review
+attestation and immutable evidence hashes.
+
+### 14.2 Mandatory release gates
 
 Point totals never override a hard gate. MVP readiness additionally requires:
 
@@ -586,25 +866,30 @@ Point totals never override a hard gate. MVP readiness additionally requires:
 
 ## 15. P0 implementation Issue map
 
-The plan requires these independent implementation tasks:
+| Work item | `depends_on` | Owner role / prerequisite | `unblocks` | Required completion evidence |
+| --- | --- | --- | --- | --- |
+| AI OS #18 (`B0`–`B2`) schemas, finalizer and verifier | PR #17 approved; owner records bootstrap exception | architect authors; eligible independent reviewer | AI OS #19 and evidence-registry implementation | fixture runs, artifact hashes and exact-SHA review attestation |
+| AI OS #19 (`B3`) terminal propagation | #18 merged and immutable verifier version selected | execution adapter author separate from reviewer | AI OS #20 canary | real run/execution IDs and all terminal fixtures fail correctly |
+| AI OS #20 (`B4`) canonical repository naming | #19 merged; `G-ACTOR-01` enforcement available | low-risk executor plus independent reviewer | normal self-hosted P0 delivery | first full-contract canary at exact reviewed SHA |
+| voice #11 claim freeze | approved plan; human-supervised `L0` path allowed | voice repository owner can publish notice | truthful non-production posture | notice at exact SHA and eligible review |
+| voice #9 security evidence pack | voice #11; threat boundary and severity policy | qualified security reviewer distinct from author | prioritized fail-closed fixes | finding registry with reproducible fixtures and immutable hashes |
+| voice #10 audit-evidence preservation | voice #9 data classes; owner retention decision | data/evidence owner identified | `G-PII-01` and `G-DEPLOY-01` | two deploy/rollback fixtures plus retention evidence |
+| AI OS #21 readiness evidence registry | #18 registry schema; #20 canary | deterministic publisher, no scoring discretion | automated cockpit/readiness projection | schema validation and recomputed zero-or-full gate scores |
+| new `P0-ACTOR` Issue | owner decides public/private repository enforcement approach | repository administrator; separate verifier of settings | `G-ACTOR-01`, #20 and any production claim | ruleset API snapshot and negative bypass fixtures |
 
-1. [AI OS #18: versioned schemas and truthful verifier](https://github.com/yurikuchumov-ux/ai-operating-system/issues/18);
-2. [AI OS #19: terminal failure propagation](https://github.com/yurikuchumov-ux/ai-operating-system/issues/19);
-3. [voice #11: non-production claim freeze](https://github.com/yurikuchumov-ux/-ai-development-studio/issues/11);
-4. [voice #9: fail-closed security evidence pack](https://github.com/yurikuchumov-ux/-ai-development-studio/issues/9);
-5. [voice #10: deployment/audit-evidence preservation](https://github.com/yurikuchumov-ux/-ai-development-studio/issues/10);
-6. [AI OS #20: canonical repository naming](https://github.com/yurikuchumov-ux/ai-operating-system/issues/20);
-7. [AI OS #21: objective readiness evidence registry](https://github.com/yurikuchumov-ux/ai-operating-system/issues/21).
+`P0-ACTOR` does not yet have an Issue ID and must be created as a separate
+owner-visible planning action before `B4`; this document does not pretend that
+the missing enforcement work is already delegated.
 
 Enforceable actor separation and the private-repository protection decision are
 acceptance dependencies across these Issues. They require a Product Owner
 policy decision before implementation can claim readiness.
 
-Issue creation does not count as delegation. Implementation starts only when a
-real Actions adapter returns a run ID and execution ID. At this snapshot, no
-merged reusable implementation adapter satisfies this contract, so execution is
-blocked pending P0 verifier bootstrap through an explicitly owner-approved,
-human-supervised workflow.
+Issue creation does not count as delegation. Normal implementation delegation
+starts only when a real Actions adapter returns a run ID and execution ID. At
+this snapshot, no merged reusable implementation adapter satisfies this
+contract, so only the bounded `B0`–`B2` human-supervised bootstrap may proceed
+after its explicit owner approval; it must not be labeled delegation.
 
 ## 16. Owner decisions required
 
@@ -624,15 +909,20 @@ or PR.
 
 ## 17. Next verifiable milestone
 
-The next milestone after independent approval of this plan is a P0 schema and
-truthful-verifier Draft PR with:
+The immediate milestone is a new independent review of this corrected plan at
+its exact Draft PR #17 head SHA. No bootstrap implementation starts while the
+review disposition is `REQUEST_CHANGES`.
 
-- a real GitHub run ID and execution ID;
+After independent approval and an explicit owner bootstrap-exception record,
+the next milestone is `B0` of AI OS #18: a schema-and-fixture Draft PR with:
+
 - validated task and result artifacts;
-- regression evidence proving `error_max_turns`, timeout, missing commit,
-  missing artifact and required empty diff all fail;
+- offline positive and negative fixture evidence at an immutable SHA;
 - an independent review at the exact verified head SHA;
 - no merge without the Product Owner.
+
+Real adapter run and execution IDs become mandatory at `B3`; the bootstrap
+exception cannot be used to represent `B0`–`B2` as automated delegation.
 
 Until that evidence exists, the project remains in planning/P0 bootstrap and
 must not claim a working autonomous delivery pipeline.
