@@ -5,7 +5,7 @@
       "id": "valid-change-pair",
       "documents": [
         {"type": "task", "path": "documents/task-valid-change.json", "sha256": "47cfc61018242460c9a491f5242e56d0437bb29978f89e3230654f161434ea59"},
-        {"type": "result", "path": "documents/result-valid-change.json", "sha256": "c6904e4183ce184ab0a1c54417c5f8358886f0923d1cb6d395de6b51219cdf8d"}
+        {"type": "result", "path": "documents/result-valid-change.json", "sha256": "9a9c7a8698db75d5d581b5d583ba1f125f1732cff4b01b25c7d1dda1313e4107"}
       ],
       "expected": {"valid": true, "exit_code": 0, "error_codes": []}
     },
@@ -13,7 +13,7 @@
       "id": "valid-no-change-pair",
       "documents": [
         {"type": "task", "path": "documents/task-valid-no-change.json", "sha256": "6683d15aa68a5af753f2051f7a7cbaf4cfb0fabce32b19d263135fd8c9de6843"},
-        {"type": "result", "path": "documents/result-valid-no-change.json", "sha256": "ff1ac0547cd4cf81d962f79b4ca8e9aa99075264ee73d9db5460bc44f3a81aff"}
+        {"type": "result", "path": "documents/result-valid-no-change.json", "sha256": "47f7c942bb52125a90a5e527392271bd61a9ec3f1b3e9603376261df1cc1dbff"}
       ],
       "expected": {"valid": true, "exit_code": 0, "error_codes": []}
     },
@@ -71,7 +71,7 @@
     {
       "id": "reject-unknown-terminal-reason",
       "documents": [
-        {"type": "result", "path": "documents/result-valid-change.json", "sha256": "c6904e4183ce184ab0a1c54417c5f8358886f0923d1cb6d395de6b51219cdf8d"}
+        {"type": "result", "path": "documents/result-valid-change.json", "sha256": "9a9c7a8698db75d5d581b5d583ba1f125f1732cff4b01b25c7d1dda1313e4107"}
       ],
       "mutations": [
         {"document_type": "result", "op": "replace", "path": "/status", "value": "failed"},
@@ -83,7 +83,7 @@
     {
       "id": "reject-unresolved-artifact-reference",
       "documents": [
-        {"type": "result", "path": "documents/result-valid-change.json", "sha256": "c6904e4183ce184ab0a1c54417c5f8358886f0923d1cb6d395de6b51219cdf8d"}
+        {"type": "result", "path": "documents/result-valid-change.json", "sha256": "9a9c7a8698db75d5d581b5d583ba1f125f1732cff4b01b25c7d1dda1313e4107"}
       ],
       "mutations": [
         {"document_type": "result", "op": "replace", "path": "/checks/0/evidence_artifact_ids/0", "value": "missing-report"}
@@ -94,7 +94,7 @@
       "id": "reject-base-sha-mismatch",
       "documents": [
         {"type": "task", "path": "documents/task-valid-change.json", "sha256": "47cfc61018242460c9a491f5242e56d0437bb29978f89e3230654f161434ea59"},
-        {"type": "result", "path": "documents/result-valid-change.json", "sha256": "c6904e4183ce184ab0a1c54417c5f8358886f0923d1cb6d395de6b51219cdf8d"}
+        {"type": "result", "path": "documents/result-valid-change.json", "sha256": "9a9c7a8698db75d5d581b5d583ba1f125f1732cff4b01b25c7d1dda1313e4107"}
       ],
       "mutations": [
         {"document_type": "result", "op": "replace", "path": "/base_sha", "value": "9999999999999999999999999999999999999999"}
@@ -105,7 +105,7 @@
       "id": "reject-scope-violation",
       "documents": [
         {"type": "task", "path": "documents/task-valid-change.json", "sha256": "47cfc61018242460c9a491f5242e56d0437bb29978f89e3230654f161434ea59"},
-        {"type": "result", "path": "documents/result-valid-change.json", "sha256": "c6904e4183ce184ab0a1c54417c5f8358886f0923d1cb6d395de6b51219cdf8d"}
+        {"type": "result", "path": "documents/result-valid-change.json", "sha256": "9a9c7a8698db75d5d581b5d583ba1f125f1732cff4b01b25c7d1dda1313e4107"}
       ],
       "mutations": [
         {"document_type": "result", "op": "replace", "path": "/changed_files/0", "value": ".github/workflows/unsafe.yml"}
@@ -115,7 +115,7 @@
     {
       "id": "reject-duplicate-artifact-id",
       "documents": [
-        {"type": "result", "path": "documents/result-valid-change.json", "sha256": "c6904e4183ce184ab0a1c54417c5f8358886f0923d1cb6d395de6b51219cdf8d"}
+        {"type": "result", "path": "documents/result-valid-change.json", "sha256": "9a9c7a8698db75d5d581b5d583ba1f125f1732cff4b01b25c7d1dda1313e4107"}
       ],
       "mutations": [
         {"document_type": "result", "op": "append", "path": "/artifacts/-", "value": {"id": "suite-report", "path": "artifacts/duplicate.json", "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "media_type": "application/json", "size_bytes": 1}}
@@ -126,10 +126,11 @@
       "id": "reject-no-change-without-policy",
       "documents": [
         {"type": "task", "path": "documents/task-valid-change.json", "sha256": "47cfc61018242460c9a491f5242e56d0437bb29978f89e3230654f161434ea59"},
-        {"type": "result", "path": "documents/result-valid-no-change.json", "sha256": "ff1ac0547cd4cf81d962f79b4ca8e9aa99075264ee73d9db5460bc44f3a81aff"}
+        {"type": "result", "path": "documents/result-valid-no-change.json", "sha256": "47f7c942bb52125a90a5e527392271bd61a9ec3f1b3e9603376261df1cc1dbff"}
       ],
       "mutations": [
-        {"document_type": "result", "op": "replace", "path": "/task_id", "value": "yurikuchumov-ux/ai-operating-system#18"}
+        {"document_type": "result", "op": "replace", "path": "/task_id", "value": "yurikuchumov-ux/ai-operating-system#18"},
+        {"document_type": "result", "op": "replace", "path": "/acceptance_results/0/parameters", "value": {"manifest": "fixtures/b0/manifest.v1.json"}}
       ],
       "expected": {"valid": false, "exit_code": 1, "error_codes": ["no_change_not_allowed", "no_change_reason_not_allowed"]}
     },
@@ -166,7 +167,7 @@
     {
       "id": "reject-empty-required-diff",
       "documents": [
-        {"type": "result", "path": "documents/result-valid-change.json", "sha256": "c6904e4183ce184ab0a1c54417c5f8358886f0923d1cb6d395de6b51219cdf8d"}
+        {"type": "result", "path": "documents/result-valid-change.json", "sha256": "9a9c7a8698db75d5d581b5d583ba1f125f1732cff4b01b25c7d1dda1313e4107"}
       ],
       "mutations": [
         {"document_type": "result", "op": "replace", "path": "/changed_files", "value": []}
@@ -176,12 +177,77 @@
     {
       "id": "reject-missing-commit",
       "documents": [
-        {"type": "result", "path": "documents/result-valid-change.json", "sha256": "c6904e4183ce184ab0a1c54417c5f8358886f0923d1cb6d395de6b51219cdf8d"}
+        {"type": "result", "path": "documents/result-valid-change.json", "sha256": "9a9c7a8698db75d5d581b5d583ba1f125f1732cff4b01b25c7d1dda1313e4107"}
       ],
       "mutations": [
         {"document_type": "result", "op": "replace", "path": "/authored_commits", "value": []}
       ],
       "expected": {"valid": false, "exit_code": 1, "error_codes": ["schema_validation_failed"]}
+    },
+    {
+      "id": "reject-false-success",
+      "documents": [
+        {"type": "task", "path": "documents/task-valid-change.json", "sha256": "47cfc61018242460c9a491f5242e56d0437bb29978f89e3230654f161434ea59"},
+        {"type": "result", "path": "documents/result-valid-change.json", "sha256": "9a9c7a8698db75d5d581b5d583ba1f125f1732cff4b01b25c7d1dda1313e4107"}
+      ],
+      "mutations": [
+        {"document_type": "result", "op": "replace", "path": "/checks/0/exit_code", "value": 1}
+      ],
+      "expected": {"valid": false, "exit_code": 1, "error_codes": ["check_failed"]}
+    },
+    {
+      "id": "reject-missing-artifact",
+      "documents": [
+        {"type": "result", "path": "documents/result-valid-change.json", "sha256": "9a9c7a8698db75d5d581b5d583ba1f125f1732cff4b01b25c7d1dda1313e4107"}
+      ],
+      "mutations": [
+        {"document_type": "result", "op": "replace", "path": "/artifacts", "value": []}
+      ],
+      "expected": {"valid": false, "exit_code": 1, "error_codes": ["missing_artifact", "unresolved_artifact_reference"]}
+    },
+    {
+      "id": "reject-unknown-acceptance-result",
+      "documents": [
+        {"type": "task", "path": "documents/task-valid-change.json", "sha256": "47cfc61018242460c9a491f5242e56d0437bb29978f89e3230654f161434ea59"},
+        {"type": "result", "path": "documents/result-valid-change.json", "sha256": "9a9c7a8698db75d5d581b5d583ba1f125f1732cff4b01b25c7d1dda1313e4107"}
+      ],
+      "mutations": [
+        {"document_type": "result", "op": "append", "path": "/acceptance_results/-", "value": {"id": "AC-EXTRA", "predicate_id": "schema.instance.valid", "parameters": {}, "passed": true, "observed": {}, "evidence_artifact_ids": ["suite-report"]}}
+      ],
+      "expected": {"valid": false, "exit_code": 1, "error_codes": ["unknown_acceptance_result"]}
+    },
+    {
+      "id": "reject-acceptance-result-cardinality",
+      "documents": [
+        {"type": "task", "path": "documents/task-valid-change.json", "sha256": "47cfc61018242460c9a491f5242e56d0437bb29978f89e3230654f161434ea59"},
+        {"type": "result", "path": "documents/result-valid-change.json", "sha256": "9a9c7a8698db75d5d581b5d583ba1f125f1732cff4b01b25c7d1dda1313e4107"}
+      ],
+      "mutations": [
+        {"document_type": "result", "op": "append", "path": "/acceptance_results/-", "value": {"id": "AC-1", "predicate_id": "schema.instance.valid", "parameters": {"manifest": "fixtures/b0/manifest.v1.json"}, "passed": true, "observed": {}, "evidence_artifact_ids": ["suite-report"]}}
+      ],
+      "expected": {"valid": false, "exit_code": 1, "error_codes": ["acceptance_result_cardinality", "duplicate_id"]}
+    },
+    {
+      "id": "reject-acceptance-parameters-mismatch",
+      "documents": [
+        {"type": "task", "path": "documents/task-valid-change.json", "sha256": "47cfc61018242460c9a491f5242e56d0437bb29978f89e3230654f161434ea59"},
+        {"type": "result", "path": "documents/result-valid-change.json", "sha256": "9a9c7a8698db75d5d581b5d583ba1f125f1732cff4b01b25c7d1dda1313e4107"}
+      ],
+      "mutations": [
+        {"document_type": "result", "op": "replace", "path": "/acceptance_results/0/parameters", "value": {}}
+      ],
+      "expected": {"valid": false, "exit_code": 1, "error_codes": ["acceptance_parameters_mismatch"]}
+    },
+    {
+      "id": "reject-acceptance-evidence-mismatch",
+      "documents": [
+        {"type": "task", "path": "documents/task-valid-change.json", "sha256": "47cfc61018242460c9a491f5242e56d0437bb29978f89e3230654f161434ea59"},
+        {"type": "result", "path": "documents/result-valid-change.json", "sha256": "9a9c7a8698db75d5d581b5d583ba1f125f1732cff4b01b25c7d1dda1313e4107"}
+      ],
+      "mutations": [
+        {"document_type": "result", "op": "replace", "path": "/acceptance_results/0/evidence_artifact_ids", "value": []}
+      ],
+      "expected": {"valid": false, "exit_code": 1, "error_codes": ["acceptance_evidence_mismatch"]}
     }
   ]
 }

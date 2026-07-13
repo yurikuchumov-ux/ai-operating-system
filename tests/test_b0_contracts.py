@@ -5,7 +5,19 @@ import json
 import unittest
 from pathlib import Path
 
-from tools.validate_b0 import ContractValidator, load_json, run_suite, validate_fixture
+from tools.validate_b0 import (
+    MAX_FIXTURE_DOCUMENT_BYTES,
+    MAX_FIXTURE_MUTATIONS,
+    MAX_JSON_POINTER_DEPTH,
+    ContractValidator,
+    FixtureResourceLimitError,
+    apply_fixture_mutation,
+    load_json,
+    registry_semantic_findings,
+    required_fixture_coverage,
+    run_suite,
+    validate_fixture,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -22,9 +34,12 @@ class B0ContractTests(unittest.TestCase):
         exit_code, report = run_suite(MANIFEST_PATH)
         self.assertEqual(0, exit_code)
         self.assertTrue(report["valid"])
-        self.assertEqual(19, report["summary"]["total"])
-        self.assertEqual(19, report["summary"]["passed"])
+        self.assertEqual(25, report["summary"]["total"])
+        self.assertEqual(25, report["summary"]["passed"])
         self.assertEqual(0, report["summary"]["failed"])
+        self.assertEqual(13, report["coverage"]["required"])
+        self.assertEqual([], report["coverage"]["missing"])
+        self.assertEqual(13, len(report["coverage"]["covered"]))
         self.assertFalse(report["authoritative_verifier"])
         self.assertEqual("B0", report["bootstrap_scope"])
 
@@ -65,6 +80,92 @@ class B0ContractTests(unittest.TestCase):
             self.assertIsInstance(entry["argv"], list)
             self.assertGreater(len(entry["argv"]), 0)
             self.assertTrue(all(isinstance(value, str) for value in entry["argv"]))
+
+    def test_required_fixture_removal_fails_closed(self) -> None:
+        manifest = copy.deepcopy(self.manifest)
+        manifest["fixtures"] = [
+            fixture
+            for fixture in manifest["fixtures"]
+            if fixture["id"] != "reject-false-success"
+        ]
+        findings, coverage = required_fixture_coverage(self.validator, manifest)
+        self.assertIn("required_fixture_missing", {item.code for item in findings})
+        self.assertEqual(["reject-false-success"], coverage["missing"])
+
+    def test_required_fixture_expectation_change_fails_closed(self) -> None:
+        manifest = copy.deepcopy(self.manifest)
+        fixture = next(
+            item for item in manifest["fixtures"] if item["id"] == "reject-false-success"
+        )
+        fixture["expected"]["error_codes"] = ["schema_validation_failed"]
+        findings, _ = required_fixture_coverage(self.validator, manifest)
+        self.assertIn(
+            "required_fixture_expectation_mismatch", {item.code for item in findings}
+        )
+
+    def test_json_pointer_depth_is_bounded(self) -> None:
+        mutation = {
+            "document_type": "task",
+            "op": "replace",
+            "path": "/" + "/".join(["nested"] * (MAX_JSON_POINTER_DEPTH + 1)),
+            "value": "x",
+        }
+        with self.assertRaises(FixtureResourceLimitError):
+            apply_fixture_mutation({}, mutation)
+
+    def test_mutated_document_size_is_bounded(self) -> None:
+        mutation = {
+            "document_type": "task",
+            "op": "replace",
+            "path": "/value",
+            "value": "x" * (MAX_FIXTURE_DOCUMENT_BYTES + 1),
+        }
+        with self.assertRaises(FixtureResourceLimitError):
+            apply_fixture_mutation({"value": "ok"}, mutation)
+
+    def test_fixture_mutation_count_is_bounded(self) -> None:
+        fixture = copy.deepcopy(self.manifest["fixtures"][0])
+        fixture["mutations"] = [
+            {
+                "document_type": "task",
+                "op": "replace",
+                "path": "/objective",
+                "value": "bounded",
+            }
+            for _ in range(MAX_FIXTURE_MUTATIONS + 1)
+        ]
+        result = validate_fixture(self.validator, fixture, MANIFEST_PATH.parent)
+        self.assertIn("fixture_resource_limit_exceeded", result["actual"]["error_codes"])
+
+    def test_registry_version_compatibility_is_explicit(self) -> None:
+        registry = copy.deepcopy(
+            load_json(REPO_ROOT / "contracts/registries/commands.v1.json")
+        )
+        registry["schema_version"] = "2.0.0"
+        findings = registry_semantic_findings("command_registry", registry)
+        self.assertIn("unsupported_registry_version", {item.code for item in findings})
+
+    def test_duplicate_predicate_semantics_are_rejected(self) -> None:
+        registry = copy.deepcopy(
+            load_json(REPO_ROOT / "contracts/registries/predicates.v1.json")
+        )
+        duplicate = copy.deepcopy(registry["entries"][0])
+        duplicate["id"] = "duplicate.predicate"
+        registry["entries"].append(duplicate)
+        findings = registry_semantic_findings("predicate_registry", registry)
+        self.assertIn("duplicate_predicate_semantics", {item.code for item in findings})
+
+    def test_duplicate_command_implementations_are_rejected(self) -> None:
+        registry = copy.deepcopy(
+            load_json(REPO_ROOT / "contracts/registries/commands.v1.json")
+        )
+        duplicate = copy.deepcopy(registry["entries"][0])
+        duplicate["id"] = "duplicate.command"
+        registry["entries"].append(duplicate)
+        findings = registry_semantic_findings("command_registry", registry)
+        self.assertIn(
+            "duplicate_command_implementation", {item.code for item in findings}
+        )
 
 
 if __name__ == "__main__":

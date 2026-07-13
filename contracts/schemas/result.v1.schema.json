@@ -88,10 +88,11 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["id", "predicate_id", "passed", "observed", "evidence_artifact_ids"],
+        "required": ["id", "predicate_id", "parameters", "passed", "observed", "evidence_artifact_ids"],
         "properties": {
           "id": {"$ref": "#/$defs/local_id"},
           "predicate_id": {"$ref": "#/$defs/registry_id"},
+          "parameters": {"type": "object"},
           "passed": {"type": "boolean"},
           "observed": {},
           "evidence_artifact_ids": {"type": "array", "items": {"$ref": "#/$defs/local_id"}, "uniqueItems": true}

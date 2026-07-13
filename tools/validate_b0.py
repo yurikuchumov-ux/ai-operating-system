@@ -25,6 +25,14 @@ except ModuleNotFoundError as exc:  # pragma: no cover - exercised by CLI setup
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+MAX_FIXTURE_DOCUMENT_BYTES = 1024 * 1024
+MAX_FIXTURE_MUTATIONS = 32
+MAX_JSON_POINTER_DEPTH = 16
+SUPPORTED_REGISTRY_VERSIONS: Mapping[str, str] = {
+    "command_registry": "1.0.0",
+    "fixture_coverage_registry": "1.0.0",
+    "predicate_registry": "1.0.0",
+}
 SCHEMA_PATHS: Mapping[str, Path] = {
     "task": REPO_ROOT / "contracts/schemas/task.v1.schema.json",
     "result": REPO_ROOT / "contracts/schemas/result.v1.schema.json",
@@ -35,6 +43,8 @@ SCHEMA_PATHS: Mapping[str, Path] = {
     / "contracts/schemas/readiness-evidence.v1.schema.json",
     "fixture_manifest": REPO_ROOT
     / "contracts/schemas/fixture-manifest.v1.schema.json",
+    "fixture_coverage_registry": REPO_ROOT
+    / "contracts/schemas/fixture-coverage-registry.v1.schema.json",
     "predicate_registry": REPO_ROOT
     / "contracts/schemas/predicate-registry.v1.schema.json",
     "command_registry": REPO_ROOT
@@ -43,6 +53,8 @@ SCHEMA_PATHS: Mapping[str, Path] = {
 REGISTRY_PATHS: Mapping[str, Path] = {
     "predicate_registry": REPO_ROOT / "contracts/registries/predicates.v1.json",
     "command_registry": REPO_ROOT / "contracts/registries/commands.v1.json",
+    "fixture_coverage_registry": REPO_ROOT
+    / "contracts/registries/fixture-coverage.v1.json",
 }
 
 
@@ -62,6 +74,10 @@ class Finding:
         }
 
 
+class FixtureResourceLimitError(ValueError):
+    """Raised when repository fixture input exceeds the bounded B0 policy."""
+
+
 def load_json(path: Path) -> Any:
     with path.open("r", encoding="utf-8") as handle:
         return json.load(handle)
@@ -75,12 +91,26 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def json_document_size(document: Any) -> int:
+    return len(
+        json.dumps(document, ensure_ascii=False, separators=(",", ":")).encode(
+            "utf-8"
+        )
+    )
+
+
 def apply_fixture_mutation(document: Any, mutation: Mapping[str, Any]) -> None:
     """Apply a deliberately small JSON Pointer mutation language for fixtures."""
     pointer = mutation["path"]
     if not pointer.startswith("/"):
         raise ValueError("fixture mutation path must be an absolute JSON Pointer")
     tokens = [token.replace("~1", "/").replace("~0", "~") for token in pointer[1:].split("/")]
+    if len(tokens) > MAX_JSON_POINTER_DEPTH:
+        raise FixtureResourceLimitError(
+            "fixture mutation exceeds maximum JSON Pointer depth of {}".format(
+                MAX_JSON_POINTER_DEPTH
+            )
+        )
     target = document
     for token in tokens[:-1]:
         target = target[int(token)] if isinstance(target, list) else target[token]
@@ -99,6 +129,13 @@ def apply_fixture_mutation(document: Any, mutation: Mapping[str, Any]) -> None:
         target.append(mutation["value"])
     else:
         raise ValueError("unsupported fixture mutation operation: {}".format(operation))
+    mutated_size = json_document_size(document)
+    if mutated_size > MAX_FIXTURE_DOCUMENT_BYTES:
+        raise FixtureResourceLimitError(
+            "mutated fixture exceeds maximum size of {} bytes".format(
+                MAX_FIXTURE_DOCUMENT_BYTES
+            )
+        )
 
 
 def json_path(parts: Iterable[Any]) -> str:
@@ -128,6 +165,76 @@ def unique_ids(
     return findings
 
 
+def registry_semantic_findings(
+    document_type: str, document: Mapping[str, Any]
+) -> List[Finding]:
+    findings: List[Finding] = []
+    supported_version = SUPPORTED_REGISTRY_VERSIONS[document_type]
+    if document.get("schema_version") != supported_version:
+        findings.append(
+            Finding(
+                "unsupported_registry_version",
+                document_type,
+                "$.schema_version",
+                "registry version must equal {}".format(supported_version),
+            )
+        )
+    entries_key = (
+        "required_fixtures"
+        if document_type == "fixture_coverage_registry"
+        else "entries"
+    )
+    entries = document.get(entries_key, [])
+    findings.extend(unique_ids(entries, document_type, "$.{}".format(entries_key)))
+
+    if document_type == "predicate_registry":
+        seen: Dict[str, str] = {}
+        for index, entry in enumerate(entries):
+            signature = json.dumps(
+                {
+                    "evaluator": entry.get("evaluator"),
+                    "evidence_types": entry.get("evidence_types"),
+                    "failure_code": entry.get("failure_code"),
+                    "input_types": entry.get("input_types"),
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            if signature in seen:
+                findings.append(
+                    Finding(
+                        "duplicate_predicate_semantics",
+                        document_type,
+                        "$.entries[{}]".format(index),
+                        "predicate duplicates semantics of {}".format(seen[signature]),
+                    )
+                )
+            seen[signature] = entry.get("id", "")
+    elif document_type == "command_registry":
+        seen = {}
+        for index, entry in enumerate(entries):
+            signature = json.dumps(
+                {
+                    "argv": entry.get("argv"),
+                    "environment_allowlist": entry.get("environment_allowlist"),
+                    "working_directory": entry.get("working_directory"),
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            if signature in seen:
+                findings.append(
+                    Finding(
+                        "duplicate_command_implementation",
+                        document_type,
+                        "$.entries[{}]".format(index),
+                        "command duplicates implementation of {}".format(seen[signature]),
+                    )
+                )
+            seen[signature] = entry.get("id", "")
+    return findings
+
+
 class ContractValidator:
     def __init__(self) -> None:
         self.schemas = {name: load_json(path) for name, path in SCHEMA_PATHS.items()}
@@ -142,10 +249,10 @@ class ContractValidator:
         }
         registry_findings: List[Finding] = []
         for name, document in self.registries.items():
-            registry_findings.extend(self._schema_findings(name, document))
-            registry_findings.extend(
-                unique_ids(document.get("entries", []), name, "$.entries")
-            )
+            schema_findings = self._schema_findings(name, document)
+            registry_findings.extend(schema_findings)
+            if not schema_findings:
+                registry_findings.extend(registry_semantic_findings(name, document))
         if registry_findings:
             raise ValueError(
                 "invalid repository registry: {}".format(
@@ -161,6 +268,9 @@ class ContractValidator:
         self.command_ids = {
             entry["id"] for entry in self.registries["command_registry"]["entries"]
         }
+        self.required_fixture_catalogue = self.registries[
+            "fixture_coverage_registry"
+        ]["required_fixtures"]
 
     def _schema_findings(
         self, document_type: str, document: Mapping[str, Any]
@@ -292,6 +402,17 @@ class ContractValidator:
         for key in ("acceptance_results", "checks", "artifacts"):
             findings.extend(unique_ids(result[key], "result", "$.{}".format(key)))
         artifact_ids = {artifact["id"] for artifact in result["artifacts"]}
+        if result["status"] in ("change_proposed", "no_change_required") and not result[
+            "artifacts"
+        ]:
+            findings.append(
+                Finding(
+                    "missing_artifact",
+                    "result",
+                    "$.artifacts",
+                    "successful result must declare at least one artifact",
+                )
+            )
 
         references: List[Tuple[str, str]] = []
         for index, acceptance in enumerate(result["acceptance_results"]):
@@ -454,14 +575,25 @@ class ContractValidator:
             )
 
         criteria = {criterion["id"]: criterion for criterion in task["acceptance_criteria"]}
-        acceptance_results = {
-            item["id"]: item for item in result["acceptance_results"]
-        }
+        acceptance_results: Dict[str, List[Mapping[str, Any]]] = {}
+        for actual in result["acceptance_results"]:
+            acceptance_results.setdefault(actual["id"], []).append(actual)
+            if actual["id"] not in criteria:
+                findings.append(
+                    Finding(
+                        "unknown_acceptance_result",
+                        "task_result_pair",
+                        "$.acceptance_results",
+                        "acceptance result is not declared by task: {}".format(
+                            actual["id"]
+                        ),
+                    )
+                )
+
+        check_results = {check["id"]: check for check in result["checks"]}
         for criterion_id, criterion in criteria.items():
-            if not criterion["required"]:
-                continue
-            actual = acceptance_results.get(criterion_id)
-            if actual is None:
+            matches = acceptance_results.get(criterion_id, [])
+            if criterion["required"] and not matches:
                 findings.append(
                     Finding(
                         "acceptance_result_missing",
@@ -470,7 +602,22 @@ class ContractValidator:
                         "required acceptance result is missing: {}".format(criterion_id),
                     )
                 )
-            elif actual["predicate_id"] != criterion["predicate_id"]:
+                continue
+            if criterion["required"] and len(matches) != 1:
+                findings.append(
+                    Finding(
+                        "acceptance_result_cardinality",
+                        "task_result_pair",
+                        "$.acceptance_results",
+                        "required criterion must have exactly one result: {}".format(
+                            criterion_id
+                        ),
+                    )
+                )
+            if not matches:
+                continue
+            actual = matches[0]
+            if actual["predicate_id"] != criterion["predicate_id"]:
                 findings.append(
                     Finding(
                         "acceptance_predicate_mismatch",
@@ -479,7 +626,18 @@ class ContractValidator:
                         "acceptance predicate differs from task contract",
                     )
                 )
-            elif result["status"] in ("change_proposed", "no_change_required") and not actual["passed"]:
+            if actual["parameters"] != criterion["parameters"]:
+                findings.append(
+                    Finding(
+                        "acceptance_parameters_mismatch",
+                        "task_result_pair",
+                        "$.acceptance_results.{}.parameters".format(criterion_id),
+                        "acceptance parameters differ from task contract",
+                    )
+                )
+            if result["status"] in ("change_proposed", "no_change_required") and not actual[
+                "passed"
+            ]:
                 findings.append(
                     Finding(
                         "acceptance_failed",
@@ -488,9 +646,24 @@ class ContractValidator:
                         "successful result requires every required acceptance result to pass",
                     )
                 )
+            linked_evidence: Set[str] = set()
+            for linked_check_id in criterion["linked_checks"]:
+                linked_check = check_results.get(linked_check_id)
+                if linked_check is not None:
+                    linked_evidence.update(linked_check["evidence_artifact_ids"])
+            if set(actual["evidence_artifact_ids"]) != linked_evidence:
+                findings.append(
+                    Finding(
+                        "acceptance_evidence_mismatch",
+                        "task_result_pair",
+                        "$.acceptance_results.{}.evidence_artifact_ids".format(
+                            criterion_id
+                        ),
+                        "acceptance evidence must equal evidence from linked checks",
+                    )
+                )
 
         checks = {check["id"]: check for check in task["required_checks"]}
-        check_results = {check["id"]: check for check in result["checks"]}
         for check_id, check in checks.items():
             if not check["required"]:
                 continue
@@ -608,6 +781,18 @@ def validate_fixture(
                 )
             )
             continue
+        if absolute_path.stat().st_size > MAX_FIXTURE_DOCUMENT_BYTES:
+            findings.append(
+                Finding(
+                    "fixture_resource_limit_exceeded",
+                    document_spec["type"],
+                    "$.documents",
+                    "fixture file exceeds maximum size of {} bytes".format(
+                        MAX_FIXTURE_DOCUMENT_BYTES
+                    ),
+                )
+            )
+            continue
         actual_hash = sha256_file(absolute_path)
         if actual_hash != document_spec["sha256"]:
             findings.append(
@@ -635,8 +820,33 @@ def validate_fixture(
                 )
             )
             continue
+        if json_document_size(document) > MAX_FIXTURE_DOCUMENT_BYTES:
+            findings.append(
+                Finding(
+                    "fixture_resource_limit_exceeded",
+                    document_spec["type"],
+                    "$.documents",
+                    "fixture document exceeds maximum decoded size of {} bytes".format(
+                        MAX_FIXTURE_DOCUMENT_BYTES
+                    ),
+                )
+            )
+            continue
         loaded[document_spec["type"]] = document
-    for mutation in fixture.get("mutations", []):
+    mutations = fixture.get("mutations", [])
+    if len(mutations) > MAX_FIXTURE_MUTATIONS:
+        findings.append(
+            Finding(
+                "fixture_resource_limit_exceeded",
+                "fixture_manifest",
+                "$.mutations",
+                "fixture exceeds maximum mutation count of {}".format(
+                    MAX_FIXTURE_MUTATIONS
+                ),
+            )
+        )
+        mutations = []
+    for mutation in mutations:
         document_type = mutation["document_type"]
         if document_type not in loaded:
             findings.append(
@@ -650,6 +860,15 @@ def validate_fixture(
             continue
         try:
             apply_fixture_mutation(loaded[document_type], mutation)
+        except FixtureResourceLimitError as exc:
+            findings.append(
+                Finding(
+                    "fixture_resource_limit_exceeded",
+                    document_type,
+                    "$.mutations",
+                    str(exc),
+                )
+            )
         except (IndexError, KeyError, TypeError, ValueError) as exc:
             findings.append(
                 Finding(
@@ -687,6 +906,59 @@ def validate_fixture(
     }
 
 
+def required_fixture_coverage(
+    validator: ContractValidator, manifest: Mapping[str, Any]
+) -> Tuple[List[Finding], Dict[str, Any]]:
+    fixtures = {fixture.get("id"): fixture for fixture in manifest.get("fixtures", [])}
+    findings: List[Finding] = []
+    covered: List[str] = []
+    missing: List[str] = []
+    for required in validator.required_fixture_catalogue:
+        fixture_id = required["id"]
+        fixture = fixtures.get(fixture_id)
+        if fixture is None:
+            missing.append(fixture_id)
+            findings.append(
+                Finding(
+                    "required_fixture_missing",
+                    "fixture_manifest",
+                    "$.fixtures",
+                    "required failure-mode fixture is missing: {}".format(fixture_id),
+                )
+            )
+            continue
+        expected = fixture.get("expected", {})
+        normalized_expected = {
+            "valid": expected.get("valid"),
+            "exit_code": expected.get("exit_code"),
+            "error_codes": sorted(expected.get("error_codes", [])),
+        }
+        required_expected = {
+            "valid": required["expected"]["valid"],
+            "exit_code": required["expected"]["exit_code"],
+            "error_codes": sorted(required["expected"]["error_codes"]),
+        }
+        if normalized_expected != required_expected:
+            findings.append(
+                Finding(
+                    "required_fixture_expectation_mismatch",
+                    "fixture_manifest",
+                    "$.fixtures.{}.expected".format(fixture_id),
+                    "required fixture expectation differs from coverage registry",
+                )
+            )
+            continue
+        covered.append(fixture_id)
+    return findings, {
+        "catalogue_id": validator.registries["fixture_coverage_registry"][
+            "catalogue_id"
+        ],
+        "covered": sorted(covered),
+        "missing": sorted(missing),
+        "required": len(validator.required_fixture_catalogue),
+    }
+
+
 def run_suite(manifest_path: Path) -> Tuple[int, Dict[str, Any]]:
     validator = ContractValidator()
     manifest = load_json(manifest_path)
@@ -694,10 +966,13 @@ def run_suite(manifest_path: Path) -> Tuple[int, Dict[str, Any]]:
     manifest_findings.extend(
         unique_ids(manifest.get("fixtures", []), "fixture_manifest", "$.fixtures")
     )
+    coverage_findings, coverage = required_fixture_coverage(validator, manifest)
+    manifest_findings.extend(coverage_findings)
     if manifest_findings:
         report = {
             "authoritative_verifier": False,
             "bootstrap_scope": "B0",
+            "coverage": coverage,
             "fixtures": [],
             "manifest_findings": [
                 finding.as_dict()
@@ -720,6 +995,7 @@ def run_suite(manifest_path: Path) -> Tuple[int, Dict[str, Any]]:
     report = {
         "authoritative_verifier": False,
         "bootstrap_scope": "B0",
+        "coverage": coverage,
         "fixtures": fixture_results,
         "manifest_findings": [],
         "schema_version": "1.0.0",

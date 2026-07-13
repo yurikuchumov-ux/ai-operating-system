@@ -29,6 +29,7 @@
     {
       "id": "AC-1",
       "predicate_id": "schema.instance.valid",
+      "parameters": {"manifest": "fixtures/b0/manifest.v1.json"},
       "passed": true,
       "observed": {"fixture_pass_rate": 1.0},
       "evidence_artifact_ids": ["suite-report"]
