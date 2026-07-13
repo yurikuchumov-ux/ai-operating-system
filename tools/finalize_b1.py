@@ -14,6 +14,7 @@ import argparse
 import hashlib
 import json
 import os
+import stat
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -409,20 +410,69 @@ def write_exclusive(path: Path, data: bytes) -> None:
         ) from exc
     with os.fdopen(fd, "wb") as handle:
         handle.write(data)
+        handle.flush()
+        os.fsync(handle.fileno())
 
 
-def store_candidate_evidence(output_dir: Path, raw: bytes) -> Path:
+def _verify_preexisting_evidence(evidence_path: Path, raw: bytes) -> None:
+    """Fail closed unless a pre-existing evidence path is a genuine, matching copy.
+
+    A hash-addressed evidence path is only trustworthy if it is a regular
+    file (never a symlink or other special file), readable, and byte-for-byte
+    identical to the candidate bytes that hash to that path.
+    """
+    try:
+        lstat_result = evidence_path.lstat()
+    except OSError as exc:
+        raise FinalizerPolicyError(
+            "pre-existing evidence path is unreadable: {}".format(evidence_path)
+        ) from exc
+    if stat.S_ISLNK(lstat_result.st_mode):
+        raise FinalizerPolicyError(
+            "pre-existing evidence path is a symlink, refusing to publish: {}".format(
+                evidence_path
+            )
+        )
+    if not stat.S_ISREG(lstat_result.st_mode):
+        raise FinalizerPolicyError(
+            "pre-existing evidence path is not a regular file, refusing to publish: {}".format(
+                evidence_path
+            )
+        )
+    try:
+        existing = evidence_path.read_bytes()
+    except OSError as exc:
+        raise FinalizerPolicyError(
+            "pre-existing evidence path is unreadable: {}".format(evidence_path)
+        ) from exc
+    if existing != raw:
+        raise FinalizerPolicyError(
+            "pre-existing evidence content conflicts with its hash-addressed path: {}".format(
+                evidence_path
+            )
+        )
+
+
+def store_or_verify_evidence(output_dir: Path, raw: bytes) -> Path:
+    """Durably create hash-addressed evidence, or verify an existing copy.
+
+    This must complete successfully before a result referencing it is
+    published: a failure here (including a conflicting, unreadable,
+    symlinked, or non-regular pre-existing path) is fail-closed and no
+    result is written.
+    """
     digest = sha256_bytes(raw)
     evidence_path = output_dir / "evidence" / "{}.raw".format(digest)
     evidence_path.parent.mkdir(parents=True, exist_ok=True)
-    if evidence_path.exists():
-        return evidence_path
     try:
         fd = os.open(str(evidence_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o444)
     except FileExistsError:
+        _verify_preexisting_evidence(evidence_path, raw)
         return evidence_path
     with os.fdopen(fd, "wb") as handle:
         handle.write(raw)
+        handle.flush()
+        os.fsync(handle.fileno())
     return evidence_path
 
 
@@ -435,9 +485,20 @@ def finalize(
     validate_result_schema(result)
     data = canonical_bytes(result)
     result_path = output_dir / "result.json"
-    write_exclusive(result_path, data)
+    # Append-only: refuse before touching evidence, so a repeat attempt
+    # against an existing result never mutates or adds evidence.
+    if result_path.exists():
+        raise OverwriteRefused(
+            "finalized output already exists and will not be overwritten: {}".format(
+                result_path
+            )
+        )
+    # Evidence must be durably created (and verified, if already present)
+    # before the result that references it is published, so result.json can
+    # never point at candidate evidence that was not actually written.
     if has_storable_candidate_evidence(candidate):
-        store_candidate_evidence(output_dir, candidate.raw)
+        store_or_verify_evidence(output_dir, candidate.raw)
+    write_exclusive(result_path, data)
     return {
         "authoritative_verifier": False,
         "bootstrap_scope": "B1",

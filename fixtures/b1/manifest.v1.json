@@ -47,7 +47,7 @@
         "sha256": "a71c4d3a4efb3dcee8270173b88c9bbd9a1ef6d069b1937210aac65c7e10f69f"
       },
       "candidate": {
-        "path": "documents/candidate-malformed.json",
+        "path": "documents/candidate-malformed.raw",
         "sha256": "720c894b56fade833a9b90b12c80b244620aed9ec62498cb1947210be226be10"
       },
       "repeat": 1,
