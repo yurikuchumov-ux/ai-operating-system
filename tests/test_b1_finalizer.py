@@ -6,6 +6,8 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from typing import List
+from unittest import mock
 
 from jsonschema import Draft202012Validator, FormatChecker
 
@@ -24,7 +26,9 @@ from tools.finalize_b1 import (
     load_json,
     load_trusted_observation,
     run_suite,
+    store_or_verify_evidence,
     validate_result_schema,
+    write_exclusive,
 )
 
 
@@ -299,7 +303,7 @@ class B1FinalizerEvidenceBeforeResultTests(unittest.TestCase):
         # Occupy the evidence path with a plain file so evidence storage
         # fails before result.json is ever written.
         (output_dir / "evidence").write_bytes(b"not a directory")
-        with self.assertRaises(OSError):
+        with self.assertRaises(FinalizerPolicyError):
             finalize(
                 DOCUMENTS_DIR / "observation-success.json",
                 DOCUMENTS_DIR / "candidate-success.json",
@@ -397,6 +401,115 @@ class B1FinalizerEvidenceBeforeResultTests(unittest.TestCase):
             )
         evidence_after = sorted((output_dir / "evidence").iterdir())
         self.assertEqual(evidence_before, evidence_after)
+
+
+class B1FinalizerAtomicPublicationTests(unittest.TestCase):
+    """Regression coverage for fail-closed, atomic result/evidence publication.
+
+    `write_exclusive` and `store_or_verify_evidence` must never leave a
+    visible final path unless every byte was durably written and fsynced:
+    a failure at any earlier step must be reported as FinalizerPolicyError
+    (or, for a genuine pre-existing artifact, OverwriteRefused) and must
+    leave no staging file behind.
+    """
+
+    @staticmethod
+    def _staging_files(output_dir: Path) -> List[Path]:
+        if not output_dir.exists():
+            return []
+        return sorted(output_dir.rglob("*.tmp"))
+
+    def test_result_fsync_failure_is_a_policy_error_and_leaves_no_result(self) -> None:
+        output_dir = _tmp_dir() / "result-fsync-failure"
+        raw = (DOCUMENTS_DIR / "candidate-success.json").read_bytes()
+        digest = hashlib.sha256(raw).hexdigest()
+        evidence_dir = output_dir / "evidence"
+        evidence_dir.mkdir(parents=True)
+        # Pre-seed matching evidence so evidence publication takes the
+        # verify-only path (no write/fsync of its own), isolating the
+        # injected failure to the result.json publication step.
+        (evidence_dir / "{}.raw".format(digest)).write_bytes(raw)
+        with mock.patch(
+            "tools.finalize_b1.os.fsync", side_effect=OSError("simulated fsync failure")
+        ):
+            with self.assertRaises(FinalizerPolicyError):
+                finalize(
+                    DOCUMENTS_DIR / "observation-success.json",
+                    DOCUMENTS_DIR / "candidate-success.json",
+                    output_dir,
+                )
+        self.assertFalse((output_dir / "result.json").exists())
+        self.assertEqual([], self._staging_files(output_dir))
+
+    def test_evidence_fsync_failure_is_a_policy_error_and_leaves_no_evidence_or_result(
+        self,
+    ) -> None:
+        output_dir = _tmp_dir() / "evidence-fsync-failure"
+        with mock.patch(
+            "tools.finalize_b1.os.fsync", side_effect=OSError("simulated fsync failure")
+        ):
+            with self.assertRaises(FinalizerPolicyError):
+                finalize(
+                    DOCUMENTS_DIR / "observation-success.json",
+                    DOCUMENTS_DIR / "candidate-success.json",
+                    output_dir,
+                )
+        self.assertFalse((output_dir / "result.json").exists())
+        evidence_dir = output_dir / "evidence"
+        if evidence_dir.exists():
+            self.assertEqual([], list(evidence_dir.iterdir()))
+        self.assertEqual([], self._staging_files(output_dir))
+
+    def test_result_publish_link_failure_is_a_policy_error_and_leaves_no_result(
+        self,
+    ) -> None:
+        output_dir = _tmp_dir() / "result-link-failure"
+        raw = (DOCUMENTS_DIR / "candidate-success.json").read_bytes()
+        digest = hashlib.sha256(raw).hexdigest()
+        evidence_dir = output_dir / "evidence"
+        evidence_dir.mkdir(parents=True)
+        (evidence_dir / "{}.raw".format(digest)).write_bytes(raw)
+        with mock.patch(
+            "tools.finalize_b1.os.link", side_effect=OSError("simulated disk full")
+        ):
+            with self.assertRaises(FinalizerPolicyError):
+                finalize(
+                    DOCUMENTS_DIR / "observation-success.json",
+                    DOCUMENTS_DIR / "candidate-success.json",
+                    output_dir,
+                )
+        self.assertFalse((output_dir / "result.json").exists())
+        self.assertEqual([], self._staging_files(output_dir))
+
+    def test_write_exclusive_stages_then_publishes_and_still_refuses_overwrite(
+        self,
+    ) -> None:
+        output_dir = _tmp_dir() / "write-exclusive-overwrite"
+        output_dir.mkdir(parents=True)
+        result_path = output_dir / "result.json"
+        write_exclusive(result_path, b'{"a":1}\n')
+        original = result_path.read_bytes()
+        with self.assertRaises(OverwriteRefused):
+            write_exclusive(result_path, b'{"a":2}\n')
+        # unchanged overwrite semantics: the original artifact survives a
+        # refused second publish attempt untouched
+        self.assertEqual(original, result_path.read_bytes())
+        self.assertEqual([], self._staging_files(output_dir))
+
+    def test_store_or_verify_evidence_write_fsync_failure_is_policy_error(
+        self,
+    ) -> None:
+        output_dir = _tmp_dir() / "evidence-primitive-fsync-failure"
+        output_dir.mkdir(parents=True)
+        raw = b"some evidence bytes for the primitive-level test"
+        with mock.patch(
+            "tools.finalize_b1.os.fsync", side_effect=OSError("simulated fsync failure")
+        ):
+            with self.assertRaises(FinalizerPolicyError):
+                store_or_verify_evidence(output_dir, raw)
+        digest = hashlib.sha256(raw).hexdigest()
+        self.assertFalse((output_dir / "evidence" / "{}.raw".format(digest)).exists())
+        self.assertEqual([], self._staging_files(output_dir))
 
 
 if __name__ == "__main__":
