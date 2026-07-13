@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import tempfile
 import unittest
@@ -159,7 +160,7 @@ class B1FinalizerTrustBoundaryTests(unittest.TestCase):
         output_dir = _tmp_dir() / "malformed"
         finalize(
             DOCUMENTS_DIR / "observation-malformed-candidate.json",
-            DOCUMENTS_DIR / "candidate-malformed.json",
+            DOCUMENTS_DIR / "candidate-malformed.raw",
             output_dir,
         )
         result = load_json(output_dir / "result.json")
@@ -287,6 +288,115 @@ class B1FinalizerExactlyOnceTests(unittest.TestCase):
         observation = load_json(DOCUMENTS_DIR / "observation-success.json")
         benign_candidate = {"summary": "no conflicting claims here"}
         self.assertEqual((), detect_override_attempts(observation, benign_candidate))
+
+
+class B1FinalizerEvidenceBeforeResultTests(unittest.TestCase):
+    """Regression coverage for the evidence-before-result publication invariant."""
+
+    def test_evidence_storage_failure_prevents_result_publication(self) -> None:
+        output_dir = _tmp_dir() / "evidence-before-result"
+        output_dir.mkdir(parents=True)
+        # Occupy the evidence path with a plain file so evidence storage
+        # fails before result.json is ever written.
+        (output_dir / "evidence").write_bytes(b"not a directory")
+        with self.assertRaises(OSError):
+            finalize(
+                DOCUMENTS_DIR / "observation-success.json",
+                DOCUMENTS_DIR / "candidate-success.json",
+                output_dir,
+            )
+        self.assertFalse((output_dir / "result.json").exists())
+
+    def test_conflicting_preexisting_evidence_fails_closed_without_publishing(
+        self,
+    ) -> None:
+        output_dir = _tmp_dir() / "conflicting-evidence"
+        raw = (DOCUMENTS_DIR / "candidate-success.json").read_bytes()
+        digest = hashlib.sha256(raw).hexdigest()
+        evidence_dir = output_dir / "evidence"
+        evidence_dir.mkdir(parents=True)
+        (evidence_dir / "{}.raw".format(digest)).write_bytes(b"tampered evidence content")
+        with self.assertRaises(FinalizerPolicyError):
+            finalize(
+                DOCUMENTS_DIR / "observation-success.json",
+                DOCUMENTS_DIR / "candidate-success.json",
+                output_dir,
+            )
+        self.assertFalse((output_dir / "result.json").exists())
+
+    def test_symlinked_preexisting_evidence_fails_closed_without_publishing(
+        self,
+    ) -> None:
+        output_dir = _tmp_dir() / "symlinked-evidence"
+        raw = (DOCUMENTS_DIR / "candidate-success.json").read_bytes()
+        digest = hashlib.sha256(raw).hexdigest()
+        evidence_dir = output_dir / "evidence"
+        evidence_dir.mkdir(parents=True)
+        decoy = output_dir / "decoy.raw"
+        decoy.write_bytes(raw)
+        (evidence_dir / "{}.raw".format(digest)).symlink_to(decoy)
+        with self.assertRaises(FinalizerPolicyError):
+            finalize(
+                DOCUMENTS_DIR / "observation-success.json",
+                DOCUMENTS_DIR / "candidate-success.json",
+                output_dir,
+            )
+        self.assertFalse((output_dir / "result.json").exists())
+
+    def test_non_regular_preexisting_evidence_fails_closed_without_publishing(
+        self,
+    ) -> None:
+        output_dir = _tmp_dir() / "non-regular-evidence"
+        raw = (DOCUMENTS_DIR / "candidate-success.json").read_bytes()
+        digest = hashlib.sha256(raw).hexdigest()
+        evidence_dir = output_dir / "evidence"
+        evidence_dir.mkdir(parents=True)
+        (evidence_dir / "{}.raw".format(digest)).mkdir()
+        with self.assertRaises(FinalizerPolicyError):
+            finalize(
+                DOCUMENTS_DIR / "observation-success.json",
+                DOCUMENTS_DIR / "candidate-success.json",
+                output_dir,
+            )
+        self.assertFalse((output_dir / "result.json").exists())
+
+    def test_matching_preexisting_evidence_is_accepted_and_result_publishes(
+        self,
+    ) -> None:
+        output_dir = _tmp_dir() / "matching-evidence"
+        raw = (DOCUMENTS_DIR / "candidate-success.json").read_bytes()
+        digest = hashlib.sha256(raw).hexdigest()
+        evidence_dir = output_dir / "evidence"
+        evidence_dir.mkdir(parents=True)
+        (evidence_dir / "{}.raw".format(digest)).write_bytes(raw)
+        finalize(
+            DOCUMENTS_DIR / "observation-success.json",
+            DOCUMENTS_DIR / "candidate-success.json",
+            output_dir,
+        )
+        self.assertTrue((output_dir / "result.json").exists())
+
+    def test_repeat_attempt_against_existing_result_adds_no_new_evidence(
+        self,
+    ) -> None:
+        output_dir = _tmp_dir() / "no-evidence-on-repeat"
+        finalize(
+            DOCUMENTS_DIR / "observation-success.json",
+            DOCUMENTS_DIR / "candidate-success.json",
+            output_dir,
+        )
+        evidence_before = sorted((output_dir / "evidence").iterdir())
+        # A different observation/candidate pair hashes to different
+        # evidence bytes; the refused repeat must not add that new evidence
+        # even though it never conflicts with what is already on disk.
+        with self.assertRaises(OverwriteRefused):
+            finalize(
+                DOCUMENTS_DIR / "observation-executor-failure.json",
+                DOCUMENTS_DIR / "candidate-executor-failure.json",
+                output_dir,
+            )
+        evidence_after = sorted((output_dir / "evidence").iterdir())
+        self.assertEqual(evidence_before, evidence_after)
 
 
 if __name__ == "__main__":

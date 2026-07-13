@@ -53,9 +53,13 @@ result.v1.schema.json`:
 - missing, malformed, empty, or oversized candidate input still produces one
   valid `failed` result whenever the trusted observation is sufficient — the
   finalizer never blocks on a broken candidate;
-- writes are append-only and fail-closed: the finalized `result.json` is
-  created with an exclusive-create system call and a second finalize attempt
-  against the same output directory is refused, never silently overwritten;
+- writes are append-only and fail-closed: a finalize attempt against an
+  output directory that already holds a `result.json` is refused before any
+  evidence is touched, and evidence is durably written and byte-for-byte
+  verified before `result.json` is created with an exclusive-create system
+  call, so a published result can never reference candidate evidence that
+  was not actually written; a conflicting, unreadable, symlinked, or
+  non-regular pre-existing evidence path fails closed instead of publishing;
 - output is canonical JSON (sorted keys, compact separators) so the same
   trusted input always finalizes to byte-identical bytes;
 - repository fixture and candidate processing is bounded by a small, explicit
