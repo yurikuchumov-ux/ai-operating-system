@@ -1,0 +1,7 @@
+{
+  "operator_principal": "service:b2-verifier",
+  "agent_runtime_id": "deterministic:b2-verifier:1.0.0",
+  "credential_principal": "none:offline",
+  "delegation_parent": "fixture:b2-verifier",
+  "role": "verifier"
+}

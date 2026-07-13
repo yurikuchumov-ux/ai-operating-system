@@ -1,0 +1,73 @@
+{
+  "schema_version": "1.0.0",
+  "task_id": "yurikuchumov-ux/ai-operating-system#18",
+  "execution_id": "22222222-2222-4222-8222-222222222222",
+  "attempt": 1,
+  "executor": {
+    "adapter": "human-supervised-bootstrap",
+    "adapter_version": "B2",
+    "identity": {
+      "operator_principal": "github:yurikuchumov-ux",
+      "agent_runtime_id": "openai:codex:b2-session",
+      "credential_principal": "github:user:yurikuchumov-ux",
+      "delegation_parent": "issue-18-owner-decision",
+      "role": "author"
+    }
+  },
+  "started_at": "2026-07-13T09:01:00Z",
+  "finished_at": "2026-07-13T09:05:00Z",
+  "base_sha": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0",
+  "head_sha": "c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1",
+  "status": "change_proposed",
+  "terminal_reason": "completed",
+  "raw_provider_terminal_reason": null,
+  "no_change_reason": null,
+  "no_change_evidence": [],
+  "authored_commits": [
+    "d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2"
+  ],
+  "changed_files": [
+    "src/app.py"
+  ],
+  "acceptance_results": [
+    {
+      "id": "AC-1",
+      "predicate_id": "process.exit_code.equals",
+      "parameters": {
+        "value": 0
+      },
+      "passed": true,
+      "observed": {
+        "exit_code": 0
+      },
+      "evidence_artifact_ids": [
+        "artifact-does-not-exist"
+      ]
+    }
+  ],
+  "checks": [
+    {
+      "id": "contracts",
+      "command_id": "repo.contracts.tests",
+      "exit_code": 0,
+      "evidence_artifact_ids": [
+        "artifact-1"
+      ]
+    }
+  ],
+  "artifacts": [
+    {
+      "id": "artifact-1",
+      "path": "b2-demo.txt",
+      "sha256": "aebd9e4fdd287dba8b775723e0b8a08b4e26e1a16fbd13a023744390917d632e",
+      "media_type": "text/plain",
+      "size_bytes": 17
+    }
+  ],
+  "finalized_by": {
+    "component_id": "b1-result-finalizer.v1",
+    "credential_principal": "bootstrap:human-supervised"
+  },
+  "warnings": [],
+  "error": null
+}

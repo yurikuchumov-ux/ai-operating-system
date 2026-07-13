@@ -1,13 +1,15 @@
-# B0/B1 contract bootstrap
+# B0/B1/B2 contract bootstrap
 
 This directory (together with `../tools`, `../tests`, and `../fixtures`)
-implements only the owner-approved `B0` and `B1` scope of Issue #18. `B0`
-provides versioned data contracts, versioned registries, deterministic
+implements only the owner-approved `B0`, `B1`, and `B2` scope of Issue #18.
+`B0` provides versioned data contracts, versioned registries, deterministic
 offline validation, and hash-pinned fixtures. `B1` adds a deterministic,
 human-supervised harness and a trusted always-run result finalizer that
-consumes those `B0` contracts. Neither step implements a GitHub Actions
-adapter, authoritative verifier, Check Run publisher, or automated
-delegation.
+consumes those `B0` contracts. `B2` adds a bounded, deterministic offline
+verifier that evaluates a fixed set of registered predicates over `B0`
+contract documents and a `B1`-shaped result. None of these steps implements
+a GitHub Actions adapter, Check Run publisher, or automated merge/
+delegation pipeline.
 
 ## Canonical B0 boundary
 
@@ -101,6 +103,77 @@ authoritative verification result or a working delegation pipeline.
   trust boundary (candidate override attempts, bounded inputs, fail-closed
   trusted-input errors) and its exactly-once, append-only write behavior.
 
+## Canonical B2 boundary
+
+B2 is a bounded, deterministic, offline verifier built entirely against the
+existing `contracts/schemas/task.v1.schema.json`,
+`contracts/schemas/result.v1.schema.json`,
+`contracts/schemas/review-attestation.v1.schema.json`, and
+`contracts/schemas/verification.v1.schema.json`:
+
+- the verifier (`../tools/verify_b2.py`) consumes trusted invocation metadata
+  supplied entirely by its caller -- `verification_id`, `evaluated_at`, the
+  expected task ID, execution ID, base SHA, and subject/head SHA, and the
+  verifier identity -- plus a task, a finalized result, a review-attestation,
+  a Git observation, and evidence bytes rooted under one evidence directory.
+  It never generates time, UUIDs, or identity itself;
+- it evaluates exactly the closed, ordered set of 14 predicate IDs required
+  by `AC-B2-5` (`schema.instance.valid`, `binding.task_id.equals`,
+  `binding.execution_id.equals`, `git.base_sha.equals`,
+  `git.head_sha.equals`, `git.changed_paths.allowed`, `git.diff.non_empty`,
+  `process.exit_code.equals`, `acceptance.required.passed`,
+  `artifact.exists`, `artifact.sha256.matches`, `review.subject_sha.equals`,
+  `review.eligibility.passed`, `identity.lineage.no_overlap`). A task or
+  result reference to any predicate ID outside the repository predicate
+  registry (`contracts/registries/predicates.v1.json`) fails closed with
+  `unknown_predicate`;
+- the report always validates against `contracts/schemas/verification.v1.schema.json`,
+  whether the run is a semantic pass (`passed: true`, exit code 0) or a
+  semantic or input failure (`passed: false`, exit code 1); an unreadable,
+  malformed, oversized, or schema-invalid input document still produces
+  exactly one schema-valid `verification.v1` report with a single failing
+  `schema.instance.valid` predicate result, rather than an uncaught
+  traceback;
+- evidence bytes are read through one bounded, no-follow descriptor rooted
+  at a caller-supplied evidence directory: paths must be relative and stay
+  contained under that root, only regular files are read, symlinked or
+  non-regular targets and out-of-root escapes are rejected, reads are capped
+  at 1 MiB, and the file's device/inode binding is re-checked after the read
+  to detect mutation or rebinding during verification;
+- output is canonical JSON (sorted keys, compact separators), so identical
+  trusted input -- including the trusted invocation metadata -- always
+  verifies to byte-identical report bytes; the report is published by
+  writing to a private staging file, fsyncing it, and only then
+  hard-linking it into its final, immutable path, so a write, fsync, or
+  link failure never leaves a partial or missing-but-referenced report at
+  the final path, and an existing report at that path is never overwritten;
+- no component in B2 has GitHub Actions, Check Run, or merge/delegation
+  authority; it is a fixed, offline predicate evaluator over trusted,
+  caller-supplied input only.
+
+These limits are normative. B2 evidence must not be represented as a working
+Actions adapter, Check Run publisher, or automated merge/delegation
+pipeline.
+
+## Contents (B2)
+
+- `../tools/verify_b2.py`: the deterministic offline verifier -- trusted
+  invocation loader, bounded task/result/review-attestation/Git-observation
+  loader, the fixed 14-predicate evaluator, and the
+  stage-then-atomically-link report publisher, plus a `suite` subcommand
+  that runs the immutable B2 fixture manifest;
+- `../fixtures/b2/manifest.v1.json`: immutable fixture definitions for all
+  18 contract-oracle scenarios, with SHA-256 hashes over every fixture
+  document and the trusted invocation metadata used to evaluate it;
+- `../fixtures/b2/documents/`: the hash-pinned task, result,
+  review-attestation, Git-observation, and evidence-root documents
+  referenced by the manifest;
+- `../tests/test_b2_verifier.py`: fixture-oracle regression tests (exit
+  code, `passed`, and exact failure-code set per scenario) plus direct
+  security/failure injection for symlinked and path-escaping evidence,
+  evidence mutation/rebinding, output collision, and staging
+  write/fsync/link failure.
+
 ## Local validation
 
 ```bash
@@ -108,8 +181,10 @@ python3 -m venv .venv
 .venv/bin/python -m pip install --disable-pip-version-check --no-input -r requirements-b0.txt
 .venv/bin/python tools/validate_b0.py suite --manifest fixtures/b0/manifest.v1.json
 .venv/bin/python tools/finalize_b1.py suite --manifest fixtures/b1/manifest.v1.json
+.venv/bin/python tools/verify_b2.py suite --manifest fixtures/b2/manifest.v1.json
 .venv/bin/python -m unittest discover -s tests -p 'test_b0_contracts.py'
 .venv/bin/python -m unittest discover -s tests -p 'test_b1_finalizer.py'
+.venv/bin/python -m unittest discover -s tests -p 'test_b2_verifier.py'
 ```
 
 The B0 fixture suite succeeds only when all positive and negative cases match
@@ -129,6 +204,12 @@ with its declared sequence of exit codes and, where declared, produces a
 A hash change in any source fixture document fails closed before any
 finalize attempt runs.
 
+The B2 fixture suite succeeds only when every one of the 18 contract-oracle
+scenarios matches its declared exit code, `passed` value, and exact
+failure-code set, and the `deterministic-repeat` scenario's two runs
+publish byte-identical `verification.v1` reports. A hash change in any
+source fixture document fails closed before any verification attempt runs.
+
 Every report contains:
 
 ```json
@@ -138,6 +219,7 @@ Every report contains:
 }
 ```
 
-(or `"bootstrap_scope": "B1"` for the finalizer suite). These flags are
-normative: B0 and B1 evidence must not be represented as a working truthful
-execution pipeline.
+(or `"bootstrap_scope": "B1"` / `"bootstrap_scope": "B2"` for the finalizer
+and verifier suites, respectively). These flags are normative: B0, B1, and
+B2 evidence must not be represented as a working truthful execution
+pipeline.

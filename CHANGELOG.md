@@ -1,6 +1,35 @@
 # Changelog
 
 ## Unreleased
+- Add the B2 deterministic offline verifier (`tools/verify_b2.py`): it
+  consumes trusted invocation metadata supplied entirely by its caller
+  (verification ID, evaluated-at timestamp, expected task/execution/base/
+  subject SHAs, and verifier identity -- never generated internally) plus a
+  `task.v1`, a finalized `result.v1`, a `review-attestation.v1`, a Git
+  observation, and evidence bytes, and emits exactly one schema-valid
+  `verification.v1` report. It evaluates only the fixed, ordered set of 14
+  registered predicate IDs required by `AC-B2-5`, adding exactly the four
+  new predicate registry entries it prescribes
+  (`binding.task_id.equals`, `binding.execution_id.equals`,
+  `review.subject_sha.equals`, `review.eligibility.passed`) to
+  `contracts/registries/predicates.v1.json`; any task or result reference to
+  a predicate ID outside that registry fails closed with `unknown_predicate`.
+  Evidence bytes are read through one bounded, no-follow descriptor rooted
+  at a caller-supplied evidence directory -- relative, contained, regular
+  files only, capped at 1 MiB, with a post-read device/inode rebind check --
+  and the report is published by staging, fsyncing, and atomically
+  hard-linking it into place, so it is never overwritten and no failure
+  before that link step leaves a partial or missing-but-referenced report
+  behind. Output is canonical JSON, so identical trusted input (including
+  the trusted invocation metadata) always verifies to byte-identical bytes.
+  Adds the immutable, hash-pinned B2 fixture manifest and documents
+  (`fixtures/b2/manifest.v1.json`) covering all 18 scenarios of the
+  Issue #18 B2 contract oracle, plus `tests/test_b2_verifier.py` with
+  fixture-oracle regression coverage and direct security/failure injection
+  for symlinked/path-escaping evidence, evidence mutation and rebinding,
+  output collision, and staging write/fsync/link failure. B2 is
+  non-authoritative bootstrap evidence: no Actions workflow, Check Run
+  publisher, or merge/delegation authority is added.
 - Close the B1 pre-existing-evidence TOCTOU gap: verification now opens once
   with `O_NOFOLLOW`, uses `fstat` and descriptor-only bounded reads, rejects
   mutation during reading, and confirms the final pathname still names the
