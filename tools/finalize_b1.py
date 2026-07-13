@@ -428,20 +428,31 @@ def _write_staged_file(directory: Path, name_hint: str, data: bytes, mode: int, 
             "failed to stage {}: {}".format(error_context, exc)
         ) from exc
     tmp_path = Path(tmp_name)
+    failure: Optional[OSError] = None
     try:
-        with os.fdopen(fd, "wb") as handle:
-            handle.write(data)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.chmod(tmp_path, mode)
+        offset = 0
+        while offset < len(data):
+            written = os.write(fd, data[offset:])
+            if written <= 0:
+                raise OSError("staging write returned no progress")
+            offset += written
+        os.fchmod(fd, mode)
+        os.fsync(fd)
     except OSError as exc:
+        failure = exc
+    try:
+        os.close(fd)
+    except OSError as exc:
+        if failure is None:
+            failure = exc
+    if failure is not None:
         try:
             tmp_path.unlink()
         except OSError:
             pass
         raise FinalizerPolicyError(
-            "failed to stage {}: {}".format(error_context, exc)
-        ) from exc
+            "failed to stage {}: {}".format(error_context, failure)
+        ) from failure
     return tmp_path
 
 
@@ -488,40 +499,97 @@ def write_exclusive(path: Path, data: bytes) -> None:
 def _verify_preexisting_evidence(evidence_path: Path, raw: bytes) -> None:
     """Fail closed unless a pre-existing evidence path is a genuine, matching copy.
 
-    A hash-addressed evidence path is only trustworthy if it is a regular
-    file (never a symlink or other special file), readable, and byte-for-byte
-    identical to the candidate bytes that hash to that path.
+    The path is opened once with no-follow semantics, inspected and read only
+    through that descriptor, then rebound to the pathname by device/inode.
+    Platforms without a real O_NOFOLLOW capability fail closed.
     """
+    no_follow = getattr(os, "O_NOFOLLOW", None)
+    if not isinstance(no_follow, int) or no_follow == 0:
+        raise FinalizerPolicyError(
+            "safe pre-existing evidence verification is unavailable: "
+            "O_NOFOLLOW is unsupported"
+        )
+    flags = (
+        os.O_RDONLY
+        | no_follow
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NONBLOCK", 0)
+    )
     try:
-        lstat_result = evidence_path.lstat()
+        fd = os.open(str(evidence_path), flags)
     except OSError as exc:
         raise FinalizerPolicyError(
-            "pre-existing evidence path is unreadable: {}".format(evidence_path)
+            "pre-existing evidence path cannot be opened safely: {}".format(
+                evidence_path
+            )
         ) from exc
-    if stat.S_ISLNK(lstat_result.st_mode):
-        raise FinalizerPolicyError(
-            "pre-existing evidence path is a symlink, refusing to publish: {}".format(
-                evidence_path
-            )
-        )
-    if not stat.S_ISREG(lstat_result.st_mode):
-        raise FinalizerPolicyError(
-            "pre-existing evidence path is not a regular file, refusing to publish: {}".format(
-                evidence_path
-            )
-        )
     try:
-        existing = evidence_path.read_bytes()
+        before = os.fstat(fd)
+        if not stat.S_ISREG(before.st_mode):
+            raise FinalizerPolicyError(
+                "pre-existing evidence descriptor is not a regular file: {}".format(
+                    evidence_path
+                )
+            )
+        chunks: List[bytes] = []
+        remaining = MAX_INPUT_BYTES + 1
+        while remaining > 0:
+            chunk = os.read(fd, min(64 * 1024, remaining))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        existing = b"".join(chunks)
+        after = os.fstat(fd)
+        stable_fields = (
+            "st_dev",
+            "st_ino",
+            "st_size",
+            "st_mtime_ns",
+            "st_ctime_ns",
+        )
+        if any(getattr(before, name) != getattr(after, name) for name in stable_fields):
+            raise FinalizerPolicyError(
+                "pre-existing evidence changed while it was being read: {}".format(
+                    evidence_path
+                )
+            )
+        try:
+            bound = os.stat(evidence_path, follow_symlinks=False)
+        except (OSError, NotImplementedError) as exc:
+            raise FinalizerPolicyError(
+                "pre-existing evidence path binding is unverifiable: {}".format(
+                    evidence_path
+                )
+            ) from exc
+        if not stat.S_ISREG(bound.st_mode) or (
+            bound.st_dev,
+            bound.st_ino,
+        ) != (
+            after.st_dev,
+            after.st_ino,
+        ):
+            raise FinalizerPolicyError(
+                "pre-existing evidence path changed during verification: {}".format(
+                    evidence_path
+                )
+            )
+        if existing != raw:
+            raise FinalizerPolicyError(
+                "pre-existing evidence content conflicts with its "
+                "hash-addressed path: {}".format(evidence_path)
+            )
     except OSError as exc:
         raise FinalizerPolicyError(
-            "pre-existing evidence path is unreadable: {}".format(evidence_path)
-        ) from exc
-    if existing != raw:
-        raise FinalizerPolicyError(
-            "pre-existing evidence content conflicts with its hash-addressed path: {}".format(
+            "pre-existing evidence descriptor is unreadable: {}".format(
                 evidence_path
             )
-        )
+        ) from exc
+    finally:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
 
 
 def store_or_verify_evidence(output_dir: Path, raw: bytes) -> Path:

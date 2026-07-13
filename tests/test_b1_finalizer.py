@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -12,6 +13,7 @@ from unittest import mock
 from jsonschema import Draft202012Validator, FormatChecker
 
 from tools.finalize_b1 import (
+    _verify_preexisting_evidence,
     MAX_INPUT_BYTES,
     MAX_JSON_DEPTH,
     CandidateOutcome,
@@ -380,6 +382,50 @@ class B1FinalizerEvidenceBeforeResultTests(unittest.TestCase):
         )
         self.assertTrue((output_dir / "result.json").exists())
 
+    def test_preexisting_evidence_is_opened_with_no_follow(self) -> None:
+        output_dir = _tmp_dir() / "no-follow"
+        raw = b"descriptor-safe evidence"
+        digest = hashlib.sha256(raw).hexdigest()
+        evidence_dir = output_dir / "evidence"
+        evidence_dir.mkdir(parents=True)
+        evidence_path = evidence_dir / "{}.raw".format(digest)
+        evidence_path.write_bytes(raw)
+        real_open = os.open
+        observed_flags: List[int] = []
+
+        def recording_open(path: str, flags: int, *args: object) -> int:
+            observed_flags.append(flags)
+            return real_open(path, flags, *args)
+
+        with mock.patch("tools.finalize_b1.os.open", side_effect=recording_open):
+            _verify_preexisting_evidence(evidence_path, raw)
+        self.assertEqual(1, len(observed_flags))
+        self.assertEqual(os.O_NOFOLLOW, observed_flags[0] & os.O_NOFOLLOW)
+
+    def test_preexisting_evidence_path_rebinding_fails_closed(self) -> None:
+        output_dir = _tmp_dir() / "path-rebinding"
+        output_dir.mkdir(parents=True)
+        evidence_path = output_dir / "evidence.raw"
+        replacement_path = output_dir / "replacement.raw"
+        raw = b"same bytes, different inode"
+        evidence_path.write_bytes(raw)
+        replacement_path.write_bytes(raw)
+        replacement_stat = replacement_path.stat()
+        with mock.patch(
+            "tools.finalize_b1.os.stat", return_value=replacement_stat
+        ):
+            with self.assertRaises(FinalizerPolicyError):
+                _verify_preexisting_evidence(evidence_path, raw)
+
+    def test_platform_without_no_follow_fails_closed(self) -> None:
+        output_dir = _tmp_dir() / "no-no-follow"
+        evidence_path = output_dir / "evidence.raw"
+        output_dir.mkdir(parents=True)
+        evidence_path.write_bytes(b"evidence")
+        with mock.patch.object(os, "O_NOFOLLOW", 0):
+            with self.assertRaises(FinalizerPolicyError):
+                _verify_preexisting_evidence(evidence_path, b"evidence")
+
     def test_repeat_attempt_against_existing_result_adds_no_new_evidence(
         self,
     ) -> None:
@@ -447,6 +493,42 @@ class B1FinalizerAtomicPublicationTests(unittest.TestCase):
         output_dir = _tmp_dir() / "evidence-fsync-failure"
         with mock.patch(
             "tools.finalize_b1.os.fsync", side_effect=OSError("simulated fsync failure")
+        ):
+            with self.assertRaises(FinalizerPolicyError):
+                finalize(
+                    DOCUMENTS_DIR / "observation-success.json",
+                    DOCUMENTS_DIR / "candidate-success.json",
+                    output_dir,
+                )
+        self.assertFalse((output_dir / "result.json").exists())
+        evidence_dir = output_dir / "evidence"
+        if evidence_dir.exists():
+            self.assertEqual([], list(evidence_dir.iterdir()))
+        self.assertEqual([], self._staging_files(output_dir))
+
+    def test_result_write_failure_is_a_policy_error_and_leaves_no_result(self) -> None:
+        output_dir = _tmp_dir() / "result-write-failure"
+        raw = (DOCUMENTS_DIR / "candidate-success.json").read_bytes()
+        digest = hashlib.sha256(raw).hexdigest()
+        evidence_dir = output_dir / "evidence"
+        evidence_dir.mkdir(parents=True)
+        (evidence_dir / "{}.raw".format(digest)).write_bytes(raw)
+        with mock.patch(
+            "tools.finalize_b1.os.write", side_effect=OSError("simulated write failure")
+        ):
+            with self.assertRaises(FinalizerPolicyError):
+                finalize(
+                    DOCUMENTS_DIR / "observation-success.json",
+                    DOCUMENTS_DIR / "candidate-success.json",
+                    output_dir,
+                )
+        self.assertFalse((output_dir / "result.json").exists())
+        self.assertEqual([], self._staging_files(output_dir))
+
+    def test_evidence_write_failure_leaves_no_evidence_or_result(self) -> None:
+        output_dir = _tmp_dir() / "evidence-write-failure"
+        with mock.patch(
+            "tools.finalize_b1.os.write", side_effect=OSError("simulated write failure")
         ):
             with self.assertRaises(FinalizerPolicyError):
                 finalize(

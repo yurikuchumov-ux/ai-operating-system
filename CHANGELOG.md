@@ -1,6 +1,13 @@
 # Changelog
 
 ## Unreleased
+- Close the B1 pre-existing-evidence TOCTOU gap: verification now opens once
+  with `O_NOFOLLOW`, uses `fstat` and descriptor-only bounded reads, rejects
+  mutation during reading, and confirms the final pathname still names the
+  same regular-file device/inode. Platforms without effective no-follow
+  semantics fail closed. Staging now uses unbuffered `os.write` loops, with
+  direct write-failure regression tests proving no final or temporary artifact
+  survives a failed publication.
 - Fix the B1 finalizer's publication atomicity: `result.json` and newly
   created evidence were previously written directly at their final,
   exclusive-create path, so a write or `fsync` failure partway through could

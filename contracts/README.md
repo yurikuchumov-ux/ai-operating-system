@@ -58,12 +58,17 @@ result.v1.schema.json`:
   evidence is touched, and evidence is durably written and byte-for-byte
   verified before `result.json` is published, so a published result can
   never reference candidate evidence that was not actually written; a
-  conflicting, unreadable, symlinked, or non-regular pre-existing evidence
-  path fails closed instead of publishing;
+  conflicting, unreadable, symlinked, non-regular, concurrently replaced, or
+  path-rebound pre-existing evidence fails closed instead of publishing. The
+  existing object is opened once with `O_NOFOLLOW`, inspected and read through
+  that descriptor, and rebound by device/inode before result publication;
+  platforms without effective no-follow support fail closed. This detects
+  replacement during verification; the human-supervised B1 harness must still
+  keep the output directory under exclusive control through publication;
 - both `result.json` and newly created evidence are published atomically: the
-  bytes are written to a private staging file in the same directory, flushed,
-  and fsynced, and only that fully-durable staging file is hard-linked into
-  its final, immutable name. No failure before that link step (a staging
+  bytes are written with unbuffered OS writes to a private staging file in the
+  same directory and fsynced, and only that fully-durable file is hard-linked
+  into its final, immutable name. No failure before that link step (a staging
   write error, an `fsync` error, a full disk) can leave a partially written
   or missing-but-referenced artifact at the final path, and the staging file
   is always removed afterwards; an expected filesystem failure at any
