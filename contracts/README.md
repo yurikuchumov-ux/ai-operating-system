@@ -1,9 +1,13 @@
-# B0 contract bootstrap
+# B0/B1 contract bootstrap
 
-This directory implements only the owner-approved `B0` scope of Issue #18.
-It provides versioned data contracts, versioned registries, deterministic
-offline validation, and hash-pinned fixtures. It does not implement an Actions
-adapter, trusted finalizer, authoritative verifier, or automated delegation.
+This directory (together with `../tools`, `../tests`, and `../fixtures`)
+implements only the owner-approved `B0` and `B1` scope of Issue #18. `B0`
+provides versioned data contracts, versioned registries, deterministic
+offline validation, and hash-pinned fixtures. `B1` adds a deterministic,
+human-supervised harness and a trusted always-run result finalizer that
+consumes those `B0` contracts. Neither step implements a GitHub Actions
+adapter, authoritative verifier, Check Run publisher, or automated
+delegation.
 
 ## Canonical B0 boundary
 
@@ -17,7 +21,7 @@ B0 is contract bootstrap only:
 These limits are normative. Any workflow execution, authoritative verdict, or
 adapter delegation belongs to a later owner-approved bootstrap step.
 
-## Contents
+## Contents (B0)
 
 - `schemas/`: Draft 2020-12 schemas for task, result, verification,
   review-attestation, readiness-evidence, fixture manifest, and registries;
@@ -31,16 +35,65 @@ adapter delegation belongs to a later owner-approved bootstrap step.
 Result check evidence uses direct `evidence_artifact_ids`. Path-based implicit
 artifact resolution is intentionally unsupported.
 
+## Canonical B1 boundary
+
+B1 is a bounded, human-supervised harness plus a trusted, always-run result
+finalizer, built entirely offline against the existing `contracts/schemas/
+result.v1.schema.json`:
+
+- the finalizer (`../tools/finalize_b1.py`) reads a trusted observation input
+  (identity, timestamps, base/head SHA, Git observations, terminal
+  status/reason, authored commits, changed files, and finalizer identity) and
+  emits exactly one schema-valid `result.v1` artifact per finalization;
+- the raw executor candidate is untrusted. It is preserved verbatim as
+  hash-addressed evidence (`evidence/<sha256>.raw`) and can never override a
+  trusted field; any candidate field that disagrees with the trusted
+  observation is recorded as a `candidate_field_override_ignored:<field>`
+  warning and otherwise discarded;
+- missing, malformed, empty, or oversized candidate input still produces one
+  valid `failed` result whenever the trusted observation is sufficient — the
+  finalizer never blocks on a broken candidate;
+- writes are append-only and fail-closed: the finalized `result.json` is
+  created with an exclusive-create system call and a second finalize attempt
+  against the same output directory is refused, never silently overwritten;
+- output is canonical JSON (sorted keys, compact separators) so the same
+  trusted input always finalizes to byte-identical bytes;
+- repository fixture and candidate processing is bounded by a small, explicit
+  policy: 1 MiB per observation or candidate document and a maximum JSON
+  nesting depth of 16;
+- no component in B1 has verifier authority, no GitHub Actions workflow is
+  provided or claimed, and no acceptance criterion or check result is
+  evaluated by the finalizer — that belongs to the later `B2` verifier step.
+
+These limits are normative. B1 evidence must not be represented as an
+authoritative verification result or a working delegation pipeline.
+
+## Contents (B1)
+
+- `../tools/finalize_b1.py`: the trusted observation loader, bounded
+  candidate loader, canonical result builder, and exclusive-create writer,
+  plus a `suite` subcommand that runs the immutable B1 fixture manifest;
+- `../fixtures/b1/manifest.v1.json`: immutable fixture definitions covering
+  success, executor failure, timeout, malformed candidate, missing candidate,
+  and overwrite refusal, with SHA-256 hashes over every fixture document;
+- `../fixtures/b1/documents/`: the hash-pinned trusted observation and raw
+  candidate documents referenced by the manifest;
+- `../tests/test_b1_finalizer.py`: direct unit tests for the finalizer's
+  trust boundary (candidate override attempts, bounded inputs, fail-closed
+  trusted-input errors) and its exactly-once, append-only write behavior.
+
 ## Local validation
 
 ```bash
 python3 -m venv .venv
 .venv/bin/python -m pip install --disable-pip-version-check --no-input -r requirements-b0.txt
 .venv/bin/python tools/validate_b0.py suite --manifest fixtures/b0/manifest.v1.json
+.venv/bin/python tools/finalize_b1.py suite --manifest fixtures/b1/manifest.v1.json
 .venv/bin/python -m unittest discover -s tests -p 'test_b0_contracts.py'
+.venv/bin/python -m unittest discover -s tests -p 'test_b1_finalizer.py'
 ```
 
-The fixture suite succeeds only when all positive and negative cases match
+The B0 fixture suite succeeds only when all positive and negative cases match
 their declared validity, exit code, and exact set of error codes. A hash change
 in any source fixture fails closed with `fixture_hash_mismatch`.
 The coverage catalogue also makes the owner-required failure modes mandatory:
@@ -51,6 +104,12 @@ JSON Pointer depth 16, and 1 MiB per decoded or mutated document. Predicate and
 command registries reject unsupported versions and duplicate semantics or
 implementations.
 
+The B1 fixture suite succeeds only when every required scenario finalizes
+with its declared sequence of exit codes and, where declared, produces a
+`result.json` that validates against `contracts/schemas/result.v1.schema.json`.
+A hash change in any source fixture document fails closed before any
+finalize attempt runs.
+
 Every report contains:
 
 ```json
@@ -60,5 +119,6 @@ Every report contains:
 }
 ```
 
-These flags are normative: B0 evidence must not be represented as a working
-truthful execution pipeline.
+(or `"bootstrap_scope": "B1"` for the finalizer suite). These flags are
+normative: B0 and B1 evidence must not be represented as a working truthful
+execution pipeline.
