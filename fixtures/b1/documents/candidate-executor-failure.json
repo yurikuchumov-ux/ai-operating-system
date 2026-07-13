@@ -1,0 +1,5 @@
+{
+  "summary": "Attempted the change but the local test check failed after edits.",
+  "attempted_changes": ["tools/example.py"],
+  "error_observed": "unittest discover exited with code 1"
+}

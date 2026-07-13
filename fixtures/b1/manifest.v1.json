@@ -1,0 +1,79 @@
+{
+  "schema_version": "1.0.0",
+  "fixtures": [
+    {
+      "id": "success",
+      "observation": {
+        "path": "documents/observation-success.json",
+        "sha256": "fa8e1d21775c36ffc38228f92b249c1a01388cb4881b1215824ad6b5b10d7e31"
+      },
+      "candidate": {
+        "path": "documents/candidate-success.json",
+        "sha256": "bd70540678a5c8044ae54e3db1649ecf4181e24fdb60e214c98205397b638afd"
+      },
+      "repeat": 1,
+      "expected": {"exit_codes": [0], "schema_valid_result": true}
+    },
+    {
+      "id": "executor-failure",
+      "observation": {
+        "path": "documents/observation-executor-failure.json",
+        "sha256": "88956ee2d24b444b05ed622b644a6342c36012e26d4933fe664270001ae2b3a7"
+      },
+      "candidate": {
+        "path": "documents/candidate-executor-failure.json",
+        "sha256": "4dbe4fe0547aef6f8b4349cca07cee02cadc287806fd1ba4ffeffcb3d06755e7"
+      },
+      "repeat": 1,
+      "expected": {"exit_codes": [0], "schema_valid_result": true}
+    },
+    {
+      "id": "timeout",
+      "observation": {
+        "path": "documents/observation-timeout.json",
+        "sha256": "d9eca32abc510a2dcfd36fc16331eb4e4710999f85ba04b658b00683741cfd26"
+      },
+      "candidate": {
+        "path": "documents/candidate-timeout-empty.json",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "repeat": 1,
+      "expected": {"exit_codes": [0], "schema_valid_result": true}
+    },
+    {
+      "id": "malformed-candidate",
+      "observation": {
+        "path": "documents/observation-malformed-candidate.json",
+        "sha256": "a71c4d3a4efb3dcee8270173b88c9bbd9a1ef6d069b1937210aac65c7e10f69f"
+      },
+      "candidate": {
+        "path": "documents/candidate-malformed.json",
+        "sha256": "720c894b56fade833a9b90b12c80b244620aed9ec62498cb1947210be226be10"
+      },
+      "repeat": 1,
+      "expected": {"exit_codes": [0], "schema_valid_result": true}
+    },
+    {
+      "id": "missing-candidate",
+      "observation": {
+        "path": "documents/observation-missing-candidate.json",
+        "sha256": "64185f9d43f9dd682dcfcafbdfd27ba7115af662a5178096bd4bd8684322401a"
+      },
+      "repeat": 1,
+      "expected": {"exit_codes": [0], "schema_valid_result": true}
+    },
+    {
+      "id": "overwrite-refusal",
+      "observation": {
+        "path": "documents/observation-success.json",
+        "sha256": "fa8e1d21775c36ffc38228f92b249c1a01388cb4881b1215824ad6b5b10d7e31"
+      },
+      "candidate": {
+        "path": "documents/candidate-success.json",
+        "sha256": "bd70540678a5c8044ae54e3db1649ecf4181e24fdb60e214c98205397b638afd"
+      },
+      "repeat": 2,
+      "expected": {"exit_codes": [0, 3], "schema_valid_result": true}
+    }
+  ]
+}
