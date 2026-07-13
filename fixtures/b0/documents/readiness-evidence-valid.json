@@ -1,0 +1,24 @@
+{
+  "schema_version": "1.0.0",
+  "gate_id": "G-CONTRACT-01",
+  "policy_version": "readiness.v1",
+  "subject_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "status": "pass",
+  "predicate_results": [
+    {
+      "predicate_id": "fixture.pass_rate.equals",
+      "observed": 1.0,
+      "passed": true
+    }
+  ],
+  "evidence": [
+    {
+      "type": "fixture-report",
+      "url": "https://github.com/yurikuchumov-ux/ai-operating-system/actions/runs/1/artifacts/1",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  ],
+  "evaluated_at": "2026-07-13T11:00:00Z",
+  "expires_at": "2026-08-12T11:00:00Z",
+  "owner": "github:user:gate-evaluator"
+}

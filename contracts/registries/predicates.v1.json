@@ -1,0 +1,83 @@
+{
+  "schema_version": "1.0.0",
+  "registry_type": "predicate",
+  "entries": [
+    {
+      "id": "acceptance.required.passed",
+      "input_types": ["task", "result"],
+      "evaluator": "validator-owned:acceptance-results",
+      "failure_code": "acceptance_failed",
+      "evidence_types": ["result-artifact"]
+    },
+    {
+      "id": "artifact.exists",
+      "input_types": ["result", "artifact"],
+      "evaluator": "verifier-owned:artifact-store",
+      "failure_code": "missing_artifact",
+      "evidence_types": ["artifact-metadata"]
+    },
+    {
+      "id": "artifact.sha256.matches",
+      "input_types": ["artifact", "bytes"],
+      "evaluator": "verifier-owned:sha256",
+      "failure_code": "artifact_hash_mismatch",
+      "evidence_types": ["artifact-metadata"]
+    },
+    {
+      "id": "fixture.pass_rate.equals",
+      "input_types": ["fixture-suite", "number"],
+      "evaluator": "validator-owned:fixture-summary",
+      "failure_code": "fixture_pass_rate_mismatch",
+      "evidence_types": ["fixture-report"]
+    },
+    {
+      "id": "git.base_sha.equals",
+      "input_types": ["task", "git-observation"],
+      "evaluator": "verifier-owned:git-base",
+      "failure_code": "base_sha_mismatch",
+      "evidence_types": ["git-observation"]
+    },
+    {
+      "id": "git.changed_paths.allowed",
+      "input_types": ["task", "result"],
+      "evaluator": "validator-owned:path-policy",
+      "failure_code": "scope_violation",
+      "evidence_types": ["result-artifact"]
+    },
+    {
+      "id": "git.diff.non_empty",
+      "input_types": ["task", "result"],
+      "evaluator": "validator-owned:result-diff",
+      "failure_code": "empty_diff",
+      "evidence_types": ["result-artifact"]
+    },
+    {
+      "id": "git.head_sha.equals",
+      "input_types": ["result", "git-observation"],
+      "evaluator": "verifier-owned:git-head",
+      "failure_code": "head_sha_mismatch",
+      "evidence_types": ["git-observation"]
+    },
+    {
+      "id": "identity.lineage.no_overlap",
+      "input_types": ["execution-lineage", "review-attestation"],
+      "evaluator": "validator-owned:review-eligibility",
+      "failure_code": "identity_conflict",
+      "evidence_types": ["review-attestation"]
+    },
+    {
+      "id": "process.exit_code.equals",
+      "input_types": ["check-result", "integer"],
+      "evaluator": "validator-owned:check-result",
+      "failure_code": "check_failed",
+      "evidence_types": ["result-artifact"]
+    },
+    {
+      "id": "schema.instance.valid",
+      "input_types": ["json-schema", "json-instance"],
+      "evaluator": "validator-owned:jsonschema-2020-12",
+      "failure_code": "schema_validation_failed",
+      "evidence_types": ["fixture-report"]
+    }
+  ]
+}

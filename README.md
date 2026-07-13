@@ -8,3 +8,10 @@ AI Operating System (AI OS) — единый инженерный стандар
 
 ## Изменение стандарта
 Любые изменения стандарта AI OS вносятся только через Pull Request.
+
+## B0 contract bootstrap
+
+The owner-approved B0 implementation for versioned contracts, closed
+registries, offline validation, and immutable fixtures is documented in
+[`contracts/README.md`](contracts/README.md). It is explicitly not an Actions
+adapter or authoritative execution verifier.

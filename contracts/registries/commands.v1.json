@@ -1,0 +1,20 @@
+{
+  "schema_version": "1.0.0",
+  "registry_type": "command",
+  "entries": [
+    {
+      "id": "repo.contracts",
+      "argv": ["python3", "tools/validate_b0.py", "suite", "--manifest", "fixtures/b0/manifest.v1.json"],
+      "working_directory": ".",
+      "environment_allowlist": [],
+      "timeout_seconds": 120
+    },
+    {
+      "id": "repo.contracts.tests",
+      "argv": ["python3", "-m", "unittest", "discover", "-s", "tests", "-p", "test_b0_contracts.py"],
+      "working_directory": ".",
+      "environment_allowlist": [],
+      "timeout_seconds": 120
+    }
+  ]
+}

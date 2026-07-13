@@ -1,0 +1,61 @@
+{
+  "schema_version": "1.0.0",
+  "task_id": "yurikuchumov-ux/ai-operating-system#18",
+  "execution_id": "11111111-1111-4111-8111-111111111111",
+  "attempt": 1,
+  "executor": {
+    "adapter": "human-supervised-bootstrap",
+    "adapter_version": "B0",
+    "identity": {
+      "operator_principal": "github:yurikuchumov-ux",
+      "agent_runtime_id": "openai:codex:b0-session",
+      "credential_principal": "github:user:yurikuchumov-ux",
+      "delegation_parent": "issue-18-owner-decision",
+      "role": "author"
+    }
+  },
+  "started_at": "2026-07-13T10:01:00Z",
+  "finished_at": "2026-07-13T10:05:00Z",
+  "base_sha": "a36a8eefcdd06c56edeec93057a90c58a239cf22",
+  "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "status": "change_proposed",
+  "terminal_reason": "completed",
+  "raw_provider_terminal_reason": null,
+  "no_change_reason": null,
+  "no_change_evidence": [],
+  "authored_commits": ["cccccccccccccccccccccccccccccccccccccccc"],
+  "changed_files": ["contracts/schemas/task.v1.schema.json"],
+  "acceptance_results": [
+    {
+      "id": "AC-1",
+      "predicate_id": "schema.instance.valid",
+      "parameters": {"manifest": "fixtures/b0/manifest.v1.json"},
+      "passed": true,
+      "observed": {"fixture_pass_rate": 1.0},
+      "evidence_artifact_ids": ["suite-report"]
+    }
+  ],
+  "checks": [
+    {
+      "id": "contracts",
+      "command_id": "repo.contracts",
+      "exit_code": 0,
+      "evidence_artifact_ids": ["suite-report"]
+    }
+  ],
+  "artifacts": [
+    {
+      "id": "suite-report",
+      "path": "artifacts/b0-suite.json",
+      "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "media_type": "application/json",
+      "size_bytes": 1024
+    }
+  ],
+  "finalized_by": {
+    "component_id": "result-finalizer.v1",
+    "credential_principal": "bootstrap:human-supervised"
+  },
+  "warnings": ["B0 fixture only; not an authoritative execution result"],
+  "error": null
+}

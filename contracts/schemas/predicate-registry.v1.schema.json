@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/yurikuchumov-ux/ai-operating-system/contracts/schemas/predicate-registry.v1.schema.json",
+  "title": "AI OS Predicate Registry v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "registry_type", "entries"],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "registry_type": {"const": "predicate"},
+    "entries": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "input_types", "evaluator", "failure_code", "evidence_types"],
+        "properties": {
+          "id": {"$ref": "#/$defs/registry_id"},
+          "input_types": {"type": "array", "minItems": 1, "items": {"type": "string", "pattern": "^[a-z][a-z0-9_.-]*$"}, "uniqueItems": true},
+          "evaluator": {"type": "string", "pattern": "^(validator|verifier)-owned:[a-z][a-z0-9_.-]*$"},
+          "failure_code": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
+          "evidence_types": {"type": "array", "items": {"type": "string", "pattern": "^[a-z][a-z0-9_.-]*$"}, "uniqueItems": true}
+        }
+      }
+    }
+  },
+  "$defs": {
+    "registry_id": {"type": "string", "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)+$"}
+  }
+}

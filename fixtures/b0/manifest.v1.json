@@ -1,0 +1,253 @@
+{
+  "schema_version": "1.0.0",
+  "fixtures": [
+    {
+      "id": "valid-change-pair",
+      "documents": [
+        {"type": "task", "path": "documents/task-valid-change.json", "sha256": "47cfc61018242460c9a491f5242e56d0437bb29978f89e3230654f161434ea59"},
+        {"type": "result", "path": "documents/result-valid-change.json", "sha256": "9a9c7a8698db75d5d581b5d583ba1f125f1732cff4b01b25c7d1dda1313e4107"}
+      ],
+      "expected": {"valid": true, "exit_code": 0, "error_codes": []}
+    },
+    {
+      "id": "valid-no-change-pair",
+      "documents": [
+        {"type": "task", "path": "documents/task-valid-no-change.json", "sha256": "6683d15aa68a5af753f2051f7a7cbaf4cfb0fabce32b19d263135fd8c9de6843"},
+        {"type": "result", "path": "documents/result-valid-no-change.json", "sha256": "47f7c942bb52125a90a5e527392271bd61a9ec3f1b3e9603376261df1cc1dbff"}
+      ],
+      "expected": {"valid": true, "exit_code": 0, "error_codes": []}
+    },
+    {
+      "id": "valid-verification-contract",
+      "documents": [
+        {"type": "verification", "path": "documents/verification-valid.json", "sha256": "7f1555a7d45866aaa5139cb7d2d7de74080580ef3274e8e42d90c7b1850c960b"}
+      ],
+      "expected": {"valid": true, "exit_code": 0, "error_codes": []}
+    },
+    {
+      "id": "valid-review-attestation",
+      "documents": [
+        {"type": "review_attestation", "path": "documents/review-attestation-valid.json", "sha256": "0c1f6def2147c9713af263dd02672fba36c53be170c85df6c99a40d1574dbec2"}
+      ],
+      "expected": {"valid": true, "exit_code": 0, "error_codes": []}
+    },
+    {
+      "id": "valid-readiness-evidence",
+      "documents": [
+        {"type": "readiness_evidence", "path": "documents/readiness-evidence-valid.json", "sha256": "041ab1ad59259a25f0a9299acb49c2b6ee18feca1d7a9db333a99770e4b4c7d4"}
+      ],
+      "expected": {"valid": true, "exit_code": 0, "error_codes": []}
+    },
+    {
+      "id": "reject-unsupported-task-schema",
+      "documents": [
+        {"type": "task", "path": "documents/task-valid-change.json", "sha256": "47cfc61018242460c9a491f5242e56d0437bb29978f89e3230654f161434ea59"}
+      ],
+      "mutations": [
+        {"document_type": "task", "op": "replace", "path": "/schema_version", "value": "2.0.0"}
+      ],
+      "expected": {"valid": false, "exit_code": 1, "error_codes": ["unsupported_schema_version"]}
+    },
+    {
+      "id": "reject-unknown-predicate",
+      "documents": [
+        {"type": "task", "path": "documents/task-valid-change.json", "sha256": "47cfc61018242460c9a491f5242e56d0437bb29978f89e3230654f161434ea59"}
+      ],
+      "mutations": [
+        {"document_type": "task", "op": "replace", "path": "/acceptance_criteria/0/predicate_id", "value": "unknown.predicate"}
+      ],
+      "expected": {"valid": false, "exit_code": 1, "error_codes": ["unknown_predicate"]}
+    },
+    {
+      "id": "reject-unknown-command",
+      "documents": [
+        {"type": "task", "path": "documents/task-valid-change.json", "sha256": "47cfc61018242460c9a491f5242e56d0437bb29978f89e3230654f161434ea59"}
+      ],
+      "mutations": [
+        {"document_type": "task", "op": "replace", "path": "/required_checks/0/command_id", "value": "unknown.command"}
+      ],
+      "expected": {"valid": false, "exit_code": 1, "error_codes": ["unknown_command"]}
+    },
+    {
+      "id": "reject-unknown-terminal-reason",
+      "documents": [
+        {"type": "result", "path": "documents/result-valid-change.json", "sha256": "9a9c7a8698db75d5d581b5d583ba1f125f1732cff4b01b25c7d1dda1313e4107"}
+      ],
+      "mutations": [
+        {"document_type": "result", "op": "replace", "path": "/status", "value": "failed"},
+        {"document_type": "result", "op": "replace", "path": "/terminal_reason", "value": "provider_unknown"},
+        {"document_type": "result", "op": "replace", "path": "/error", "value": {"code": "adapter_error", "message": "unknown provider terminal value"}}
+      ],
+      "expected": {"valid": false, "exit_code": 1, "error_codes": ["unknown_terminal_reason"]}
+    },
+    {
+      "id": "reject-unresolved-artifact-reference",
+      "documents": [
+        {"type": "result", "path": "documents/result-valid-change.json", "sha256": "9a9c7a8698db75d5d581b5d583ba1f125f1732cff4b01b25c7d1dda1313e4107"}
+      ],
+      "mutations": [
+        {"document_type": "result", "op": "replace", "path": "/checks/0/evidence_artifact_ids/0", "value": "missing-report"}
+      ],
+      "expected": {"valid": false, "exit_code": 1, "error_codes": ["unresolved_artifact_reference"]}
+    },
+    {
+      "id": "reject-base-sha-mismatch",
+      "documents": [
+        {"type": "task", "path": "documents/task-valid-change.json", "sha256": "47cfc61018242460c9a491f5242e56d0437bb29978f89e3230654f161434ea59"},
+        {"type": "result", "path": "documents/result-valid-change.json", "sha256": "9a9c7a8698db75d5d581b5d583ba1f125f1732cff4b01b25c7d1dda1313e4107"}
+      ],
+      "mutations": [
+        {"document_type": "result", "op": "replace", "path": "/base_sha", "value": "9999999999999999999999999999999999999999"}
+      ],
+      "expected": {"valid": false, "exit_code": 1, "error_codes": ["base_sha_mismatch"]}
+    },
+    {
+      "id": "reject-scope-violation",
+      "documents": [
+        {"type": "task", "path": "documents/task-valid-change.json", "sha256": "47cfc61018242460c9a491f5242e56d0437bb29978f89e3230654f161434ea59"},
+        {"type": "result", "path": "documents/result-valid-change.json", "sha256": "9a9c7a8698db75d5d581b5d583ba1f125f1732cff4b01b25c7d1dda1313e4107"}
+      ],
+      "mutations": [
+        {"document_type": "result", "op": "replace", "path": "/changed_files/0", "value": ".github/workflows/unsafe.yml"}
+      ],
+      "expected": {"valid": false, "exit_code": 1, "error_codes": ["scope_violation"]}
+    },
+    {
+      "id": "reject-duplicate-artifact-id",
+      "documents": [
+        {"type": "result", "path": "documents/result-valid-change.json", "sha256": "9a9c7a8698db75d5d581b5d583ba1f125f1732cff4b01b25c7d1dda1313e4107"}
+      ],
+      "mutations": [
+        {"document_type": "result", "op": "append", "path": "/artifacts/-", "value": {"id": "suite-report", "path": "artifacts/duplicate.json", "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "media_type": "application/json", "size_bytes": 1}}
+      ],
+      "expected": {"valid": false, "exit_code": 1, "error_codes": ["duplicate_id"]}
+    },
+    {
+      "id": "reject-no-change-without-policy",
+      "documents": [
+        {"type": "task", "path": "documents/task-valid-change.json", "sha256": "47cfc61018242460c9a491f5242e56d0437bb29978f89e3230654f161434ea59"},
+        {"type": "result", "path": "documents/result-valid-no-change.json", "sha256": "47f7c942bb52125a90a5e527392271bd61a9ec3f1b3e9603376261df1cc1dbff"}
+      ],
+      "mutations": [
+        {"document_type": "result", "op": "replace", "path": "/task_id", "value": "yurikuchumov-ux/ai-operating-system#18"},
+        {"document_type": "result", "op": "replace", "path": "/acceptance_results/0/parameters", "value": {"manifest": "fixtures/b0/manifest.v1.json"}}
+      ],
+      "expected": {"valid": false, "exit_code": 1, "error_codes": ["no_change_not_allowed", "no_change_reason_not_allowed"]}
+    },
+    {
+      "id": "reject-review-lineage-conflict",
+      "documents": [
+        {"type": "review_attestation", "path": "documents/review-attestation-valid.json", "sha256": "0c1f6def2147c9713af263dd02672fba36c53be170c85df6c99a40d1574dbec2"}
+      ],
+      "mutations": [
+        {"document_type": "review_attestation", "op": "replace", "path": "/eligibility/overlap_results/0/overlap", "value": true}
+      ],
+      "expected": {"valid": false, "exit_code": 1, "error_codes": ["identity_conflict"]}
+    },
+    {
+      "id": "reject-inconsistent-readiness-pass",
+      "documents": [
+        {"type": "readiness_evidence", "path": "documents/readiness-evidence-valid.json", "sha256": "041ab1ad59259a25f0a9299acb49c2b6ee18feca1d7a9db333a99770e4b4c7d4"}
+      ],
+      "mutations": [
+        {"document_type": "readiness_evidence", "op": "replace", "path": "/predicate_results/0/passed", "value": false}
+      ],
+      "expected": {"valid": false, "exit_code": 1, "error_codes": ["gate_predicate_failed"]}
+    },
+    {
+      "id": "reject-inconsistent-verification-pass",
+      "documents": [
+        {"type": "verification", "path": "documents/verification-valid.json", "sha256": "7f1555a7d45866aaa5139cb7d2d7de74080580ef3274e8e42d90c7b1850c960b"}
+      ],
+      "mutations": [
+        {"document_type": "verification", "op": "replace", "path": "/predicate_results/0/passed", "value": false}
+      ],
+      "expected": {"valid": false, "exit_code": 1, "error_codes": ["verification_inconsistent"]}
+    },
+    {
+      "id": "reject-empty-required-diff",
+      "documents": [
+        {"type": "result", "path": "documents/result-valid-change.json", "sha256": "9a9c7a8698db75d5d581b5d583ba1f125f1732cff4b01b25c7d1dda1313e4107"}
+      ],
+      "mutations": [
+        {"document_type": "result", "op": "replace", "path": "/changed_files", "value": []}
+      ],
+      "expected": {"valid": false, "exit_code": 1, "error_codes": ["schema_validation_failed"]}
+    },
+    {
+      "id": "reject-missing-commit",
+      "documents": [
+        {"type": "result", "path": "documents/result-valid-change.json", "sha256": "9a9c7a8698db75d5d581b5d583ba1f125f1732cff4b01b25c7d1dda1313e4107"}
+      ],
+      "mutations": [
+        {"document_type": "result", "op": "replace", "path": "/authored_commits", "value": []}
+      ],
+      "expected": {"valid": false, "exit_code": 1, "error_codes": ["schema_validation_failed"]}
+    },
+    {
+      "id": "reject-false-success",
+      "documents": [
+        {"type": "task", "path": "documents/task-valid-change.json", "sha256": "47cfc61018242460c9a491f5242e56d0437bb29978f89e3230654f161434ea59"},
+        {"type": "result", "path": "documents/result-valid-change.json", "sha256": "9a9c7a8698db75d5d581b5d583ba1f125f1732cff4b01b25c7d1dda1313e4107"}
+      ],
+      "mutations": [
+        {"document_type": "result", "op": "replace", "path": "/checks/0/exit_code", "value": 1}
+      ],
+      "expected": {"valid": false, "exit_code": 1, "error_codes": ["check_failed"]}
+    },
+    {
+      "id": "reject-missing-artifact",
+      "documents": [
+        {"type": "result", "path": "documents/result-valid-change.json", "sha256": "9a9c7a8698db75d5d581b5d583ba1f125f1732cff4b01b25c7d1dda1313e4107"}
+      ],
+      "mutations": [
+        {"document_type": "result", "op": "replace", "path": "/artifacts", "value": []}
+      ],
+      "expected": {"valid": false, "exit_code": 1, "error_codes": ["missing_artifact", "unresolved_artifact_reference"]}
+    },
+    {
+      "id": "reject-unknown-acceptance-result",
+      "documents": [
+        {"type": "task", "path": "documents/task-valid-change.json", "sha256": "47cfc61018242460c9a491f5242e56d0437bb29978f89e3230654f161434ea59"},
+        {"type": "result", "path": "documents/result-valid-change.json", "sha256": "9a9c7a8698db75d5d581b5d583ba1f125f1732cff4b01b25c7d1dda1313e4107"}
+      ],
+      "mutations": [
+        {"document_type": "result", "op": "append", "path": "/acceptance_results/-", "value": {"id": "AC-EXTRA", "predicate_id": "schema.instance.valid", "parameters": {}, "passed": true, "observed": {}, "evidence_artifact_ids": ["suite-report"]}}
+      ],
+      "expected": {"valid": false, "exit_code": 1, "error_codes": ["unknown_acceptance_result"]}
+    },
+    {
+      "id": "reject-acceptance-result-cardinality",
+      "documents": [
+        {"type": "task", "path": "documents/task-valid-change.json", "sha256": "47cfc61018242460c9a491f5242e56d0437bb29978f89e3230654f161434ea59"},
+        {"type": "result", "path": "documents/result-valid-change.json", "sha256": "9a9c7a8698db75d5d581b5d583ba1f125f1732cff4b01b25c7d1dda1313e4107"}
+      ],
+      "mutations": [
+        {"document_type": "result", "op": "append", "path": "/acceptance_results/-", "value": {"id": "AC-1", "predicate_id": "schema.instance.valid", "parameters": {"manifest": "fixtures/b0/manifest.v1.json"}, "passed": true, "observed": {}, "evidence_artifact_ids": ["suite-report"]}}
+      ],
+      "expected": {"valid": false, "exit_code": 1, "error_codes": ["acceptance_result_cardinality", "duplicate_id"]}
+    },
+    {
+      "id": "reject-acceptance-parameters-mismatch",
+      "documents": [
+        {"type": "task", "path": "documents/task-valid-change.json", "sha256": "47cfc61018242460c9a491f5242e56d0437bb29978f89e3230654f161434ea59"},
+        {"type": "result", "path": "documents/result-valid-change.json", "sha256": "9a9c7a8698db75d5d581b5d583ba1f125f1732cff4b01b25c7d1dda1313e4107"}
+      ],
+      "mutations": [
+        {"document_type": "result", "op": "replace", "path": "/acceptance_results/0/parameters", "value": {}}
+      ],
+      "expected": {"valid": false, "exit_code": 1, "error_codes": ["acceptance_parameters_mismatch"]}
+    },
+    {
+      "id": "reject-acceptance-evidence-mismatch",
+      "documents": [
+        {"type": "task", "path": "documents/task-valid-change.json", "sha256": "47cfc61018242460c9a491f5242e56d0437bb29978f89e3230654f161434ea59"},
+        {"type": "result", "path": "documents/result-valid-change.json", "sha256": "9a9c7a8698db75d5d581b5d583ba1f125f1732cff4b01b25c7d1dda1313e4107"}
+      ],
+      "mutations": [
+        {"document_type": "result", "op": "replace", "path": "/acceptance_results/0/evidence_artifact_ids", "value": []}
+      ],
+      "expected": {"valid": false, "exit_code": 1, "error_codes": ["acceptance_evidence_mismatch"]}
+    }
+  ]
+}

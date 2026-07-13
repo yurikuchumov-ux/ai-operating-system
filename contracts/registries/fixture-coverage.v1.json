@@ -1,0 +1,72 @@
+{
+  "schema_version": "1.0.0",
+  "registry_type": "fixture_coverage",
+  "catalogue_id": "b0-required-fixtures.v1",
+  "required_fixtures": [
+    {
+      "id": "reject-false-success",
+      "failure_mode": "false_success",
+      "expected": {"valid": false, "exit_code": 1, "error_codes": ["check_failed"]}
+    },
+    {
+      "id": "reject-missing-artifact",
+      "failure_mode": "missing_artifact",
+      "expected": {"valid": false, "exit_code": 1, "error_codes": ["missing_artifact", "unresolved_artifact_reference"]}
+    },
+    {
+      "id": "reject-empty-required-diff",
+      "failure_mode": "empty_required_diff",
+      "expected": {"valid": false, "exit_code": 1, "error_codes": ["schema_validation_failed"]}
+    },
+    {
+      "id": "reject-missing-commit",
+      "failure_mode": "missing_commit",
+      "expected": {"valid": false, "exit_code": 1, "error_codes": ["schema_validation_failed"]}
+    },
+    {
+      "id": "reject-unknown-terminal-reason",
+      "failure_mode": "unknown_terminal_reason",
+      "expected": {"valid": false, "exit_code": 1, "error_codes": ["unknown_terminal_reason"]}
+    },
+    {
+      "id": "reject-unknown-predicate",
+      "failure_mode": "unknown_predicate",
+      "expected": {"valid": false, "exit_code": 1, "error_codes": ["unknown_predicate"]}
+    },
+    {
+      "id": "reject-unknown-command",
+      "failure_mode": "unknown_command",
+      "expected": {"valid": false, "exit_code": 1, "error_codes": ["unknown_command"]}
+    },
+    {
+      "id": "reject-unresolved-artifact-reference",
+      "failure_mode": "artifact_reference_failure",
+      "expected": {"valid": false, "exit_code": 1, "error_codes": ["unresolved_artifact_reference"]}
+    },
+    {
+      "id": "reject-scope-violation",
+      "failure_mode": "scope_violation",
+      "expected": {"valid": false, "exit_code": 1, "error_codes": ["scope_violation"]}
+    },
+    {
+      "id": "reject-review-lineage-conflict",
+      "failure_mode": "lineage_conflict",
+      "expected": {"valid": false, "exit_code": 1, "error_codes": ["identity_conflict"]}
+    },
+    {
+      "id": "reject-inconsistent-verification-pass",
+      "failure_mode": "verification_inconsistency",
+      "expected": {"valid": false, "exit_code": 1, "error_codes": ["verification_inconsistent"]}
+    },
+    {
+      "id": "reject-inconsistent-readiness-pass",
+      "failure_mode": "readiness_inconsistency",
+      "expected": {"valid": false, "exit_code": 1, "error_codes": ["gate_predicate_failed"]}
+    },
+    {
+      "id": "reject-no-change-without-policy",
+      "failure_mode": "no_change_policy_failure",
+      "expected": {"valid": false, "exit_code": 1, "error_codes": ["no_change_not_allowed", "no_change_reason_not_allowed"]}
+    }
+  ]
+}
