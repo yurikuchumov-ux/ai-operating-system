@@ -1,0 +1,99 @@
+{
+  "schema_version": "1.0.0",
+  "task_id": "yurikuchumov-ux/ai-operating-system#18",
+  "repository": "yurikuchumov-ux/ai-operating-system",
+  "issue_number": 18,
+  "objective": "Implement the bounded B1 human-supervised harness and trusted always-run result finalizer",
+  "change_policy": {
+    "change_required": true,
+    "policy_exception_id": "bootstrap-b1-owner-2026-07-13",
+    "no_change": {
+      "allowed": false,
+      "reason_codes": [],
+      "required_evidence_types": []
+    }
+  },
+  "base_ref": "main",
+  "base_sha": "065f5a75e75c10cadb977c84b54ff75f645e40c5",
+  "branch": "agent/issue-18-b1-finalizer",
+  "allowed_paths": [
+    "CHANGELOG.md",
+    "contracts/README.md",
+    "fixtures/b1/**",
+    "tests/**",
+    "tools/**"
+  ],
+  "denied_paths": [
+    ".ai/tasks/**",
+    ".github/workflows/**",
+    "contracts/registries/**",
+    "contracts/schemas/**",
+    "docs/**",
+    "fixtures/b0/**"
+  ],
+  "risk_class": "L1",
+  "executor": {
+    "adapter": "human-supervised-claude-code",
+    "version": "2.1.197-pro-b1",
+    "max_attempts": 3,
+    "timeout_seconds": 1800
+  },
+  "acceptance_criteria": [
+    {
+      "id": "AC-B1-1",
+      "predicate_id": "fixture.pass_rate.equals",
+      "parameters": {
+        "manifest": "fixtures/b1/manifest.v1.json",
+        "expected": 1.0
+      },
+      "required": true,
+      "linked_checks": [
+        "b1-finalizer-tests"
+      ]
+    },
+    {
+      "id": "AC-B1-2",
+      "predicate_id": "schema.instance.valid",
+      "parameters": {
+        "schema": "contracts/schemas/result.v1.schema.json",
+        "scenarios": [
+          "success",
+          "executor_failure",
+          "timeout"
+        ]
+      },
+      "required": true,
+      "linked_checks": [
+        "b1-finalizer-tests"
+      ]
+    }
+  ],
+  "required_checks": [
+    {
+      "id": "b1-finalizer-tests",
+      "command_id": "repo.contracts.tests",
+      "required": true,
+      "expected_postconditions": [
+        {
+          "predicate_id": "process.exit_code.equals",
+          "parameters": {
+            "value": 0
+          }
+        }
+      ]
+    }
+  ],
+  "review_policy": {
+    "reviewer_class": "independent-engineering",
+    "policy_id": "review-independence.v1",
+    "forbidden_lineage_overlaps": [
+      "agent_runtime_id",
+      "credential_principal",
+      "authored_commits"
+    ],
+    "minimum_distinct_human_operators": 0
+  },
+  "external_side_effects": "forbidden",
+  "created_by": "github:yurikuchumov-ux/codex-chief-architect",
+  "created_at": "2026-07-13T12:23:43Z"
+}
