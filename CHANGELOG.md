@@ -1,6 +1,18 @@
 # Changelog
 
 ## Unreleased
+- Fix the B1 finalizer's publication atomicity: `result.json` and newly
+  created evidence were previously written directly at their final,
+  exclusive-create path, so a write or `fsync` failure partway through could
+  leave a visible, partially written (or wrongly "successful" but
+  un-synced) artifact at the trusted path. Both are now published by writing
+  to a private staging file in the same directory, flushing and fsyncing it,
+  and only then hard-linking that fully durable file into its final,
+  immutable name; the staging file is always removed afterwards, and no
+  failure before the link step can leave anything at the final path. Expected
+  filesystem publication failures (staging write/fsync errors, a full disk)
+  are now reported as `FinalizerPolicyError`, and an existing final artifact
+  is still reported as `OverwriteRefused`, instead of an uncaught traceback.
 - Fix the B1 finalizer's publication ordering: candidate evidence is now
   durably written and byte-for-byte verified before `result.json` is
   created, so a published result can never reference evidence that was not

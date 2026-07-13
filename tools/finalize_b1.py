@@ -16,6 +16,7 @@ import json
 import os
 import stat
 import sys
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
@@ -400,18 +401,88 @@ def canonical_bytes(document: Mapping[str, Any]) -> bytes:
     ).encode("utf-8")
 
 
-def write_exclusive(path: Path, data: bytes) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
+def _ensure_parent_dir(path: Path, error_context: str) -> None:
     try:
-        fd = os.open(str(path), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o444)
+        path.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise FinalizerPolicyError(
+            "failed to prepare directory for {}: {}".format(error_context, exc)
+        ) from exc
+
+
+def _write_staged_file(directory: Path, name_hint: str, data: bytes, mode: int, error_context: str) -> Path:
+    """Write `data` to a private staging file in `directory` and durably fsync it.
+
+    The staging file is not visible under its final name and is not
+    referenced by anything else. Any failure here (including a write or
+    fsync error) is wrapped as FinalizerPolicyError and leaves no trace at
+    the eventual final path, since the staging file has never been linked
+    there.
+    """
+    try:
+        fd, tmp_name = tempfile.mkstemp(
+            prefix=".{}.".format(name_hint), suffix=".tmp", dir=str(directory)
+        )
+    except OSError as exc:
+        raise FinalizerPolicyError(
+            "failed to stage {}: {}".format(error_context, exc)
+        ) from exc
+    tmp_path = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(tmp_path, mode)
+    except OSError as exc:
+        try:
+            tmp_path.unlink()
+        except OSError:
+            pass
+        raise FinalizerPolicyError(
+            "failed to stage {}: {}".format(error_context, exc)
+        ) from exc
+    return tmp_path
+
+
+def _publish_staged_file(tmp_path: Path, final_path: Path) -> None:
+    """Atomically publish a fully written staging file to `final_path`.
+
+    `os.link` either creates `final_path` pointing at the already-durable
+    staged bytes, or fails atomically with `FileExistsError` if a file is
+    already there; it can never leave `final_path` partially written. The
+    staging file (now a redundant second name for the same inode, or an
+    orphan if the link failed) is always removed afterwards.
+    """
+    try:
+        os.link(tmp_path, final_path)
+    finally:
+        try:
+            tmp_path.unlink()
+        except OSError:
+            pass
+
+
+def write_exclusive(path: Path, data: bytes) -> None:
+    """Publish `data` to `path` exclusively: fail-closed, never overwrite, never partial.
+
+    `path` only becomes visible once its bytes are fully written and
+    fsynced to a staging file and that staging file is atomically linked
+    into place. No failure before that link (a staging write error, a
+    fsync error, a full disk, and so on) can leave `path` behind.
+    """
+    _ensure_parent_dir(path, "finalized result")
+    tmp_path = _write_staged_file(path.parent, path.name, data, 0o444, "finalized result")
+    try:
+        _publish_staged_file(tmp_path, path)
     except FileExistsError as exc:
         raise OverwriteRefused(
             "finalized output already exists and will not be overwritten: {}".format(path)
         ) from exc
-    with os.fdopen(fd, "wb") as handle:
-        handle.write(data)
-        handle.flush()
-        os.fsync(handle.fileno())
+    except OSError as exc:
+        raise FinalizerPolicyError(
+            "failed to publish finalized result: {}".format(exc)
+        ) from exc
 
 
 def _verify_preexisting_evidence(evidence_path: Path, raw: bytes) -> None:
@@ -458,21 +529,31 @@ def store_or_verify_evidence(output_dir: Path, raw: bytes) -> Path:
 
     This must complete successfully before a result referencing it is
     published: a failure here (including a conflicting, unreadable,
-    symlinked, or non-regular pre-existing path) is fail-closed and no
-    result is written.
+    symlinked, non-regular, or unwritable pre-existing path) is fail-closed
+    and no result is written. A new evidence path is only created via a
+    staged, fsynced, atomically-linked write, so a write or fsync failure
+    can never leave a partially written file at the final hash-addressed
+    path to poison a later verification.
     """
     digest = sha256_bytes(raw)
     evidence_path = output_dir / "evidence" / "{}.raw".format(digest)
-    evidence_path.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        fd = os.open(str(evidence_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o444)
-    except FileExistsError:
+    _ensure_parent_dir(evidence_path, "candidate evidence")
+    if evidence_path.exists():
         _verify_preexisting_evidence(evidence_path, raw)
         return evidence_path
-    with os.fdopen(fd, "wb") as handle:
-        handle.write(raw)
-        handle.flush()
-        os.fsync(handle.fileno())
+    tmp_path = _write_staged_file(
+        evidence_path.parent, evidence_path.name, raw, 0o444, "candidate evidence"
+    )
+    try:
+        _publish_staged_file(tmp_path, evidence_path)
+    except FileExistsError:
+        # Lost a race with a concurrent writer of the same content-addressed
+        # evidence bytes; verify rather than treating this as a failure.
+        _verify_preexisting_evidence(evidence_path, raw)
+    except OSError as exc:
+        raise FinalizerPolicyError(
+            "failed to publish candidate evidence: {}".format(exc)
+        ) from exc
     return evidence_path
 
 

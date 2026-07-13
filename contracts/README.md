@@ -56,10 +56,19 @@ result.v1.schema.json`:
 - writes are append-only and fail-closed: a finalize attempt against an
   output directory that already holds a `result.json` is refused before any
   evidence is touched, and evidence is durably written and byte-for-byte
-  verified before `result.json` is created with an exclusive-create system
-  call, so a published result can never reference candidate evidence that
-  was not actually written; a conflicting, unreadable, symlinked, or
-  non-regular pre-existing evidence path fails closed instead of publishing;
+  verified before `result.json` is published, so a published result can
+  never reference candidate evidence that was not actually written; a
+  conflicting, unreadable, symlinked, or non-regular pre-existing evidence
+  path fails closed instead of publishing;
+- both `result.json` and newly created evidence are published atomically: the
+  bytes are written to a private staging file in the same directory, flushed,
+  and fsynced, and only that fully-durable staging file is hard-linked into
+  its final, immutable name. No failure before that link step (a staging
+  write error, an `fsync` error, a full disk) can leave a partially written
+  or missing-but-referenced artifact at the final path, and the staging file
+  is always removed afterwards; an expected filesystem failure at any
+  publication step is reported as `FinalizerPolicyError` or
+  `OverwriteRefused`, never an uncaught traceback;
 - output is canonical JSON (sorted keys, compact separators) so the same
   trusted input always finalizes to byte-identical bytes;
 - repository fixture and candidate processing is bounded by a small, explicit
@@ -75,8 +84,9 @@ authoritative verification result or a working delegation pipeline.
 ## Contents (B1)
 
 - `../tools/finalize_b1.py`: the trusted observation loader, bounded
-  candidate loader, canonical result builder, and exclusive-create writer,
-  plus a `suite` subcommand that runs the immutable B1 fixture manifest;
+  candidate loader, canonical result builder, and stage-then-atomically-link
+  writer, plus a `suite` subcommand that runs the immutable B1 fixture
+  manifest;
 - `../fixtures/b1/manifest.v1.json`: immutable fixture definitions covering
   success, executor failure, timeout, malformed candidate, missing candidate,
   and overwrite refusal, with SHA-256 hashes over every fixture document;
