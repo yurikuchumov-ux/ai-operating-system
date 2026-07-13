@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/yurikuchumov-ux/ai-operating-system/contracts/schemas/review-attestation.v1.schema.json",
+  "title": "AI OS Review Attestation v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "task_id", "review_id", "reviewed_sha", "reviewer_identity", "eligibility", "reviewed_at"],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "task_id": {"type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+#[1-9][0-9]*$"},
+    "review_id": {"type": "string", "minLength": 1},
+    "reviewed_sha": {"$ref": "#/$defs/sha"},
+    "reviewer_identity": {"$ref": "#/$defs/identity"},
+    "eligibility": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["policy_id", "risk_class", "overlap_results", "eligible", "reason_codes"],
+      "properties": {
+        "policy_id": {"$ref": "#/$defs/registry_id"},
+        "risk_class": {"enum": ["L0", "L1", "L2", "L3"]},
+        "overlap_results": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["field", "overlap", "author_values", "reviewer_value"],
+            "properties": {
+              "field": {"enum": ["operator_principal", "agent_runtime_id", "credential_principal", "delegation_parent", "authored_commits"]},
+              "overlap": {"type": "boolean"},
+              "author_values": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+              "reviewer_value": {"type": "string", "minLength": 1}
+            }
+          }
+        },
+        "eligible": {"type": "boolean"},
+        "reason_codes": {"type": "array", "items": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"}, "uniqueItems": true}
+      }
+    },
+    "reviewed_at": {"type": "string", "format": "date-time"}
+  },
+  "$defs": {
+    "sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "registry_id": {"type": "string", "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)+$"},
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["operator_principal", "agent_runtime_id", "credential_principal", "delegation_parent", "role", "authored_commits"],
+      "properties": {
+        "operator_principal": {"type": "string", "minLength": 1},
+        "agent_runtime_id": {"type": "string", "minLength": 1},
+        "credential_principal": {"type": "string", "minLength": 1},
+        "delegation_parent": {"type": "string", "minLength": 1},
+        "role": {"const": "reviewer"},
+        "authored_commits": {"type": "array", "items": {"$ref": "#/$defs/sha"}, "uniqueItems": true}
+      }
+    }
+  }
+}

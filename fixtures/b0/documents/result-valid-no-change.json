@@ -1,0 +1,62 @@
+{
+  "schema_version": "1.0.0",
+  "task_id": "yurikuchumov-ux/ai-operating-system#118",
+  "execution_id": "22222222-2222-4222-8222-222222222222",
+  "attempt": 1,
+  "executor": {
+    "adapter": "human-supervised-bootstrap",
+    "adapter_version": "B0",
+    "identity": {
+      "operator_principal": "github:yurikuchumov-ux",
+      "agent_runtime_id": "openai:codex:b0-session",
+      "credential_principal": "github:user:yurikuchumov-ux",
+      "delegation_parent": "fixture:no-change",
+      "role": "author"
+    }
+  },
+  "started_at": "2026-07-13T10:01:00Z",
+  "finished_at": "2026-07-13T10:02:00Z",
+  "base_sha": "a36a8eefcdd06c56edeec93057a90c58a239cf22",
+  "head_sha": null,
+  "status": "no_change_required",
+  "terminal_reason": "approved_no_change",
+  "raw_provider_terminal_reason": null,
+  "no_change_reason": "already_satisfied",
+  "no_change_evidence": [
+    {"type": "repository_state", "artifact_id": "state-report"}
+  ],
+  "authored_commits": [],
+  "changed_files": [],
+  "acceptance_results": [
+    {
+      "id": "AC-1",
+      "predicate_id": "schema.instance.valid",
+      "passed": true,
+      "observed": {"valid": true},
+      "evidence_artifact_ids": ["state-report"]
+    }
+  ],
+  "checks": [
+    {
+      "id": "contracts",
+      "command_id": "repo.contracts",
+      "exit_code": 0,
+      "evidence_artifact_ids": ["state-report"]
+    }
+  ],
+  "artifacts": [
+    {
+      "id": "state-report",
+      "path": "artifacts/repository-state.json",
+      "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "media_type": "application/json",
+      "size_bytes": 128
+    }
+  ],
+  "finalized_by": {
+    "component_id": "result-finalizer.v1",
+    "credential_principal": "bootstrap:human-supervised"
+  },
+  "warnings": ["B0 fixture only; not an authoritative execution result"],
+  "error": null
+}

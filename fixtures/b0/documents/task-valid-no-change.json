@@ -1,0 +1,59 @@
+{
+  "schema_version": "1.0.0",
+  "task_id": "yurikuchumov-ux/ai-operating-system#118",
+  "repository": "yurikuchumov-ux/ai-operating-system",
+  "issue_number": 118,
+  "objective": "Verify an explicitly allowed no-change result",
+  "change_policy": {
+    "change_required": false,
+    "policy_exception_id": null,
+    "no_change": {
+      "allowed": true,
+      "reason_codes": ["already_satisfied"],
+      "required_evidence_types": ["repository_state"]
+    }
+  },
+  "base_ref": "main",
+  "base_sha": "a36a8eefcdd06c56edeec93057a90c58a239cf22",
+  "branch": "agent/issue-118-no-change",
+  "allowed_paths": [],
+  "denied_paths": ["**"],
+  "risk_class": "L0",
+  "executor": {
+    "adapter": "human-supervised-bootstrap",
+    "version": "B0",
+    "max_attempts": 1,
+    "timeout_seconds": 300
+  },
+  "acceptance_criteria": [
+    {
+      "id": "AC-1",
+      "predicate_id": "schema.instance.valid",
+      "parameters": {},
+      "required": true,
+      "linked_checks": ["contracts"]
+    }
+  ],
+  "required_checks": [
+    {
+      "id": "contracts",
+      "command_id": "repo.contracts",
+      "required": true,
+      "expected_postconditions": [
+        {
+          "predicate_id": "process.exit_code.equals",
+          "parameters": {"value": 0}
+        }
+      ]
+    }
+  ],
+  "review_policy": {
+    "reviewer_class": "independent-engineering",
+    "policy_id": "review-independence.v1",
+    "forbidden_lineage_overlaps": ["agent_runtime_id", "authored_commits"],
+    "minimum_distinct_human_operators": 0
+  },
+  "external_side_effects": "forbidden",
+  "created_by": "github:yurikuchumov-ux",
+  "created_at": "2026-07-13T10:00:00Z"
+}

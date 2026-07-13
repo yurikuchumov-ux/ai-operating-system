@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/yurikuchumov-ux/ai-operating-system/contracts/schemas/command-registry.v1.schema.json",
+  "title": "AI OS Command Registry v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "registry_type", "entries"],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "registry_type": {"const": "command"},
+    "entries": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "argv", "working_directory", "environment_allowlist", "timeout_seconds"],
+        "properties": {
+          "id": {"$ref": "#/$defs/registry_id"},
+          "argv": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+          "working_directory": {"type": "string", "pattern": "^(?:\\.|[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*)$"},
+          "environment_allowlist": {"type": "array", "items": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]*$"}, "uniqueItems": true},
+          "timeout_seconds": {"type": "integer", "minimum": 1, "maximum": 7200}
+        }
+      }
+    }
+  },
+  "$defs": {
+    "registry_id": {"type": "string", "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)+$"}
+  }
+}

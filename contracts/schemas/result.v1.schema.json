@@ -1,0 +1,222 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/yurikuchumov-ux/ai-operating-system/contracts/schemas/result.v1.schema.json",
+  "title": "AI OS Execution Result v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "task_id",
+    "execution_id",
+    "attempt",
+    "executor",
+    "started_at",
+    "finished_at",
+    "base_sha",
+    "head_sha",
+    "status",
+    "terminal_reason",
+    "no_change_reason",
+    "no_change_evidence",
+    "authored_commits",
+    "changed_files",
+    "acceptance_results",
+    "checks",
+    "artifacts",
+    "finalized_by",
+    "warnings",
+    "error"
+  ],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "task_id": {"type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+#[1-9][0-9]*$"},
+    "execution_id": {"type": "string", "format": "uuid"},
+    "attempt": {"type": "integer", "minimum": 1, "maximum": 3},
+    "executor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["adapter", "adapter_version", "identity"],
+      "properties": {
+        "adapter": {"type": "string", "pattern": "^[a-z][a-z0-9-]*$"},
+        "adapter_version": {"type": "string", "minLength": 1},
+        "identity": {"$ref": "#/$defs/identity"}
+      }
+    },
+    "started_at": {"type": "string", "format": "date-time"},
+    "finished_at": {"type": "string", "format": "date-time"},
+    "base_sha": {"$ref": "#/$defs/sha"},
+    "head_sha": {"oneOf": [{"$ref": "#/$defs/sha"}, {"type": "null"}]},
+    "status": {"enum": ["change_proposed", "no_change_required", "failed", "cancelled", "blocked"]},
+    "terminal_reason": {
+      "enum": [
+        "completed",
+        "approved_no_change",
+        "max_turns",
+        "timeout",
+        "missing_commit",
+        "missing_artifact",
+        "empty_diff",
+        "scope_violation",
+        "ref_history_unverifiable",
+        "acceptance_failed",
+        "identity_unverifiable",
+        "check_failed",
+        "cancelled_by_owner",
+        "adapter_error",
+        "runner_lost",
+        "reviewer_unavailable"
+      ]
+    },
+    "raw_provider_terminal_reason": {"type": ["string", "null"]},
+    "no_change_reason": {"type": ["string", "null"], "pattern": "^[a-z][a-z0-9_]*$"},
+    "no_change_evidence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["type", "artifact_id"],
+        "properties": {
+          "type": {"type": "string", "pattern": "^[a-z][a-z0-9_.-]*$"},
+          "artifact_id": {"$ref": "#/$defs/local_id"}
+        }
+      }
+    },
+    "authored_commits": {"type": "array", "items": {"$ref": "#/$defs/sha"}, "uniqueItems": true},
+    "changed_files": {"type": "array", "items": {"$ref": "#/$defs/path"}, "uniqueItems": true},
+    "acceptance_results": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "predicate_id", "passed", "observed", "evidence_artifact_ids"],
+        "properties": {
+          "id": {"$ref": "#/$defs/local_id"},
+          "predicate_id": {"$ref": "#/$defs/registry_id"},
+          "passed": {"type": "boolean"},
+          "observed": {},
+          "evidence_artifact_ids": {"type": "array", "items": {"$ref": "#/$defs/local_id"}, "uniqueItems": true}
+        }
+      }
+    },
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "command_id", "exit_code", "evidence_artifact_ids"],
+        "properties": {
+          "id": {"$ref": "#/$defs/local_id"},
+          "command_id": {"$ref": "#/$defs/registry_id"},
+          "exit_code": {"type": "integer"},
+          "evidence_artifact_ids": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/local_id"}, "uniqueItems": true}
+        }
+      }
+    },
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "path", "sha256", "media_type", "size_bytes"],
+        "properties": {
+          "id": {"$ref": "#/$defs/local_id"},
+          "path": {"$ref": "#/$defs/path"},
+          "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "media_type": {"type": "string", "minLength": 1},
+          "size_bytes": {"type": "integer", "minimum": 1}
+        }
+      }
+    },
+    "finalized_by": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["component_id", "credential_principal"],
+      "properties": {
+        "component_id": {"$ref": "#/$defs/registry_id"},
+        "credential_principal": {"type": "string", "minLength": 1}
+      }
+    },
+    "warnings": {"type": "array", "items": {"type": "string"}},
+    "error": {
+      "oneOf": [
+        {"type": "null"},
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["code", "message"],
+          "properties": {
+            "code": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
+            "message": {"type": "string", "minLength": 1},
+            "diagnostic": {}
+          }
+        }
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"status": {"const": "change_proposed"}}},
+      "then": {
+        "properties": {
+          "head_sha": {"$ref": "#/$defs/sha"},
+          "terminal_reason": {"const": "completed"},
+          "no_change_reason": {"type": "null"},
+          "no_change_evidence": {"maxItems": 0},
+          "authored_commits": {"minItems": 1},
+          "changed_files": {"minItems": 1},
+          "error": {"type": "null"}
+        }
+      }
+    },
+    {
+      "if": {"properties": {"status": {"const": "no_change_required"}}},
+      "then": {
+        "properties": {
+          "terminal_reason": {"const": "approved_no_change"},
+          "no_change_reason": {"type": "string", "minLength": 1},
+          "no_change_evidence": {"minItems": 1},
+          "authored_commits": {"maxItems": 0},
+          "changed_files": {"maxItems": 0},
+          "error": {"type": "null"}
+        }
+      }
+    },
+    {
+      "if": {"properties": {"status": {"const": "failed"}}},
+      "then": {
+        "properties": {
+          "terminal_reason": {
+            "enum": ["max_turns", "timeout", "missing_commit", "missing_artifact", "empty_diff", "scope_violation", "ref_history_unverifiable", "acceptance_failed", "identity_unverifiable", "check_failed", "adapter_error", "runner_lost"]
+          },
+          "error": {"type": "object"}
+        }
+      }
+    },
+    {
+      "if": {"properties": {"status": {"const": "cancelled"}}},
+      "then": {"properties": {"terminal_reason": {"const": "cancelled_by_owner"}}}
+    },
+    {
+      "if": {"properties": {"status": {"const": "blocked"}}},
+      "then": {"properties": {"terminal_reason": {"const": "reviewer_unavailable"}}}
+    }
+  ],
+  "$defs": {
+    "sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "path": {"type": "string", "minLength": 1, "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"},
+    "local_id": {"type": "string", "pattern": "^[A-Za-z][A-Za-z0-9._-]*$"},
+    "registry_id": {"type": "string", "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)+$"},
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["operator_principal", "agent_runtime_id", "credential_principal", "delegation_parent", "role"],
+      "properties": {
+        "operator_principal": {"type": "string", "minLength": 1},
+        "agent_runtime_id": {"type": "string", "minLength": 1},
+        "credential_principal": {"type": "string", "minLength": 1},
+        "delegation_parent": {"type": "string", "minLength": 1},
+        "role": {"enum": ["author", "verifier", "reviewer", "publisher", "merger"]}
+      }
+    }
+  }
+}

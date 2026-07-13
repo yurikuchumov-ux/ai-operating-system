@@ -1,0 +1,216 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/yurikuchumov-ux/ai-operating-system/contracts/schemas/task.v1.schema.json",
+  "title": "AI OS Task Contract v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "task_id",
+    "repository",
+    "issue_number",
+    "objective",
+    "change_policy",
+    "base_ref",
+    "base_sha",
+    "branch",
+    "allowed_paths",
+    "denied_paths",
+    "risk_class",
+    "executor",
+    "acceptance_criteria",
+    "required_checks",
+    "review_policy",
+    "external_side_effects",
+    "created_by",
+    "created_at"
+  ],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "task_id": {"type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+#[1-9][0-9]*$"},
+    "repository": {"type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"},
+    "issue_number": {"type": "integer", "minimum": 1},
+    "objective": {"type": "string", "minLength": 1, "maxLength": 1000},
+    "change_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["change_required", "no_change", "policy_exception_id"],
+      "properties": {
+        "change_required": {"type": "boolean"},
+        "policy_exception_id": {"type": ["string", "null"], "minLength": 1},
+        "no_change": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["allowed", "reason_codes", "required_evidence_types"],
+          "properties": {
+            "allowed": {"type": "boolean"},
+            "reason_codes": {
+              "type": "array",
+              "items": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
+              "uniqueItems": true
+            },
+            "required_evidence_types": {
+              "type": "array",
+              "items": {"type": "string", "pattern": "^[a-z][a-z0-9_.-]*$"},
+              "uniqueItems": true
+            }
+          }
+        }
+      }
+    },
+    "base_ref": {"type": "string", "minLength": 1},
+    "base_sha": {"$ref": "#/$defs/sha"},
+    "branch": {"type": "string", "pattern": "^agent/[a-z0-9][a-z0-9._/-]*$"},
+    "allowed_paths": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/path_pattern"},
+      "uniqueItems": true
+    },
+    "denied_paths": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/path_pattern"},
+      "uniqueItems": true
+    },
+    "risk_class": {"enum": ["L0", "L1", "L2", "L3"]},
+    "executor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["adapter", "version", "max_attempts", "timeout_seconds"],
+      "properties": {
+        "adapter": {"type": "string", "pattern": "^[a-z][a-z0-9-]*$"},
+        "version": {"type": "string", "minLength": 1},
+        "max_attempts": {"type": "integer", "minimum": 1, "maximum": 3},
+        "timeout_seconds": {"type": "integer", "minimum": 1, "maximum": 7200}
+      }
+    },
+    "acceptance_criteria": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "predicate_id", "parameters", "required", "linked_checks"],
+        "properties": {
+          "id": {"$ref": "#/$defs/local_id"},
+          "predicate_id": {"$ref": "#/$defs/registry_id"},
+          "parameters": {"type": "object"},
+          "required": {"type": "boolean"},
+          "linked_checks": {
+            "type": "array",
+            "items": {"$ref": "#/$defs/local_id"},
+            "uniqueItems": true
+          }
+        }
+      }
+    },
+    "required_checks": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "command_id", "required", "expected_postconditions"],
+        "properties": {
+          "id": {"$ref": "#/$defs/local_id"},
+          "command_id": {"$ref": "#/$defs/registry_id"},
+          "required": {"type": "boolean"},
+          "expected_postconditions": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["predicate_id", "parameters"],
+              "properties": {
+                "predicate_id": {"$ref": "#/$defs/registry_id"},
+                "parameters": {"type": "object"}
+              }
+            }
+          }
+        }
+      }
+    },
+    "review_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reviewer_class", "policy_id", "forbidden_lineage_overlaps", "minimum_distinct_human_operators"],
+      "properties": {
+        "reviewer_class": {"type": "string", "minLength": 1},
+        "policy_id": {"$ref": "#/$defs/registry_id"},
+        "forbidden_lineage_overlaps": {
+          "type": "array",
+          "items": {"enum": ["operator_principal", "agent_runtime_id", "credential_principal", "delegation_parent", "authored_commits"]},
+          "uniqueItems": true
+        },
+        "minimum_distinct_human_operators": {"type": "integer", "minimum": 0, "maximum": 2}
+      }
+    },
+    "external_side_effects": {"enum": ["forbidden", "owner_approved"]},
+    "created_by": {"type": "string", "minLength": 1},
+    "created_at": {"type": "string", "format": "date-time"}
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "change_policy": {
+            "properties": {"change_required": {"const": true}}
+          }
+        }
+      },
+      "then": {
+        "properties": {"allowed_paths": {"minItems": 1}}
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "change_policy": {
+            "properties": {
+              "no_change": {"properties": {"allowed": {"const": true}}}
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "change_policy": {
+            "properties": {
+              "no_change": {
+                "properties": {
+                  "reason_codes": {"minItems": 1},
+                  "required_evidence_types": {"minItems": 1}
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "change_policy": {
+            "properties": {
+              "change_required": {"const": true},
+              "no_change": {"properties": {"allowed": {"const": true}}}
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "change_policy": {
+            "properties": {"policy_exception_id": {"type": "string", "minLength": 1}}
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "local_id": {"type": "string", "pattern": "^[A-Za-z][A-Za-z0-9._-]*$"},
+    "registry_id": {"type": "string", "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)+$"},
+    "path_pattern": {"type": "string", "minLength": 1, "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"}
+  }
+}
