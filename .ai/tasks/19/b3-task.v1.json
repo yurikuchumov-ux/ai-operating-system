@@ -1,0 +1,185 @@
+{
+  "schema_version": "1.0.0",
+  "task_id": "yurikuchumov-ux/ai-operating-system#19",
+  "repository": "yurikuchumov-ux/ai-operating-system",
+  "issue_number": 19,
+  "objective": "Implement B3 terminal failure propagation on the reviewed B0-B2 head. A real Actions workflow invokes the executor adapter, captures its run/execution ID, finalizes result.v1 via the B1 finalizer, verifies via the B2 verifier, and publishes the Check Run conclusion from the verifier's report -- never adapter self-report or job status. Every required terminal failure (max-turns, timeouts, missing commit/result/evidence artifact, empty diff, failed check, adapter error, cancellation) must fail the result and Check Run. Run 29190170902 (green, subtype error_max_turns, zero artifacts, no commit) must become a fixture failing closed on its exact reason; success passes. No new predicate or schema entry is added; one narrow B3 test command entry may be added. Owner-approved side effects cover only Issue 19 Actions runs, artifacts, Checks and Draft PR evidence -- never deployment, merge, secrets/settings, or other product effects. Actor separation preserved; no merge without owner decision.",
+  "change_policy": {
+    "change_required": true,
+    "policy_exception_id": null,
+    "no_change": {
+      "allowed": false,
+      "reason_codes": [],
+      "required_evidence_types": []
+    }
+  },
+  "base_ref": "main",
+  "base_sha": "ae8bfab665e9a6777affaa448e872d24b87ea36c",
+  "branch": "agent/issue-19-b3-terminal-propagation",
+  "allowed_paths": [
+    "CHANGELOG.md",
+    "contracts/README.md",
+    "contracts/registries/commands.v1.json",
+    ".github/workflows/b3-*.yml",
+    "fixtures/b3/**",
+    "tests/test_b3_*.py",
+    "tools/*_b3.py",
+    "requirements-b3.txt"
+  ],
+  "denied_paths": [
+    ".ai/tasks/**",
+    "AI_OS.md",
+    "README.md",
+    ".github/PULL_REQUEST_TEMPLATE.md",
+    "contracts/schemas/**",
+    "contracts/registries/predicates.v1.json",
+    "contracts/registries/fixture-coverage.v1.json",
+    "docs/**",
+    "fixtures/b0/**",
+    "fixtures/b1/**",
+    "fixtures/b2/**",
+    "requirements-b0.txt",
+    "standards/**",
+    "templates/**",
+    "tests/test_b0_contracts.py",
+    "tests/test_b1_finalizer.py",
+    "tests/test_b2_verifier.py",
+    "tools/finalize_b1.py",
+    "tools/validate_b0.py",
+    "tools/verify_b2.py"
+  ],
+  "risk_class": "L2",
+  "executor": {
+    "adapter": "human-supervised-claude-code",
+    "version": "claude-code-2.1.197-b3-bootstrap",
+    "max_attempts": 3,
+    "timeout_seconds": 7200
+  },
+  "acceptance_criteria": [
+    {
+      "id": "AC-B3-1",
+      "predicate_id": "fixture.pass_rate.equals",
+      "parameters": {
+        "manifest": "fixtures/b3/manifest.v1.json",
+        "expected": 1.0,
+        "oracle_owner": "control-plane-contract",
+        "required_scenarios": [
+          {"id": "canonical-run-29190170902-false-success", "status": "failed", "terminal_reason": "max_turns", "check_run_conclusion": "failure", "artifacts_count": 0, "new_commit": false, "source_run_id": "29190170902", "raw_provider_terminal_reason": "error_max_turns"},
+          {"id": "reject-max-turns", "status": "failed", "terminal_reason": "max_turns", "check_run_conclusion": "failure"},
+          {"id": "reject-adapter-timeout", "status": "failed", "terminal_reason": "timeout", "check_run_conclusion": "failure", "timeout_origin": "adapter"},
+          {"id": "reject-job-timeout", "status": "failed", "terminal_reason": "timeout", "check_run_conclusion": "failure", "timeout_origin": "actions_job"},
+          {"id": "reject-missing-commit", "status": "failed", "terminal_reason": "missing_commit", "check_run_conclusion": "failure"},
+          {"id": "reject-missing-result-artifact", "status": "failed", "terminal_reason": "missing_artifact", "check_run_conclusion": "failure", "missing_artifact_type": "result-artifact"},
+          {"id": "reject-missing-evidence-artifact", "status": "failed", "terminal_reason": "missing_artifact", "check_run_conclusion": "failure", "missing_artifact_type": "required-evidence-artifact"},
+          {"id": "reject-empty-diff", "status": "failed", "terminal_reason": "empty_diff", "check_run_conclusion": "failure"},
+          {"id": "reject-check-failed", "status": "failed", "terminal_reason": "check_failed", "check_run_conclusion": "failure"},
+          {"id": "reject-adapter-error", "status": "failed", "terminal_reason": "adapter_error", "check_run_conclusion": "failure"},
+          {"id": "reject-cancelled", "status": "cancelled", "terminal_reason": "cancelled_by_owner", "check_run_conclusion": "failure"},
+          {"id": "reject-verifier-overrides-adapter-self-report", "status": "failed", "terminal_reason": "check_failed", "check_run_conclusion": "failure", "adapter_self_reported_status": "success", "actions_job_conclusion": "success"},
+          {"id": "accept-genuine-success", "status": "change_proposed", "terminal_reason": "completed", "check_run_conclusion": "success"}
+        ]
+      },
+      "required": true,
+      "linked_checks": ["b3-terminal-propagation-tests"]
+    },
+    {
+      "id": "AC-B3-2",
+      "predicate_id": "schema.instance.valid",
+      "parameters": {
+        "schema": "contracts/schemas/result.v1.schema.json",
+        "scenarios": [
+          "canonical-run-29190170902-false-success",
+          "reject-max-turns",
+          "reject-adapter-timeout",
+          "reject-job-timeout",
+          "reject-missing-commit",
+          "reject-missing-result-artifact",
+          "reject-missing-evidence-artifact",
+          "reject-empty-diff",
+          "reject-check-failed",
+          "reject-adapter-error",
+          "reject-cancelled",
+          "reject-verifier-overrides-adapter-self-report",
+          "accept-genuine-success"
+        ]
+      },
+      "required": true,
+      "linked_checks": ["b3-terminal-propagation-tests"]
+    },
+    {
+      "id": "AC-B3-3",
+      "predicate_id": "process.exit_code.equals",
+      "parameters": {
+        "component": "checkrun-publisher",
+        "value": 0,
+        "conclusion_source": "verification.v1.passed",
+        "forbidden_conclusion_sources": ["adapter_self_report", "actions_job_conclusion", "raw_provider_terminal_reason"],
+        "conclusion_success_iff_verifier_passed": true,
+        "architect_invocation": "python3 -m unittest discover -s tests -p test_b3_*.py"
+      },
+      "required": true,
+      "linked_checks": ["b3-terminal-propagation-tests"]
+    },
+    {
+      "id": "AC-B3-4",
+      "predicate_id": "artifact.exists",
+      "parameters": {
+        "required_artifact_types": ["result-artifact", "verification-report", "workflow-run-metadata"],
+        "workflow_run_id_source": "github.actions.run_id",
+        "execution_id_source": "result.v1.execution_id",
+        "workflow_run_id_and_execution_id_required_non_null": true,
+        "owner_authorized_side_effects": {
+          "authorization": "owner_approved",
+          "issue_scope": 19,
+          "permitted": ["github_actions_runs", "artifacts", "check_runs", "draft_pr_evidence"],
+          "forbidden": ["deployment", "merge", "secrets_management", "repository_settings_changes", "other_product_side_effects"]
+        }
+      },
+      "required": true,
+      "linked_checks": ["b3-terminal-propagation-tests"]
+    },
+    {
+      "id": "AC-B3-5",
+      "predicate_id": "identity.lineage.no_overlap",
+      "parameters": {
+        "required_policy_id": "review-independence.v1",
+        "forbidden_lineage_overlaps": ["agent_runtime_id", "credential_principal", "authored_commits"],
+        "executor_identity_role": "author",
+        "verifier_identity_role": "verifier",
+        "checkrun_publisher_identity_role": "verifier",
+        "required_distinct_from_executor": true
+      },
+      "required": true,
+      "linked_checks": ["b3-terminal-propagation-tests"]
+    }
+  ],
+  "required_checks": [
+    {
+      "id": "b3-terminal-propagation-tests",
+      "command_id": "repo.contracts.b3.tests",
+      "required": true,
+      "expected_postconditions": [
+        {
+          "predicate_id": "process.exit_code.equals",
+          "parameters": {
+            "value": 0,
+            "architect_invocation": "python3 -m unittest discover -s tests -p test_b3_*.py"
+          }
+        }
+      ]
+    }
+  ],
+  "review_policy": {
+    "reviewer_class": "independent-engineering",
+    "policy_id": "review-independence.v1",
+    "forbidden_lineage_overlaps": [
+      "agent_runtime_id",
+      "credential_principal",
+      "authored_commits"
+    ],
+    "minimum_distinct_human_operators": 1
+  },
+  "external_side_effects": "owner_approved",
+  "created_by": "github:yurikuchumov-ux/claude-code-control-plane",
+  "created_at": "2026-07-14T10:00:00Z"
+}
