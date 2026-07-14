@@ -184,17 +184,33 @@ composing the existing, unmodified `B1` finalizer and `B2` verifier, plus a
 real GitHub Actions workflow around them:
 
 - the propagator (`../tools/propagate_b3.py`) consumes a trusted,
-  schema-validated provider signal -- cancellation, adapter/job timeout,
-  max-turns exhaustion, adapter error, Git observation, required-artifact
-  presence, and required-check exit code -- and deterministically classifies
-  exactly one `result.v1` terminal status/reason from it, in a fixed
-  priority order (`cancelled_by_owner` > `job_timed_out` > `adapter_timed_out`
-  > `max_turns_exhausted` > `adapter_error` > `missing_commit` >
-  `missing_artifact` (result-artifact, then required-evidence-artifact) >
-  `empty_diff` > `check_failed` > `completed`). The adapter's own
-  self-reported status and the Actions job's own conclusion are never read
-  by this classification -- they are carried through only as untrusted,
-  informational fields on the published `workflow-run-metadata` artifact;
+  schema-validated provider signal -- cancellation, real elapsed-time-versus-
+  budget timeout evidence, max-turns exhaustion, whether the adapter action
+  even attempted to run, adapter error, Git observation, real file-based
+  artifact presence, and required-check exit code -- and deterministically
+  classifies exactly one `result.v1` terminal status/reason from it, in a
+  fixed priority order (`cancelled_by_owner` > `job_timed_out` >
+  `adapter_timed_out` > `max_turns_exhausted` > `runner_lost` (adapter never
+  attempted) > `adapter_error` (session unresolvable or explicit error) >
+  `missing_commit` > `missing_artifact` (result-artifact, then
+  required-evidence-artifact) > `empty_diff` > `check_failed` >
+  `completed`). `timeout` is classified only from explicit elapsed-versus-
+  budget evidence computed by the propagator itself -- never a pre-set
+  boolean the caller could blanket-assert -- so an abnormal execute-job
+  outcome without that evidence falls through to `runner_lost` or
+  `adapter_error` instead. The adapter's own self-reported status and the
+  Actions job's own conclusion are never read by this classification --
+  they are carried through only as untrusted, informational fields on the
+  published `workflow-run-metadata` artifact;
+- `execution_id` is never caller-supplied and never `uuid.uuid4()`
+  randomness (`resolve_execution_identity`): it is the adapter's own real
+  `session_id`, extracted by a bounded, fail-closed parser
+  (`resolve_adapter_session_id`) from the pinned action's actual
+  `execution_file`/`structured_output` text, or -- only when the adapter
+  never attempted to run -- a UUID5 deterministically derived from real,
+  platform-verifiable Actions run facts (`derive_pipeline_execution_id`).
+  A present-but-malformed session id is treated as unresolvable and
+  classified `adapter_error`, never coerced or fabricated;
 - the trusted observation it derives is finalized into a schema-valid
   `result.v1` by calling `../tools/finalize_b1.py`'s `finalize` function
   directly, unmodified; that result is then verified against a task, a
@@ -207,25 +223,40 @@ real GitHub Actions workflow around them:
   the adapter's self-report, the Actions job's own conclusion, or the raw
   provider terminal reason;
 - `.github/workflows/b3-terminal-propagation.yml` is a real, two-job Actions
-  workflow: an `execute` job bounded by `timeout-minutes` runs the executor
-  adapter, and an always-run (`if: always()`) `finalize-and-verify` job
-  collects the trusted provider signal from directly observable facts
-  (the `execute` job's own `needs.execute.result`, Git state, and artifact
-  presence -- not adapter prose), runs the propagator, uploads the
-  `result-artifact`, `verification-report`, and `workflow-run-metadata`
-  artifacts, and publishes the Check Run from the verifier's own report.
-  Both the Actions run ID (`github.run_id`) and the trusted `execution_id`
-  generated once in the `execute` job and threaded through as a job output
-  are required non-null on the published `workflow-run-metadata`;
+  workflow, triggered by `pull_request` (`opened`/`synchronize`/`reopened`,
+  guarded to this exact head branch so opening or updating the Draft PR
+  produces a real pre-merge run) with `workflow_dispatch` retained only as a
+  supplemental trigger. The `execute` job, bounded by `timeout-minutes`,
+  invokes the real, pinned `anthropics/claude-code-action@6902c227aaa9536481b99d56f3014bbbad6c6da8`
+  -- the same adapter action previously exercised on
+  `origin/design/issue-12-executor-orchestrator` -- in a bounded, read-only
+  diagnostic mode that may only read the repository and run the registered
+  B3 test command, granted no push/commit/merge/deploy tools. The always-run
+  (`if: always()`) `finalize-and-verify` job collects the trusted provider
+  signal from directly observable facts only: the real, downloaded
+  `execution_file`/`structured_output` from the adapter action, real
+  execute-job start/completion timestamps fetched from the Actions REST API
+  itself (never the possibly-dead job's own self-report), real on-disk
+  artifact presence from a directly, deterministically executed run of the
+  B3 test command (never derived from Git commit existence), and real Git
+  state. It then runs the propagator, uploads the `result-artifact`,
+  `verification-report`, and `workflow-run-metadata` artifacts, and
+  publishes the Check Run from the verifier's own report. Both the Actions
+  run ID (`github.run_id`) and the trusted `execution_id` are required
+  non-null on the published `workflow-run-metadata`, and the job's own final
+  step still gates its exit code on that same verifier-sourced conclusion;
 - the immutable, hash-pinned `fixtures/b3/manifest.v1.json` fixture suite
   covers all terminal failure reasons the Issue #19 B3 control contract
   requires (max-turns, adapter timeout, job timeout, missing commit, missing
   result artifact, missing required-evidence artifact, empty diff, failed
   required check, adapter error, cancellation, and the case where a green
   adapter self-report and a green Actions job conclusion cannot mask a real
-  check failure), plus the immutable false-success replay of the historical
-  run `29190170902` (green, `error_max_turns`, zero artifacts, no commit)
-  and one genuine-success scenario that passes cleanly;
+  check failure), the immutable false-success replay of the historical run
+  `29190170902` (green, `error_max_turns`, zero artifacts, no commit), one
+  genuine-success scenario that passes cleanly, and two scenarios added by
+  the corrective attempt to exercise `runner_lost` (the adapter action never
+  attempted) and an unresolvable adapter session (attempted, but its real
+  output carries no valid `session_id`);
 - no component in B3 has independent verifier authority beyond composing
   the existing `B1`/`B2` bootstrap tools unmodified; B3 adds exactly one
   narrow command registry entry (`repo.contracts.b3.tests`) and no new
@@ -238,21 +269,27 @@ never be attributable to adapter or Actions-job self-report.
 
 ## Contents (B3)
 
-- `../tools/propagate_b3.py`: the bounded provider-signal loader, the fixed
-  terminal-reason classifier, the trusted-observation builder, the pipeline
-  that calls the unmodified `B1` finalizer and `B2` verifier in sequence,
-  the `workflow-run-metadata` publisher, and a `suite` subcommand that runs
-  the immutable B3 fixture manifest;
-- `../fixtures/b3/manifest.v1.json`: immutable fixture definitions for all
-  13 contract-oracle scenarios required by Issue #19's `AC-B3-1`, with
-  SHA-256 hashes over every fixture document;
+- `../tools/propagate_b3.py`: the bounded provider-signal loader, the
+  fail-closed adapter-session-id parser and deterministic execution-id
+  resolver, the fixed terminal-reason classifier, the trusted-observation
+  builder, the pipeline that calls the unmodified `B1` finalizer and `B2`
+  verifier in sequence, the `workflow-run-metadata` publisher, and a `suite`
+  subcommand that runs the immutable B3 fixture manifest;
+- `../fixtures/b3/manifest.v1.json`: immutable fixture definitions for the
+  13 contract-oracle scenarios required by Issue #19's `AC-B3-1` plus 2
+  scenarios added by the corrective attempt, with SHA-256 hashes over every
+  fixture document;
 - `../fixtures/b3/documents/`: the hash-pinned provider-signal, task,
   review-attestation, and verifier-identity documents referenced by the
   manifest;
 - `../tests/test_b3_terminal_propagation.py`: fixture-oracle regression
   tests (status, terminal reason, and Check Run conclusion per scenario),
-  direct classification priority-order unit tests, override-detection,
-  artifact-publication, and identity-separation coverage;
+  direct classification priority-order unit tests (including the
+  evidence-based timeout/runner_lost/session-resolution corrections),
+  execution-identity resolution tests, override-detection,
+  artifact-publication, identity-separation, and live-workflow-content
+  assertions (pinned adapter action, pre-merge trigger, real execution-output
+  parsing, real artifact observation, absence of blanket timeout mapping);
 - `../.github/workflows/b3-terminal-propagation.yml`: the real, two-job
   Actions workflow described above.
 
@@ -294,13 +331,15 @@ failure-code set, and the `deterministic-repeat` scenario's two runs
 publish byte-identical `verification.v1` reports. A hash change in any
 source fixture document fails closed before any verification attempt runs.
 
-The B3 fixture suite succeeds only when every one of the 13 required
+The B3 fixture suite succeeds only when every one of the 15 required
 scenarios matches its declared `result.v1` status/terminal_reason and the
 Check Run conclusion the composed, unmodified B1/B2 tools force -- including
 the immutable false-success replay of historical run `29190170902`, which
 must fail closed on `max_turns` despite a green adapter self-report and a
-green Actions job conclusion. A hash change in any source fixture document
-fails closed before any pipeline attempt runs.
+green Actions job conclusion, and the two corrective-attempt scenarios
+proving that an execute-job failure without explicit timeout evidence is
+never blanket-mapped to `timeout`. A hash change in any source fixture
+document fails closed before any pipeline attempt runs.
 
 Every report contains:
 

@@ -1,15 +1,18 @@
 {
   "actions_job_conclusion": "success",
+  "adapter_attempted": true,
+  "adapter_elapsed_seconds": 240,
   "adapter_error": null,
   "adapter_self_report": {
     "claimed_status": "change_proposed",
     "claimed_terminal_reason": "completed",
     "status": "success"
   },
-  "adapter_timed_out": false,
+  "adapter_step_outcome": "success",
+  "adapter_timeout_budget_seconds": 600,
   "attempt": 1,
   "cancelled_by_owner": false,
-  "execution_id": "70000000-0000-4000-8000-000000000012",
+  "execution_file_content": "{\"session_id\": \"a0000000-0000-4000-8000-000000000012\", \"status\": \"completed\", \"num_turns\": 4, \"result\": \"bounded read-only diagnostic run completed\"}",
   "executor": {
     "adapter": "human-supervised-claude-code",
     "adapter_version": "claude-code-2.1.197-b3-bootstrap",
@@ -36,7 +39,8 @@
     ],
     "head_sha": "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3"
   },
-  "job_timed_out": false,
+  "job_elapsed_seconds": 300,
+  "job_timeout_budget_seconds": 900,
   "max_turns_exhausted": false,
   "raw_provider_terminal_reason": null,
   "required_check_exit_code": 1,
@@ -45,10 +49,12 @@
   "schema_version": "1.0.0",
   "source_run_id": null,
   "started_at": "2026-07-14T08:00:00Z",
+  "structured_output_raw": null,
   "task_id": "yurikuchumov-ux/ai-operating-system#19",
   "untrusted_candidate": {
     "status": "change_proposed",
     "terminal_reason": "completed"
   },
+  "workflow_run_attempt": "1",
   "workflow_run_id": "40000000012"
 }

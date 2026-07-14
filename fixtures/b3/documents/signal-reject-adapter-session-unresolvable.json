@@ -1,14 +1,14 @@
 {
   "actions_job_conclusion": null,
   "adapter_attempted": true,
-  "adapter_elapsed_seconds": 605,
+  "adapter_elapsed_seconds": 240,
   "adapter_error": null,
   "adapter_self_report": null,
-  "adapter_step_outcome": "cancelled",
+  "adapter_step_outcome": "success",
   "adapter_timeout_budget_seconds": 600,
   "attempt": 1,
   "cancelled_by_owner": false,
-  "execution_file_content": "{\"session_id\": \"a0000000-0000-4000-8000-000000000003\", \"status\": \"completed\", \"num_turns\": 4, \"result\": \"bounded read-only diagnostic run completed\"}",
+  "execution_file_content": "{\"status\": \"completed\", \"result\": \"no session id in this payload\"}",
   "executor": {
     "adapter": "human-supervised-claude-code",
     "adapter_version": "claude-code-2.1.197-b3-bootstrap",
@@ -45,9 +45,9 @@
   "schema_version": "1.0.0",
   "source_run_id": null,
   "started_at": "2026-07-14T08:00:00Z",
-  "structured_output_raw": null,
+  "structured_output_raw": "not json at all {{{",
   "task_id": "yurikuchumov-ux/ai-operating-system#19",
   "untrusted_candidate": null,
   "workflow_run_attempt": "1",
-  "workflow_run_id": "40000000003"
+  "workflow_run_id": "40000000015"
 }

@@ -11,6 +11,37 @@ name: B3 Terminal Failure Propagation
 # artifacts, and Check Runs only: this workflow never deploys, merges,
 # touches secrets/settings, or has any other product side effect.
 #
+# Corrective attempt 2 (architect-blocking gaps closed):
+#   1. the executor adapter is the real, pinned Claude Code Action used
+#      successfully on origin/design/issue-12-executor-orchestrator
+#      (anthropics/claude-code-action@6902c227aaa9536481b99d56f3014bbbad6c6da8),
+#      invoked here in a bounded, read-only diagnostic mode: it may only
+#      read the repository and run the registered B3 test command, and is
+#      never granted push/commit/merge/deploy tools;
+#   2. a `pull_request` trigger (opened/synchronize/reopened), guarded to
+#      this exact head branch, lets opening/updating the Draft PR produce a
+#      real pre-merge run; `workflow_dispatch` remains supplemental only;
+#   3. `execution_id` is never `uuid.uuid4()` randomness. It is the
+#      adapter's own real `session_id`, parsed by a bounded, fail-closed
+#      parser (`tools/propagate_b3.py:resolve_execution_identity`) from the
+#      pinned action's actual `execution_file`/`structured_output`, or --
+#      only when the adapter never attempted to run -- a UUID5
+#      deterministically derived from real Actions run facts;
+#   4. `result_artifact_present` / `required_evidence_artifact_present` are
+#      derived from real, independently checked files on disk (the
+#      downloaded adapter execution-file artifact and this job's own
+#      directly executed B3 test log), never from Git commit existence;
+#   5. `timeout` is classified only from explicit elapsed-time-versus-budget
+#      evidence -- the execute job's real start/completion timestamps,
+#      fetched from the Actions API itself (not the possibly-dead job's own
+#      self-report) -- never a blanket "the job failed" mapping. Absent
+#      that evidence, an abnormal execute-job outcome is `runner_lost` (the
+#      adapter never attempted) or `adapter_error` (it attempted but its
+#      session is unresolvable, or it reported a real error);
+#   6. the Check Run conclusion published below is still, and only ever,
+#      `success` iff `verification.v1.passed`; the final job step still
+#      gates this job's own exit code on that same value.
+#
 # Bootstrap limitation (tracked as a known limitation, not silently papered
 # over): the `finalize-and-verify` job below verifies against the
 # repository-owned B3 fixture baseline task/review-attestation/verifier
@@ -19,9 +50,15 @@ name: B3 Terminal Failure Propagation
 # this workflow to the real, owner-authored `.ai/tasks/19/b3-task.v1.json`
 # control-plane task and a real independent reviewer's attestation is later,
 # owner-approved control-plane wiring -- outside this bootstrap step's
-# `allowed_paths`, which forbid touching `.ai/tasks/**` at all.
+# `allowed_paths`, which forbid touching `.ai/tasks/**` at all. The
+# elapsed-time-versus-budget timeout evidence relies on the Actions REST
+# API's per-job timing; if that call itself fails (permissions, rate limit),
+# the signal fails closed to no timeout evidence rather than fabricating a
+# number, and the run is classified `runner_lost`/`adapter_error` instead.
 
 on:
+  pull_request:
+    types: [opened, synchronize, reopened]
   workflow_dispatch:
     inputs:
       attempt:
@@ -37,6 +74,7 @@ permissions:
   contents: read
   checks: write
   actions: read
+  pull-requests: read
 
 concurrency:
   group: b3-terminal-propagation-${{ github.ref }}
@@ -44,15 +82,24 @@ concurrency:
 
 env:
   B3_TASK_ID: "yurikuchumov-ux/ai-operating-system#19"
+  B3_HEAD_BRANCH: "agent/issue-19-b3-terminal-propagation"
+  # Single source of truth for the job-level timeout, duplicated into the
+  # `execute` job's own `timeout-minutes` below; the finalize job re-derives
+  # the same number in seconds when computing real elapsed-vs-budget
+  # timeout evidence from the Actions API, rather than trusting the execute
+  # job's own (possibly-dead) self-report of having timed out.
+  B3_EXECUTE_JOB_TIMEOUT_MINUTES: "20"
+  # The adapter runs in bounded read-only diagnostic mode, not full
+  # autonomous coding, so its own budget is intentionally much smaller than
+  # the task contract's 7200s executor.timeout_seconds.
+  B3_ADAPTER_TIMEOUT_BUDGET_SECONDS: "600"
 
 jobs:
   execute:
-    name: Execute adapter (owner-scoped, timeout-bounded)
+    name: Execute adapter (owner-scoped, read-only diagnostic, timeout-bounded)
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.ref == 'agent/issue-19-b3-terminal-propagation'
     runs-on: ubuntu-latest
-    timeout-minutes: 120
-    outputs:
-      execution_id: ${{ steps.identity.outputs.execution_id }}
-      started_at: ${{ steps.identity.outputs.started_at }}
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -64,37 +111,87 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Generate trusted execution identity
-        id: identity
+      - name: Record adapter start time
+        id: before_adapter
+        run: echo "ts=$(date -u +%s)" >> "$GITHUB_OUTPUT"
+
+      - name: Run executor adapter (real pinned action, read-only diagnostic mode)
+        id: adapter
+        # Pinned to the exact commit proven to work on
+        # origin/design/issue-12-executor-orchestrator. `continue-on-error`
+        # keeps this job alive through an adapter failure so the always-run
+        # finalize job below can still observe and classify the actual
+        # terminal state from real evidence, never this step's own claim.
+        continue-on-error: true
+        uses: anthropics/claude-code-action@6902c227aaa9536481b99d56f3014bbbad6c6da8
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ github.token }}
+          prompt: |
+            You are running in bounded, read-only diagnostic mode for Issue #19 B3.
+            Do not edit, write, commit, push, merge, or deploy anything.
+            Run exactly the registered B3 test command and report its outcome:
+              python3 -m unittest discover -s tests -p 'test_b3_*.py'
+            Summarize the result. Do not take any other action.
+          claude_args: |
+            --max-turns 8
+            --allowedTools "Read,Glob,Grep,Bash(python3 -m unittest discover -s tests -p test_b3_*.py:*)"
+            --disallowedTools "Edit,Write,NotebookEditCell,Bash(git push:*),Bash(git commit:*),Bash(git add:*),Bash(gh pr merge:*),Bash(gh pr create:*)"
+
+      - name: Record adapter completion time
+        id: after_adapter
+        if: always()
+        run: echo "ts=$(date -u +%s)" >> "$GITHUB_OUTPUT"
+
+      - name: Capture real adapter execution output
+        id: capture_adapter_output
+        if: always()
+        env:
+          ADAPTER_OUTCOME: ${{ steps.adapter.outcome }}
+          ADAPTER_EXECUTION_FILE: ${{ steps.adapter.outputs.execution_file }}
+          ADAPTER_STRUCTURED_OUTPUT: ${{ steps.adapter.outputs.structured_output }}
+          ADAPTER_BRANCH_NAME: ${{ steps.adapter.outputs.branch_name }}
+          ADAPTER_STARTED_AT: ${{ steps.before_adapter.outputs.ts }}
+          ADAPTER_FINISHED_AT: ${{ steps.after_adapter.outputs.ts }}
         run: |
-          python3 - <<'PY' >> "$GITHUB_OUTPUT"
-          import uuid, datetime
-          print("execution_id={}".format(uuid.uuid4()))
-          print("started_at={}".format(datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")))
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          out_dir = Path("b3-adapter-output")
+          out_dir.mkdir(parents=True, exist_ok=True)
+
+          # Copy the pinned action's real `execution_file` output verbatim,
+          # bounded to 1 MiB, if the action produced one. Never fabricated:
+          # a missing or oversized file simply means no execution-file
+          # evidence is available, which the finalize job's parser must
+          # then fail closed on rather than invent a session id.
+          execution_file_path = os.environ.get("ADAPTER_EXECUTION_FILE") or ""
+          execution_file_copied = False
+          if execution_file_path:
+              candidate = Path(execution_file_path)
+              if candidate.is_file() and candidate.stat().st_size <= 1024 * 1024:
+                  (out_dir / "execution-file.txt").write_bytes(candidate.read_bytes())
+                  execution_file_copied = True
+
+          manifest = {
+              "adapter_outcome": os.environ.get("ADAPTER_OUTCOME") or None,
+              "adapter_execution_file_copied": execution_file_copied,
+              "adapter_structured_output": os.environ.get("ADAPTER_STRUCTURED_OUTPUT") or None,
+              "adapter_branch_name": os.environ.get("ADAPTER_BRANCH_NAME") or None,
+              "adapter_started_at": os.environ.get("ADAPTER_STARTED_AT") or None,
+              "adapter_finished_at": os.environ.get("ADAPTER_FINISHED_AT") or None,
+          }
+          (out_dir / "manifest.json").write_text(json.dumps(manifest, sort_keys=True), encoding="utf-8")
           PY
 
-      - name: Run executor adapter
-        id: adapter
-        # The adapter step's own exit code and any stdout claim of success
-        # are recorded for audit only (see the `collect-signal` step in the
-        # finalize-and-verify job below); they are never trusted directly.
-        # `continue-on-error` keeps this job alive through an adapter
-        # failure so the always-run finalize job below can still observe
-        # and classify the actual terminal state; the job-level
-        # `timeout-minutes` above is the independent, unmaskable signal for
-        # the `job_timed_out` terminal reason.
-        continue-on-error: true
-        run: |
-          echo "adapter self-report is untrusted input only; see tools/propagate_b3.py classify_terminal()"
-          echo "outcome=${{ job.status }}" >> "$GITHUB_OUTPUT"
-
-      - name: Upload untrusted adapter self-report
+      - name: Upload real adapter execution output
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: b3-adapter-self-report
-          path: |
-            ${{ github.workspace }}/.git/HEAD
+          name: b3-adapter-output
+          path: b3-adapter-output/
           if-no-files-found: ignore
           retention-days: 14
 
@@ -118,50 +215,139 @@ jobs:
       - name: Install dependencies
         run: python3 -m pip install --disable-pip-version-check --no-input -r requirements-b0.txt
 
-      - name: Download untrusted adapter self-report
+      - name: Download real adapter execution output
         if: always()
         continue-on-error: true
         uses: actions/download-artifact@v4
         with:
-          name: b3-adapter-self-report
-          path: b3-adapter-self-report
+          name: b3-adapter-output
+          path: b3-adapter-output
+
+      - name: Fetch real execute-job timing from the Actions API
+        id: job_timing
+        if: always()
+        continue-on-error: true
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let startedAt = null;
+            let completedAt = null;
+            try {
+              const jobs = await github.rest.actions.listJobsForWorkflowRun({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                run_id: context.runId,
+              });
+              const executeJob = jobs.data.jobs.find((job) => job.name.startsWith('Execute adapter'));
+              if (executeJob) {
+                startedAt = executeJob.started_at || null;
+                completedAt = executeJob.completed_at || null;
+              }
+            } catch (error) {
+              core.warning(`could not fetch execute job timing: ${error}`);
+            }
+            fs.writeFileSync(
+              'b3-output-job-timing.json',
+              JSON.stringify({ started_at: startedAt, completed_at: completedAt })
+            );
+
+      - name: Run the registered B3 test command directly (real, deterministic evidence)
+        id: run_b3_tests
+        if: always()
+        continue-on-error: true
+        run: |
+          mkdir -p b3-output
+          python3 -m unittest discover -s tests -p 'test_b3_*.py' > b3-output/test-log.txt 2>&1
+          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
 
       - name: Collect trusted provider signal
         id: collect_signal
         if: always()
         env:
           EXECUTE_JOB_RESULT: ${{ needs.execute.result }}
-          EXECUTION_ID: ${{ needs.execute.outputs.execution_id }}
-          STARTED_AT: ${{ needs.execute.outputs.started_at }}
           WORKFLOW_RUN_ID: ${{ github.run_id }}
+          WORKFLOW_RUN_ATTEMPT: ${{ github.run_attempt }}
           SOURCE_RUN_ID: ${{ github.event.inputs.source_run_id }}
           ATTEMPT: ${{ github.event.inputs.attempt }}
+          B3_JOB_TIMEOUT_MINUTES: ${{ env.B3_EXECUTE_JOB_TIMEOUT_MINUTES }}
+          B3_ADAPTER_TIMEOUT_BUDGET: ${{ env.B3_ADAPTER_TIMEOUT_BUDGET_SECONDS }}
+          B3_TEST_EXIT_CODE: ${{ steps.run_b3_tests.outputs.exit_code }}
         run: |
           python3 - <<'PY'
           import datetime
           import json
           import os
           import subprocess
+          from pathlib import Path
 
           execute_result = os.environ.get("EXECUTE_JOB_RESULT", "failure")
-          execution_id = os.environ.get("EXECUTION_ID") or None
-          started_at = os.environ.get("STARTED_AT") or datetime.datetime.now(
-              datetime.timezone.utc
-          ).strftime("%Y-%m-%dT%H:%M:%SZ")
-          finished_at = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
           workflow_run_id = os.environ["WORKFLOW_RUN_ID"]
+          workflow_run_attempt = os.environ.get("WORKFLOW_RUN_ATTEMPT") or "1"
           source_run_id = os.environ.get("SOURCE_RUN_ID") or None
           attempt = int(os.environ.get("ATTEMPT") or "1")
+          finished_at = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-          # `execute_result` (needs.execute.result) is the Actions job's own
-          # conclusion: "success", "failure", "cancelled", or "skipped".
-          # It is recorded below purely as untrusted, informational
-          # `actions_job_conclusion` -- it never drives cancelled_by_owner,
-          # job_timed_out, or any other classification field. Those are
-          # derived only from directly observable facts (git state,
-          # artifact presence, the required check's own exit code).
-          cancelled_by_owner = execute_result == "cancelled"
-          job_timed_out = execute_result == "failure" and not cancelled_by_owner
+          # Real adapter output, downloaded from the execute job's own
+          # artifact -- never synthesized here. Its absence (the download
+          # step above found nothing) is itself real evidence that the
+          # adapter action never attempted to run.
+          manifest_path = Path("b3-adapter-output/manifest.json")
+          adapter_manifest = {}
+          if manifest_path.is_file():
+              try:
+                  adapter_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+              except (json.JSONDecodeError, UnicodeDecodeError):
+                  adapter_manifest = {}
+          adapter_attempted = bool(adapter_manifest)
+          adapter_started_at = adapter_manifest.get("adapter_started_at")
+          adapter_finished_at = adapter_manifest.get("adapter_finished_at")
+          adapter_elapsed_seconds = None
+          if adapter_started_at and adapter_finished_at:
+              try:
+                  adapter_elapsed_seconds = int(adapter_finished_at) - int(adapter_started_at)
+              except ValueError:
+                  adapter_elapsed_seconds = None
+
+          execution_file_path = Path("b3-adapter-output/execution-file.txt")
+          execution_file_content = None
+          if adapter_manifest.get("adapter_execution_file_copied") and execution_file_path.is_file():
+              execution_file_content = execution_file_path.read_text(encoding="utf-8", errors="replace")
+          structured_output_raw = adapter_manifest.get("adapter_structured_output")
+
+          # Real, independently-fetched Actions API timing for the execute
+          # job -- not the (possibly-dead) execute job's own self-report --
+          # is the only source of job-level elapsed-vs-budget evidence.
+          job_timing_path = Path("b3-output-job-timing.json")
+          job_started_at = None
+          job_completed_at = None
+          if job_timing_path.is_file():
+              try:
+                  job_timing = json.loads(job_timing_path.read_text(encoding="utf-8"))
+                  job_started_at = job_timing.get("started_at")
+                  job_completed_at = job_timing.get("completed_at")
+              except (json.JSONDecodeError, UnicodeDecodeError):
+                  pass
+          job_elapsed_seconds = None
+          if job_started_at and job_completed_at:
+              try:
+                  fmt = "%Y-%m-%dT%H:%M:%SZ"
+                  started = datetime.datetime.strptime(job_started_at, fmt)
+                  completed = datetime.datetime.strptime(job_completed_at, fmt)
+                  job_elapsed_seconds = int((completed - started).total_seconds())
+              except ValueError:
+                  job_elapsed_seconds = None
+          job_timeout_budget_seconds = int(os.environ["B3_JOB_TIMEOUT_MINUTES"]) * 60
+          adapter_timeout_budget_seconds = int(os.environ["B3_ADAPTER_TIMEOUT_BUDGET"])
+
+          # `execute_result` (needs.execute.result) and the adapter's own
+          # outcome are recorded below purely as untrusted, informational
+          # fields -- they are never read by classify_terminal() to decide
+          # cancelled_by_owner, timeout, runner_lost, or success. Those are
+          # derived only from the real evidence assembled above (Git state,
+          # real elapsed-vs-budget timing, real file presence, the directly
+          # executed required check's own exit code).
+          cancelled_by_owner = execute_result == "cancelled" and job_elapsed_seconds is not None and job_elapsed_seconds < job_timeout_budget_seconds
 
           base_sha = subprocess.run(
               ["git", "merge-base", "HEAD", "origin/main"], capture_output=True, text=True
@@ -176,10 +362,25 @@ jobs:
               ["git", "diff", "--name-only", base_sha, "HEAD"], capture_output=True, text=True
           ).stdout.split()
 
+          # Real, directly-observed file presence -- never derived from
+          # whether a commit exists.
+          result_artifact_present = execution_file_path.is_file() or bool(structured_output_raw)
+          test_log_path = Path("b3-output/test-log.txt")
+          required_evidence_artifact_present = test_log_path.is_file() and test_log_path.stat().st_size > 0
+          required_check_exit_code = int(os.environ.get("B3_TEST_EXIT_CODE") or "1")
+
+          # Best-effort, real-evidence-derived max-turns detection: the
+          # adapter's own transcript/structured output is scanned for the
+          # pinned action's known max-turns marker. Absence of any evidence
+          # means False, never a default True.
+          max_turns_exhausted = False
+          for blob in (execution_file_content, structured_output_raw):
+              if blob and ("max_turns" in blob or "error_max_turns" in blob):
+                  max_turns_exhausted = True
+
           signal = {
               "schema_version": "1.0.0",
               "task_id": os.environ.get("B3_TASK_ID", "yurikuchumov-ux/ai-operating-system#19"),
-              "execution_id": execution_id or "00000000-0000-4000-8000-000000000000",
               "attempt": attempt,
               "executor": {
                   "adapter": "human-supervised-claude-code",
@@ -192,32 +393,43 @@ jobs:
                       "role": "author",
                   },
               },
-              "started_at": started_at,
+              "started_at": adapter_started_at or finished_at,
               "finished_at": finished_at,
               "workflow_run_id": str(workflow_run_id),
+              "workflow_run_attempt": str(workflow_run_attempt),
               "source_run_id": source_run_id,
               "cancelled_by_owner": cancelled_by_owner,
-              "adapter_timed_out": False,
-              "job_timed_out": job_timed_out,
-              "max_turns_exhausted": False,
+              "adapter_attempted": adapter_attempted,
+              "adapter_step_outcome": adapter_manifest.get("adapter_outcome"),
+              "job_elapsed_seconds": job_elapsed_seconds,
+              "job_timeout_budget_seconds": job_timeout_budget_seconds,
+              "adapter_elapsed_seconds": adapter_elapsed_seconds,
+              "adapter_timeout_budget_seconds": adapter_timeout_budget_seconds,
+              "max_turns_exhausted": max_turns_exhausted,
               "adapter_error": None,
               "raw_provider_terminal_reason": None,
-              "adapter_self_report": {
-                  "status": "success" if execute_result == "success" else "failed",
-                  "claimed_status": "change_proposed" if execute_result == "success" else "failed",
-                  "claimed_terminal_reason": "completed" if execute_result == "success" else "adapter_error",
-              },
+              "adapter_self_report": (
+                  {
+                      "status": "success" if adapter_manifest.get("adapter_outcome") == "success" else "failed",
+                      "claimed_status": "change_proposed" if adapter_manifest.get("adapter_outcome") == "success" else "failed",
+                      "claimed_terminal_reason": "completed" if adapter_manifest.get("adapter_outcome") == "success" else "adapter_error",
+                  }
+                  if adapter_attempted
+                  else None
+              ),
               "actions_job_conclusion": execute_result,
               "untrusted_candidate": None,
+              "execution_file_content": execution_file_content,
+              "structured_output_raw": structured_output_raw,
               "git_observation": {
                   "base_sha": base_sha,
                   "head_sha": head_sha if authored_commits_raw else None,
                   "authored_commits": authored_commits_raw,
                   "changed_files": changed_files,
               },
-              "result_artifact_present": bool(authored_commits_raw),
-              "required_evidence_artifact_present": bool(authored_commits_raw),
-              "required_check_exit_code": 0 if execute_result == "success" else 1,
+              "result_artifact_present": result_artifact_present,
+              "required_evidence_artifact_present": required_evidence_artifact_present,
+              "required_check_exit_code": required_check_exit_code,
               "finalized_by": {
                   "component_id": "b3-terminal-propagator.v1",
                   "credential_principal": "github:actions:b3-finalizer",
@@ -253,6 +465,7 @@ jobs:
             b3-output/pipeline/verification.json
             b3-output/pipeline/workflow-run-metadata.json
             b3-output/propagate-report.json
+            b3-output/test-log.txt
           if-no-files-found: error
           retention-days: 90
 
@@ -283,6 +496,7 @@ jobs:
                 summary: [
                   `workflow_run_id: ${metadata.workflow_run_id}`,
                   `execution_id: ${metadata.execution_id}`,
+                  `execution_id_source: ${metadata.execution_id_source}`,
                   `verification_id: ${metadata.verification_id}`,
                   `verification_passed: ${metadata.verification_passed}`,
                   `raw_provider_terminal_reason: ${metadata.raw_provider_terminal_reason}`,

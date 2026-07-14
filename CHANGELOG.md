@@ -1,6 +1,50 @@
 # Changelog
 
 ## Unreleased
+- Close B3 false-success gaps found by architect postcondition review of the
+  first implementation attempt: (1) the workflow's `execute` job now invokes
+  the real, pinned `anthropics/claude-code-action@6902c227aaa9536481b99d56f3014bbbad6c6da8`
+  -- the same adapter proven working on
+  `origin/design/issue-12-executor-orchestrator` -- in a bounded, read-only
+  diagnostic mode (may only read the repo and run the registered B3 test
+  command; granted no push/commit/merge/deploy tools), replacing the
+  attempt-1 echo placeholder; (2) adds a `pull_request`
+  (`opened`/`synchronize`/`reopened`) trigger guarded to this exact head
+  branch so opening/updating the Draft PR produces a real pre-merge run,
+  with `workflow_dispatch` retained only as supplemental; (3)
+  `tools/propagate_b3.py`'s `execution_id` is no longer caller-supplied or
+  `uuid.uuid4()` randomness -- `resolve_execution_identity` derives it from
+  the adapter's own real `session_id`, extracted by a new bounded,
+  fail-closed parser (`resolve_adapter_session_id`) from the pinned action's
+  actual `execution_file`/`structured_output` text, or, only when the
+  adapter never attempted to run, a UUID5 deterministically derived from
+  real Actions run facts (`derive_pipeline_execution_id`); a present but
+  malformed session id is treated as unresolvable and classified
+  `adapter_error`, never coerced or fabricated; (4) `result_artifact_present`
+  / `required_evidence_artifact_present` are now derived by the workflow
+  from real, independently checked files on disk (the downloaded adapter
+  execution-file artifact and a directly, deterministically executed B3 test
+  log), never from Git commit existence; (5) `timeout` is now classified
+  only from explicit elapsed-time-versus-budget evidence -- computed by
+  `classify_terminal` itself from real execute-job start/completion
+  timestamps fetched from the Actions REST API, never a blanket "the job
+  failed" mapping -- and a new `runner_lost` terminal reason (the adapter
+  action never attempted) is distinguished from `adapter_error` (it
+  attempted but its session is unresolvable, or it reported a real error);
+  (6) the Check Run conclusion remains sourced only from
+  `verification.v1.passed`, and the final job step still gates this job's
+  own exit code on that same value. Extends
+  `tests/test_b3_terminal_propagation.py` with execution-identity
+  resolution tests, corrected classification-priority tests (evidence-based
+  timeout, `runner_lost`, session-resolution fail-closed behavior), and
+  live-workflow-content assertions (pinned adapter action present,
+  pre-merge trigger present and guarded, real execution-output parsing, real
+  artifact observation, no synthetic execution ID, no blanket
+  failure-to-timeout mapping). All 13 originally required offline fixture
+  scenarios are preserved with unchanged expected outcomes; 2 scenarios
+  (`reject-runner-lost`, `reject-adapter-session-unresolvable`) are added to
+  exercise the corrected paths. B0, B1, and B2 schemas, registries,
+  fixtures, and tests remain untouched.
 - Add B3 terminal-failure propagation for Issue #19: a deterministic
   propagator (`tools/propagate_b3.py`) that classifies exactly one
   `result.v1` terminal status/reason from a trusted provider signal --

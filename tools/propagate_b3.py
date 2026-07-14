@@ -22,6 +22,22 @@ The Check Run conclusion this tool derives is `success` iff
 status and never the Actions job's own conclusion. Both of those are only
 ever recorded as untrusted, informational fields in the published
 `workflow-run-metadata` artifact.
+
+Two further trust boundaries are enforced structurally, not by convention:
+
+- `execution_id` is never caller-supplied and never `uuid.uuid4()`
+  randomness. It is either the adapter's own real `session_id` -- parsed by
+  a bounded, fail-closed parser from the pinned Claude Code Action's actual
+  `execution_file`/`structured_output` text -- or, when the adapter never
+  attempted to run, a UUID5 deterministically derived from real,
+  platform-verifiable Actions run facts (`workflow_run_id`,
+  `workflow_run_attempt`, `attempt`). See `resolve_execution_identity`.
+- `timeout` is only ever classified from explicit elapsed-time-versus-budget
+  evidence (`job_elapsed_seconds` >= `job_timeout_budget_seconds`, or the
+  adapter equivalent). An Actions job that failed or was cancelled without
+  that evidence is classified `runner_lost` (the adapter never attempted) or
+  `adapter_error` (it attempted but its session is unresolvable, or it
+  reported a real error) -- never blanket-mapped to `timeout`.
 """
 
 from __future__ import annotations
@@ -30,8 +46,10 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import sys
 import tempfile
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
@@ -98,22 +116,28 @@ PROVIDER_SIGNAL_SCHEMA: Dict[str, Any] = {
     "required": [
         "schema_version",
         "task_id",
-        "execution_id",
         "attempt",
         "executor",
         "started_at",
         "finished_at",
         "workflow_run_id",
+        "workflow_run_attempt",
         "source_run_id",
         "cancelled_by_owner",
-        "adapter_timed_out",
-        "job_timed_out",
+        "adapter_attempted",
+        "adapter_step_outcome",
+        "job_elapsed_seconds",
+        "job_timeout_budget_seconds",
+        "adapter_elapsed_seconds",
+        "adapter_timeout_budget_seconds",
         "max_turns_exhausted",
         "adapter_error",
         "raw_provider_terminal_reason",
         "adapter_self_report",
         "actions_job_conclusion",
         "untrusted_candidate",
+        "execution_file_content",
+        "structured_output_raw",
         "git_observation",
         "result_artifact_present",
         "required_evidence_artifact_present",
@@ -123,7 +147,12 @@ PROVIDER_SIGNAL_SCHEMA: Dict[str, Any] = {
     "properties": {
         "schema_version": {"const": "1.0.0"},
         "task_id": {"type": "string", "pattern": _TASK_ID_PATTERN},
-        "execution_id": {"type": "string", "format": "uuid"},
+        # `execution_id` is intentionally NOT a field of this schema: it is
+        # never caller-supplied. See `resolve_execution_identity` -- it is
+        # derived only from the adapter's real session_id or, failing that,
+        # deterministically from real Actions run facts, never accepted as
+        # raw input (which would reopen the door to a fabricated/random
+        # value masquerading as trusted).
         "attempt": {"type": "integer", "minimum": 1, "maximum": 3},
         "executor": {
             "type": "object",
@@ -138,10 +167,24 @@ PROVIDER_SIGNAL_SCHEMA: Dict[str, Any] = {
         "started_at": {"type": "string", "format": "date-time"},
         "finished_at": {"type": "string", "format": "date-time"},
         "workflow_run_id": {"type": "string", "minLength": 1},
+        "workflow_run_attempt": {"type": "string", "minLength": 1},
         "source_run_id": {"oneOf": [{"type": "string", "minLength": 1}, {"type": "null"}]},
         "cancelled_by_owner": {"type": "boolean"},
-        "adapter_timed_out": {"type": "boolean"},
-        "job_timed_out": {"type": "boolean"},
+        # Whether the adapter action step actually started executing (e.g.
+        # observed via the execute job's own `steps.adapter.outcome` being
+        # non-null). This is a directly observable platform fact, not the
+        # adapter's own self-report of success/failure.
+        "adapter_attempted": {"type": "boolean"},
+        "adapter_step_outcome": {
+            "oneOf": [{"enum": ["success", "failure", "cancelled", "skipped"]}, {"type": "null"}]
+        },
+        # Explicit elapsed-time-versus-budget evidence. `timeout` is only
+        # ever classified when elapsed >= budget for one of these pairs --
+        # never from a blanket "the job failed" inference.
+        "job_elapsed_seconds": {"oneOf": [{"type": "integer", "minimum": 0}, {"type": "null"}]},
+        "job_timeout_budget_seconds": {"oneOf": [{"type": "integer", "minimum": 1}, {"type": "null"}]},
+        "adapter_elapsed_seconds": {"oneOf": [{"type": "integer", "minimum": 0}, {"type": "null"}]},
+        "adapter_timeout_budget_seconds": {"oneOf": [{"type": "integer", "minimum": 1}, {"type": "null"}]},
         "max_turns_exhausted": {"type": "boolean"},
         "adapter_error": {
             "oneOf": [
@@ -192,6 +235,13 @@ PROVIDER_SIGNAL_SCHEMA: Dict[str, Any] = {
                 },
             ]
         },
+        # Bounded, real text captured from the pinned Claude Code Action's
+        # own outputs at that exact pin (`execution_file`, read from disk,
+        # and `structured_output`, taken verbatim). `resolve_execution_identity`
+        # is the only place these are read, and only to extract a real
+        # `session_id` -- never to determine success/failure.
+        "execution_file_content": {"oneOf": [{"type": "string", "maxLength": 1000000}, {"type": "null"}]},
+        "structured_output_raw": {"oneOf": [{"type": "string", "maxLength": 1000000}, {"type": "null"}]},
         "git_observation": {
             "type": "object",
             "additionalProperties": False,
@@ -232,7 +282,143 @@ _TERMINAL_REASON_MESSAGES: Dict[str, str] = {
     "empty_diff": "no changed files were observed though a change was required",
     "check_failed": "a required check did not exit zero",
     "cancelled_by_owner": "the run was cancelled by the owner",
+    "runner_lost": "the runner was lost before the adapter action could start",
 }
+
+# UUID pattern for the pinned Claude Code Action's own `session_id`. Claude
+# Code session identifiers are themselves UUID-formatted; a present but
+# non-UUID-shaped value is treated as malformed (session unresolvable), not
+# coerced or trusted.
+_SESSION_ID_PATTERN = re.compile(
+    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+)
+_MAX_SESSION_SEARCH_DEPTH = 8
+_MAX_SESSION_SEARCH_NODES = 2000
+
+# Fixed, non-secret namespace for UUID5 derivation. Any valid UUID works
+# here; it is not itself sensitive, it only seeds a deterministic hash of
+# real Actions run facts so that fallback `execution_id` values are
+# reproducible and traceable rather than `uuid.uuid4()` randomness.
+_EXECUTION_ID_NAMESPACE = uuid.UUID("5b3b3b3b-b3b3-4b3b-8b3b-b3b3b3b3b3b3")
+
+
+def _find_session_id(node: Any, depth: int, budget: List[int]) -> Optional[str]:
+    """Bounded depth-first search for a `session_id`/`sessionId` string.
+
+    `budget` is a mutable one-element visit counter so a deeply-nested but
+    under-size-limit document cannot cause unbounded search work; both the
+    depth limit and the node-visit budget fail closed to "not found" (never
+    raise), leaving the caller to treat that as an unresolvable session.
+    """
+    if depth > _MAX_SESSION_SEARCH_DEPTH or budget[0] <= 0:
+        return None
+    budget[0] -= 1
+    if isinstance(node, dict):
+        for key in ("session_id", "sessionId"):
+            value = node.get(key)
+            if isinstance(value, str) and value:
+                return value
+        for value in node.values():
+            found = _find_session_id(value, depth + 1, budget)
+            if found is not None:
+                return found
+    elif isinstance(node, list):
+        for item in node:
+            found = _find_session_id(item, depth + 1, budget)
+            if found is not None:
+                return found
+    return None
+
+
+def _extract_session_id_from_text(text: Optional[str]) -> Optional[str]:
+    """Bounded, best-effort extraction of a `session_id` field from JSON or
+    JSON-Lines text. Returns the raw string value if found, else `None` --
+    every failure mode here (unreadable, oversized, not JSON, no matching
+    field) is "not found", never an exception; the caller is responsible for
+    fail-closed treatment of `None`.
+    """
+    if not text:
+        return None
+    if len(text.encode("utf-8")) > MAX_INPUT_BYTES:
+        return None
+    stripped = text.strip()
+    if not stripped:
+        return None
+    candidates: List[Any] = []
+    try:
+        candidates.append(json.loads(stripped))
+    except (json.JSONDecodeError, UnicodeDecodeError, ValueError):
+        pass
+    # The action's `execution_file` is commonly a transcript of
+    # newline-delimited JSON events; the most recent well-formed line is
+    # the most likely place to find the session identifier.
+    for line in reversed(stripped.splitlines()):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            candidates.append(json.loads(line))
+        except (json.JSONDecodeError, UnicodeDecodeError, ValueError):
+            continue
+        break
+    for candidate in candidates:
+        found = _find_session_id(candidate, 0, [_MAX_SESSION_SEARCH_NODES])
+        if found is not None:
+            return found
+    return None
+
+
+def resolve_adapter_session_id(
+    execution_file_content: Optional[str], structured_output_raw: Optional[str]
+) -> Optional[str]:
+    """Bounded, fail-closed extraction of the pinned Claude Code Action's own
+    session identifier from its real `execution_file`/`structured_output`
+    text. Returns a normalized, UUID-validated session id string, or `None`
+    if neither source yields one -- callers must treat `None` as
+    unresolvable (`adapter_error`), never fabricate a substitute.
+    """
+    for text in (execution_file_content, structured_output_raw):
+        raw = _extract_session_id_from_text(text)
+        if raw is not None and _SESSION_ID_PATTERN.match(raw.strip()):
+            return raw.strip().lower()
+    return None
+
+
+def derive_pipeline_execution_id(workflow_run_id: str, workflow_run_attempt: str, attempt: int) -> str:
+    """Deterministic UUID5 fallback execution id, derived from real,
+    platform-verifiable Actions run facts. Reproducible and traceable to the
+    exact run/attempt -- never `uuid.uuid4()` randomness."""
+    name = "b3-terminal-propagation:{}:{}:{}".format(workflow_run_id, workflow_run_attempt, attempt)
+    return str(uuid.uuid5(_EXECUTION_ID_NAMESPACE, name))
+
+
+def resolve_execution_identity(signal: Mapping[str, Any]) -> Tuple[str, Optional[str], Optional[str]]:
+    """Resolve the trusted `execution_id` for this run.
+
+    When the adapter action attempted to run, its own real `session_id` --
+    parsed by `resolve_adapter_session_id`, never fabricated -- is used
+    directly as `execution_id`. When the adapter never attempted, or its
+    session id cannot be resolved from its real output, `execution_id`
+    instead falls back to `derive_pipeline_execution_id`. Returns
+    `(execution_id, resolved_session_id_or_None, session_error_or_None)`;
+    `session_error` is set, and must be classified `adapter_error`, exactly
+    when the adapter attempted to run but no session id could be resolved.
+    """
+    session_id: Optional[str] = None
+    session_error: Optional[str] = None
+    if signal["adapter_attempted"]:
+        session_id = resolve_adapter_session_id(
+            signal.get("execution_file_content"), signal.get("structured_output_raw")
+        )
+        if session_id is None:
+            session_error = (
+                "adapter action ran but no valid session_id could be extracted "
+                "from its execution_file or structured_output"
+            )
+    execution_id = session_id or derive_pipeline_execution_id(
+        signal["workflow_run_id"], signal["workflow_run_attempt"], signal["attempt"]
+    )
+    return execution_id, session_id, session_error
 
 
 class B3PropagatorError(ValueError):
@@ -293,7 +479,7 @@ def load_provider_signal(path: Path) -> Mapping[str, Any]:
     return document
 
 
-def classify_terminal(signal: Mapping[str, Any]) -> Classification:
+def classify_terminal(signal: Mapping[str, Any], session_error: Optional[str]) -> Classification:
     """Deterministically classify the terminal outcome from trusted facts only.
 
     Adapter self-report (`adapter_self_report`) and the Actions job's own
@@ -301,8 +487,21 @@ def classify_terminal(signal: Mapping[str, Any]) -> Classification:
     carried through only as informational, untrusted metadata elsewhere. A
     provider signal claiming green at either layer cannot change the
     classification this function derives from the actually observed
-    cancellation, timeout, turn-budget, error, Git, artifact, and check
-    facts.
+    cancellation, timeout, turn-budget, session-resolution, error, Git,
+    artifact, and check facts.
+
+    `timeout` is classified only from explicit elapsed-time-versus-budget
+    evidence, computed here rather than trusted as a pre-set boolean: a
+    provider signal cannot claim `timeout` without also supplying the
+    elapsed/budget numbers that actually demonstrate it. An Actions job that
+    ended abnormally without that evidence is `runner_lost` (the adapter
+    never attempted) or `adapter_error` (it attempted but failed or its
+    session is unresolvable) -- never blanket-mapped to `timeout`.
+
+    `session_error` (from `resolve_execution_identity`) is non-`None` only
+    when the adapter attempted to run but its real session id could not be
+    resolved from its own execution_file/structured_output; that is itself
+    classified `adapter_error`, never silently ignored.
     """
     go = signal["git_observation"]
 
@@ -312,12 +511,34 @@ def classify_terminal(signal: Mapping[str, Any]) -> Classification:
             "cancelled_by_owner", _TERMINAL_REASON_MESSAGES["cancelled_by_owner"],
             None, None,
         )
-    if signal["job_timed_out"]:
+
+    job_timed_out = (
+        signal["job_elapsed_seconds"] is not None
+        and signal["job_timeout_budget_seconds"] is not None
+        and signal["job_elapsed_seconds"] >= signal["job_timeout_budget_seconds"]
+    )
+    if job_timed_out:
         return Classification("failed", "timeout", "timeout", _TERMINAL_REASON_MESSAGES["timeout"], "actions_job", None)
-    if signal["adapter_timed_out"]:
+
+    adapter_timed_out = (
+        signal["adapter_elapsed_seconds"] is not None
+        and signal["adapter_timeout_budget_seconds"] is not None
+        and signal["adapter_elapsed_seconds"] >= signal["adapter_timeout_budget_seconds"]
+    )
+    if adapter_timed_out:
         return Classification("failed", "timeout", "timeout", _TERMINAL_REASON_MESSAGES["timeout"], "adapter", None)
+
     if signal["max_turns_exhausted"]:
         return Classification("failed", "max_turns", "max_turns", _TERMINAL_REASON_MESSAGES["max_turns"], None, None)
+
+    if not signal["adapter_attempted"]:
+        return Classification(
+            "failed", "runner_lost", "runner_lost", _TERMINAL_REASON_MESSAGES["runner_lost"], None, None
+        )
+
+    if session_error is not None:
+        return Classification("failed", "adapter_error", "adapter_session_unresolvable", session_error, None, None)
+
     if signal["adapter_error"] is not None:
         return Classification(
             "failed", "adapter_error", signal["adapter_error"]["code"], signal["adapter_error"]["message"], None, None
@@ -343,7 +564,9 @@ def classify_terminal(signal: Mapping[str, Any]) -> Classification:
     return Classification("change_proposed", "completed", None, None, None, None)
 
 
-def build_trusted_observation(signal: Mapping[str, Any], classification: Classification) -> Dict[str, Any]:
+def build_trusted_observation(
+    signal: Mapping[str, Any], classification: Classification, execution_id: str
+) -> Dict[str, Any]:
     go = signal["git_observation"]
     error = (
         None
@@ -353,7 +576,7 @@ def build_trusted_observation(signal: Mapping[str, Any], classification: Classif
     return {
         "schema_version": "1.0.0",
         "task_id": signal["task_id"],
-        "execution_id": signal["execution_id"],
+        "execution_id": execution_id,
         "attempt": signal["attempt"],
         "executor": signal["executor"],
         "started_at": signal["started_at"],
@@ -435,13 +658,21 @@ def build_workflow_run_metadata(
     result: Mapping[str, Any],
     verification: Mapping[str, Any],
     check_run_conclusion: str,
+    session_id: Optional[str],
+    session_error: Optional[str],
 ) -> Dict[str, Any]:
     self_report = signal.get("adapter_self_report")
     return {
         "schema_version": "1.0.0",
         "workflow_run_id": signal["workflow_run_id"],
+        "workflow_run_attempt": signal["workflow_run_attempt"],
         "source_run_id": signal.get("source_run_id"),
         "execution_id": result["execution_id"],
+        # Whether `execution_id` above is the adapter's own real session_id
+        # or the deterministic Actions-run-derived fallback (never random).
+        "execution_id_source": "adapter_session" if session_id is not None else "pipeline_derived",
+        "adapter_session_id": session_id,
+        "session_resolution_error": session_error,
         "task_id": result["task_id"],
         "check_run_conclusion": check_run_conclusion,
         "verification_id": verification["verification_id"],
@@ -449,8 +680,11 @@ def build_workflow_run_metadata(
         "raw_provider_terminal_reason": signal.get("raw_provider_terminal_reason"),
         "adapter_self_reported_status": self_report["status"] if self_report else None,
         "actions_job_conclusion": signal.get("actions_job_conclusion"),
+        "adapter_attempted": signal["adapter_attempted"],
         "artifacts_count": len(result["artifacts"]),
         "new_commit": bool(result["authored_commits"]),
+        "result_artifact_present": signal["result_artifact_present"],
+        "required_evidence_artifact_present": signal["required_evidence_artifact_present"],
     }
 
 
@@ -476,8 +710,9 @@ def run_pipeline(
     output_dir: Path,
 ) -> PipelineOutputs:
     signal = load_provider_signal(signal_path)
-    classification = classify_terminal(signal)
-    observation = build_trusted_observation(signal, classification)
+    execution_id, session_id, session_error = resolve_execution_identity(signal)
+    classification = classify_terminal(signal, session_error)
+    observation = build_trusted_observation(signal, classification, execution_id)
     observation_path = _write_json(output_dir / "observation.json", observation)
 
     candidate_spec = signal.get("untrusted_candidate")
@@ -505,7 +740,7 @@ def run_pipeline(
         verification_id=verification_id,
         evaluated_at=evaluated_at,
         expected_task_id=signal["task_id"],
-        expected_execution_id=signal["execution_id"],
+        expected_execution_id=execution_id,
         expected_base_sha=go["base_sha"],
         expected_subject_sha=expected_subject_sha,
         verifier_identity=verifier_identity,
@@ -517,7 +752,9 @@ def run_pipeline(
     publish_report(verification_path, b2_canonical_bytes(verification))
 
     check_run_conclusion = "success" if verification["passed"] else "failure"
-    metadata = build_workflow_run_metadata(signal, result, verification, check_run_conclusion)
+    metadata = build_workflow_run_metadata(
+        signal, result, verification, check_run_conclusion, session_id, session_error
+    )
     metadata_path = output_dir / "workflow-run-metadata.json"
     _publish_exclusive(metadata_path, canonical_bytes(metadata))
 
@@ -584,6 +821,8 @@ def run_fixture(fixture: Mapping[str, Any], manifest_dir: Path, workdir: Path) -
         "new_commit": outputs.workflow_run_metadata["new_commit"],
         "adapter_self_reported_status": outputs.workflow_run_metadata["adapter_self_reported_status"],
         "actions_job_conclusion": outputs.workflow_run_metadata["actions_job_conclusion"],
+        "execution_id_source": outputs.workflow_run_metadata["execution_id_source"],
+        "adapter_session_id": outputs.workflow_run_metadata["adapter_session_id"],
     }
     expected = fixture["expected"]
     expectation_met = all(actual[key] == value for key, value in expected.items())
@@ -594,6 +833,19 @@ def run_fixture(fixture: Mapping[str, Any], manifest_dir: Path, workdir: Path) -
             error.message for error in _VERIFICATION_VALIDATOR.iter_errors(outputs.verification)
         )
         if result_errors or verification_errors:
+            expectation_met = False
+        # AC-B3-3 corrective invariant: `execution_id` is never a random,
+        # unaccountable value. It must equal either the resolved adapter
+        # session id or the deterministic pipeline-derived fallback -- both
+        # tracked on the published metadata -- never anything else.
+        raw_signal = _load_bounded_json(signal_path, "provider signal")
+        expected_fallback = derive_pipeline_execution_id(
+            raw_signal["workflow_run_id"], raw_signal["workflow_run_attempt"], raw_signal["attempt"]
+        )
+        if outputs.result["execution_id"] not in (
+            outputs.workflow_run_metadata["adapter_session_id"],
+            expected_fallback,
+        ):
             expectation_met = False
         if outputs.workflow_run_metadata["workflow_run_id"] is None or outputs.workflow_run_metadata["execution_id"] is None:
             expectation_met = False

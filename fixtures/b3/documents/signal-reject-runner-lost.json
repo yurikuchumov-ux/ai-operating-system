@@ -1,14 +1,14 @@
 {
-  "actions_job_conclusion": null,
-  "adapter_attempted": true,
-  "adapter_elapsed_seconds": 605,
+  "actions_job_conclusion": "failure",
+  "adapter_attempted": false,
+  "adapter_elapsed_seconds": null,
   "adapter_error": null,
   "adapter_self_report": null,
-  "adapter_step_outcome": "cancelled",
-  "adapter_timeout_budget_seconds": 600,
+  "adapter_step_outcome": "skipped",
+  "adapter_timeout_budget_seconds": null,
   "attempt": 1,
   "cancelled_by_owner": false,
-  "execution_file_content": "{\"session_id\": \"a0000000-0000-4000-8000-000000000003\", \"status\": \"completed\", \"num_turns\": 4, \"result\": \"bounded read-only diagnostic run completed\"}",
+  "execution_file_content": null,
   "executor": {
     "adapter": "human-supervised-claude-code",
     "adapter_version": "claude-code-2.1.197-b3-bootstrap",
@@ -35,7 +35,7 @@
     ],
     "head_sha": "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3"
   },
-  "job_elapsed_seconds": 300,
+  "job_elapsed_seconds": 45,
   "job_timeout_budget_seconds": 900,
   "max_turns_exhausted": false,
   "raw_provider_terminal_reason": null,
@@ -49,5 +49,5 @@
   "task_id": "yurikuchumov-ux/ai-operating-system#19",
   "untrusted_candidate": null,
   "workflow_run_attempt": "1",
-  "workflow_run_id": "40000000003"
+  "workflow_run_id": "40000000014"
 }
