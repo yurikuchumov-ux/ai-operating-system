@@ -3,6 +3,34 @@
   "registry_type": "predicate",
   "entries": [
     {
+      "id": "binding.execution_id.equals",
+      "input_types": ["task", "result"],
+      "evaluator": "verifier-owned:execution-binding",
+      "failure_code": "execution_id_mismatch",
+      "evidence_types": ["result-artifact"]
+    },
+    {
+      "id": "binding.task_id.equals",
+      "input_types": ["task", "result"],
+      "evaluator": "verifier-owned:task-binding",
+      "failure_code": "task_id_mismatch",
+      "evidence_types": ["result-artifact"]
+    },
+    {
+      "id": "review.eligibility.passed",
+      "input_types": ["review-attestation"],
+      "evaluator": "verifier-owned:review-eligibility",
+      "failure_code": "review_ineligible",
+      "evidence_types": ["review-attestation"]
+    },
+    {
+      "id": "review.subject_sha.equals",
+      "input_types": ["result", "review-attestation"],
+      "evaluator": "verifier-owned:review-subject",
+      "failure_code": "review_subject_mismatch",
+      "evidence_types": ["review-attestation"]
+    },
+    {
       "id": "acceptance.required.passed",
       "input_types": ["task", "result"],
       "evaluator": "validator-owned:acceptance-results",

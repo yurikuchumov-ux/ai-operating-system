@@ -1,0 +1,47 @@
+{
+  "schema_version": "1.0.0",
+  "task_id": "yurikuchumov-ux/ai-operating-system#18",
+  "review_id": "manual-review-18-b2-1",
+  "reviewed_sha": "c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1",
+  "reviewer_identity": {
+    "operator_principal": "human:independent-reviewer",
+    "agent_runtime_id": "external:review-session:b2-1",
+    "credential_principal": "github:user:independent-reviewer",
+    "delegation_parent": "owner:review-request-18",
+    "role": "reviewer",
+    "authored_commits": []
+  },
+  "eligibility": {
+    "policy_id": "review-independence.v1",
+    "risk_class": "L1",
+    "overlap_results": [
+      {
+        "field": "agent_runtime_id",
+        "overlap": false,
+        "author_values": [
+          "openai:codex:b2-session"
+        ],
+        "reviewer_value": "external:review-session:b2-1"
+      },
+      {
+        "field": "credential_principal",
+        "overlap": false,
+        "author_values": [
+          "github:user:yurikuchumov-ux"
+        ],
+        "reviewer_value": "github:user:independent-reviewer"
+      },
+      {
+        "field": "authored_commits",
+        "overlap": false,
+        "author_values": [
+          "d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2"
+        ],
+        "reviewer_value": "none"
+      }
+    ],
+    "eligible": true,
+    "reason_codes": []
+  },
+  "reviewed_at": "2026-07-13T10:00:00Z"
+}

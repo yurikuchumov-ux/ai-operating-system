@@ -1,0 +1,722 @@
+{
+  "schema_version": "1.0.0",
+  "fixtures": [
+    {
+      "id": "valid-change-approved",
+      "task": {
+        "path": "documents/task-base.json",
+        "sha256": "5d0e73cb03184765765753ec6d79a3b4fc65388fca56aba1351dd77905eb1a73"
+      },
+      "result": {
+        "path": "documents/result-base.json",
+        "sha256": "f16dc44232bb6676ae6f564a763a7ade8afa5cf5b01478e1bc7254ad43dc63fe"
+      },
+      "review_attestation": {
+        "path": "documents/review-base.json",
+        "sha256": "fa4e294b60ea0795129086be6aa8a772943592b15d65986501606e0f298db614"
+      },
+      "git_observation": {
+        "path": "documents/git-observation-base.json",
+        "sha256": "79b690ba5533ad8f199296eb2ca527bb8a3ce366b28f905472c3c67735fdb8be"
+      },
+      "evidence_root": "documents/evidence/good",
+      "invocation": {
+        "verification_id": "50000001-0000-4000-8000-000000000000",
+        "evaluated_at": "2026-07-13T12:00:00Z",
+        "expected_task_id": "yurikuchumov-ux/ai-operating-system#18",
+        "expected_execution_id": "22222222-2222-4222-8222-222222222222",
+        "expected_base_sha": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0",
+        "expected_subject_sha": "c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1",
+        "verifier_identity": {
+          "path": "documents/verifier-identity.json",
+          "sha256": "101e88267f826d1c79bfbb1cde83153cc2b50eedcca7dee9c8f5dfe8209982b8"
+        }
+      },
+      "repeat": 1,
+      "expected": {
+        "exit_code": 0,
+        "passed": true,
+        "failure_codes": []
+      }
+    },
+    {
+      "id": "reject-task-id-mismatch",
+      "task": {
+        "path": "documents/task-base.json",
+        "sha256": "5d0e73cb03184765765753ec6d79a3b4fc65388fca56aba1351dd77905eb1a73"
+      },
+      "result": {
+        "path": "documents/result-base.json",
+        "sha256": "f16dc44232bb6676ae6f564a763a7ade8afa5cf5b01478e1bc7254ad43dc63fe"
+      },
+      "review_attestation": {
+        "path": "documents/review-base.json",
+        "sha256": "fa4e294b60ea0795129086be6aa8a772943592b15d65986501606e0f298db614"
+      },
+      "git_observation": {
+        "path": "documents/git-observation-base.json",
+        "sha256": "79b690ba5533ad8f199296eb2ca527bb8a3ce366b28f905472c3c67735fdb8be"
+      },
+      "evidence_root": "documents/evidence/good",
+      "invocation": {
+        "verification_id": "50000002-0000-4000-8000-000000000000",
+        "evaluated_at": "2026-07-13T12:00:00Z",
+        "expected_task_id": "yurikuchumov-ux/ai-operating-system#99",
+        "expected_execution_id": "22222222-2222-4222-8222-222222222222",
+        "expected_base_sha": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0",
+        "expected_subject_sha": "c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1",
+        "verifier_identity": {
+          "path": "documents/verifier-identity.json",
+          "sha256": "101e88267f826d1c79bfbb1cde83153cc2b50eedcca7dee9c8f5dfe8209982b8"
+        }
+      },
+      "repeat": 1,
+      "expected": {
+        "exit_code": 1,
+        "passed": false,
+        "failure_codes": [
+          "task_id_mismatch"
+        ]
+      }
+    },
+    {
+      "id": "reject-execution-id-mismatch",
+      "task": {
+        "path": "documents/task-base.json",
+        "sha256": "5d0e73cb03184765765753ec6d79a3b4fc65388fca56aba1351dd77905eb1a73"
+      },
+      "result": {
+        "path": "documents/result-base.json",
+        "sha256": "f16dc44232bb6676ae6f564a763a7ade8afa5cf5b01478e1bc7254ad43dc63fe"
+      },
+      "review_attestation": {
+        "path": "documents/review-base.json",
+        "sha256": "fa4e294b60ea0795129086be6aa8a772943592b15d65986501606e0f298db614"
+      },
+      "git_observation": {
+        "path": "documents/git-observation-base.json",
+        "sha256": "79b690ba5533ad8f199296eb2ca527bb8a3ce366b28f905472c3c67735fdb8be"
+      },
+      "evidence_root": "documents/evidence/good",
+      "invocation": {
+        "verification_id": "50000003-0000-4000-8000-000000000000",
+        "evaluated_at": "2026-07-13T12:00:00Z",
+        "expected_task_id": "yurikuchumov-ux/ai-operating-system#18",
+        "expected_execution_id": "99999999-9999-4999-8999-999999999999",
+        "expected_base_sha": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0",
+        "expected_subject_sha": "c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1",
+        "verifier_identity": {
+          "path": "documents/verifier-identity.json",
+          "sha256": "101e88267f826d1c79bfbb1cde83153cc2b50eedcca7dee9c8f5dfe8209982b8"
+        }
+      },
+      "repeat": 1,
+      "expected": {
+        "exit_code": 1,
+        "passed": false,
+        "failure_codes": [
+          "execution_id_mismatch"
+        ]
+      }
+    },
+    {
+      "id": "reject-base-sha-mismatch",
+      "task": {
+        "path": "documents/task-base.json",
+        "sha256": "5d0e73cb03184765765753ec6d79a3b4fc65388fca56aba1351dd77905eb1a73"
+      },
+      "result": {
+        "path": "documents/result-base.json",
+        "sha256": "f16dc44232bb6676ae6f564a763a7ade8afa5cf5b01478e1bc7254ad43dc63fe"
+      },
+      "review_attestation": {
+        "path": "documents/review-base.json",
+        "sha256": "fa4e294b60ea0795129086be6aa8a772943592b15d65986501606e0f298db614"
+      },
+      "git_observation": {
+        "path": "documents/git-observation-base.json",
+        "sha256": "79b690ba5533ad8f199296eb2ca527bb8a3ce366b28f905472c3c67735fdb8be"
+      },
+      "evidence_root": "documents/evidence/good",
+      "invocation": {
+        "verification_id": "50000004-0000-4000-8000-000000000000",
+        "evaluated_at": "2026-07-13T12:00:00Z",
+        "expected_task_id": "yurikuchumov-ux/ai-operating-system#18",
+        "expected_execution_id": "22222222-2222-4222-8222-222222222222",
+        "expected_base_sha": "9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f",
+        "expected_subject_sha": "c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1",
+        "verifier_identity": {
+          "path": "documents/verifier-identity.json",
+          "sha256": "101e88267f826d1c79bfbb1cde83153cc2b50eedcca7dee9c8f5dfe8209982b8"
+        }
+      },
+      "repeat": 1,
+      "expected": {
+        "exit_code": 1,
+        "passed": false,
+        "failure_codes": [
+          "base_sha_mismatch"
+        ]
+      }
+    },
+    {
+      "id": "reject-head-sha-mismatch",
+      "task": {
+        "path": "documents/task-base.json",
+        "sha256": "5d0e73cb03184765765753ec6d79a3b4fc65388fca56aba1351dd77905eb1a73"
+      },
+      "result": {
+        "path": "documents/result-base.json",
+        "sha256": "f16dc44232bb6676ae6f564a763a7ade8afa5cf5b01478e1bc7254ad43dc63fe"
+      },
+      "review_attestation": {
+        "path": "documents/review-base.json",
+        "sha256": "fa4e294b60ea0795129086be6aa8a772943592b15d65986501606e0f298db614"
+      },
+      "git_observation": {
+        "path": "documents/git-observation-base.json",
+        "sha256": "79b690ba5533ad8f199296eb2ca527bb8a3ce366b28f905472c3c67735fdb8be"
+      },
+      "evidence_root": "documents/evidence/good",
+      "invocation": {
+        "verification_id": "50000005-0000-4000-8000-000000000000",
+        "evaluated_at": "2026-07-13T12:00:00Z",
+        "expected_task_id": "yurikuchumov-ux/ai-operating-system#18",
+        "expected_execution_id": "22222222-2222-4222-8222-222222222222",
+        "expected_base_sha": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0",
+        "expected_subject_sha": "8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e",
+        "verifier_identity": {
+          "path": "documents/verifier-identity.json",
+          "sha256": "101e88267f826d1c79bfbb1cde83153cc2b50eedcca7dee9c8f5dfe8209982b8"
+        }
+      },
+      "repeat": 1,
+      "expected": {
+        "exit_code": 1,
+        "passed": false,
+        "failure_codes": [
+          "head_sha_mismatch"
+        ]
+      }
+    },
+    {
+      "id": "reject-scope-violation",
+      "task": {
+        "path": "documents/task-base.json",
+        "sha256": "5d0e73cb03184765765753ec6d79a3b4fc65388fca56aba1351dd77905eb1a73"
+      },
+      "result": {
+        "path": "documents/result-scope-violation.json",
+        "sha256": "9e5a73eafde8367dd32b90ee568beb0923d63e7ae483f5e22925e1d1ec81bd91"
+      },
+      "review_attestation": {
+        "path": "documents/review-base.json",
+        "sha256": "fa4e294b60ea0795129086be6aa8a772943592b15d65986501606e0f298db614"
+      },
+      "git_observation": {
+        "path": "documents/git-observation-base.json",
+        "sha256": "79b690ba5533ad8f199296eb2ca527bb8a3ce366b28f905472c3c67735fdb8be"
+      },
+      "evidence_root": "documents/evidence/good",
+      "invocation": {
+        "verification_id": "50000006-0000-4000-8000-000000000000",
+        "evaluated_at": "2026-07-13T12:00:00Z",
+        "expected_task_id": "yurikuchumov-ux/ai-operating-system#18",
+        "expected_execution_id": "22222222-2222-4222-8222-222222222222",
+        "expected_base_sha": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0",
+        "expected_subject_sha": "c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1",
+        "verifier_identity": {
+          "path": "documents/verifier-identity.json",
+          "sha256": "101e88267f826d1c79bfbb1cde83153cc2b50eedcca7dee9c8f5dfe8209982b8"
+        }
+      },
+      "repeat": 1,
+      "expected": {
+        "exit_code": 1,
+        "passed": false,
+        "failure_codes": [
+          "scope_violation"
+        ]
+      }
+    },
+    {
+      "id": "reject-empty-required-diff",
+      "task": {
+        "path": "documents/task-base.json",
+        "sha256": "5d0e73cb03184765765753ec6d79a3b4fc65388fca56aba1351dd77905eb1a73"
+      },
+      "result": {
+        "path": "documents/result-base.json",
+        "sha256": "f16dc44232bb6676ae6f564a763a7ade8afa5cf5b01478e1bc7254ad43dc63fe"
+      },
+      "review_attestation": {
+        "path": "documents/review-base.json",
+        "sha256": "fa4e294b60ea0795129086be6aa8a772943592b15d65986501606e0f298db614"
+      },
+      "git_observation": {
+        "path": "documents/git-observation-empty-diff.json",
+        "sha256": "d2dcc397cfb4854b7b159e357ffaa965153e388b4386a03784c5c695f7d21264"
+      },
+      "evidence_root": "documents/evidence/good",
+      "invocation": {
+        "verification_id": "50000007-0000-4000-8000-000000000000",
+        "evaluated_at": "2026-07-13T12:00:00Z",
+        "expected_task_id": "yurikuchumov-ux/ai-operating-system#18",
+        "expected_execution_id": "22222222-2222-4222-8222-222222222222",
+        "expected_base_sha": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0",
+        "expected_subject_sha": "c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1",
+        "verifier_identity": {
+          "path": "documents/verifier-identity.json",
+          "sha256": "101e88267f826d1c79bfbb1cde83153cc2b50eedcca7dee9c8f5dfe8209982b8"
+        }
+      },
+      "repeat": 1,
+      "expected": {
+        "exit_code": 1,
+        "passed": false,
+        "failure_codes": [
+          "empty_diff"
+        ]
+      }
+    },
+    {
+      "id": "reject-required-check-failure",
+      "task": {
+        "path": "documents/task-base.json",
+        "sha256": "5d0e73cb03184765765753ec6d79a3b4fc65388fca56aba1351dd77905eb1a73"
+      },
+      "result": {
+        "path": "documents/result-check-failed.json",
+        "sha256": "2ab2f9702e130a3e8aad1c689cd5b14c19821007fe15a721d3c39a197d2cb05b"
+      },
+      "review_attestation": {
+        "path": "documents/review-base.json",
+        "sha256": "fa4e294b60ea0795129086be6aa8a772943592b15d65986501606e0f298db614"
+      },
+      "git_observation": {
+        "path": "documents/git-observation-base.json",
+        "sha256": "79b690ba5533ad8f199296eb2ca527bb8a3ce366b28f905472c3c67735fdb8be"
+      },
+      "evidence_root": "documents/evidence/good",
+      "invocation": {
+        "verification_id": "50000008-0000-4000-8000-000000000000",
+        "evaluated_at": "2026-07-13T12:00:00Z",
+        "expected_task_id": "yurikuchumov-ux/ai-operating-system#18",
+        "expected_execution_id": "22222222-2222-4222-8222-222222222222",
+        "expected_base_sha": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0",
+        "expected_subject_sha": "c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1",
+        "verifier_identity": {
+          "path": "documents/verifier-identity.json",
+          "sha256": "101e88267f826d1c79bfbb1cde83153cc2b50eedcca7dee9c8f5dfe8209982b8"
+        }
+      },
+      "repeat": 1,
+      "expected": {
+        "exit_code": 1,
+        "passed": false,
+        "failure_codes": [
+          "check_failed"
+        ]
+      }
+    },
+    {
+      "id": "reject-required-acceptance-failure",
+      "task": {
+        "path": "documents/task-base.json",
+        "sha256": "5d0e73cb03184765765753ec6d79a3b4fc65388fca56aba1351dd77905eb1a73"
+      },
+      "result": {
+        "path": "documents/result-acceptance-failed.json",
+        "sha256": "b39385e6543e7793e4ef53e0bf752a3c87a217b8bec3c2fcc2412e879e3755a3"
+      },
+      "review_attestation": {
+        "path": "documents/review-base.json",
+        "sha256": "fa4e294b60ea0795129086be6aa8a772943592b15d65986501606e0f298db614"
+      },
+      "git_observation": {
+        "path": "documents/git-observation-base.json",
+        "sha256": "79b690ba5533ad8f199296eb2ca527bb8a3ce366b28f905472c3c67735fdb8be"
+      },
+      "evidence_root": "documents/evidence/good",
+      "invocation": {
+        "verification_id": "50000009-0000-4000-8000-000000000000",
+        "evaluated_at": "2026-07-13T12:00:00Z",
+        "expected_task_id": "yurikuchumov-ux/ai-operating-system#18",
+        "expected_execution_id": "22222222-2222-4222-8222-222222222222",
+        "expected_base_sha": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0",
+        "expected_subject_sha": "c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1",
+        "verifier_identity": {
+          "path": "documents/verifier-identity.json",
+          "sha256": "101e88267f826d1c79bfbb1cde83153cc2b50eedcca7dee9c8f5dfe8209982b8"
+        }
+      },
+      "repeat": 1,
+      "expected": {
+        "exit_code": 1,
+        "passed": false,
+        "failure_codes": [
+          "acceptance_failed"
+        ]
+      }
+    },
+    {
+      "id": "reject-missing-artifact",
+      "task": {
+        "path": "documents/task-base.json",
+        "sha256": "5d0e73cb03184765765753ec6d79a3b4fc65388fca56aba1351dd77905eb1a73"
+      },
+      "result": {
+        "path": "documents/result-base.json",
+        "sha256": "f16dc44232bb6676ae6f564a763a7ade8afa5cf5b01478e1bc7254ad43dc63fe"
+      },
+      "review_attestation": {
+        "path": "documents/review-base.json",
+        "sha256": "fa4e294b60ea0795129086be6aa8a772943592b15d65986501606e0f298db614"
+      },
+      "git_observation": {
+        "path": "documents/git-observation-base.json",
+        "sha256": "79b690ba5533ad8f199296eb2ca527bb8a3ce366b28f905472c3c67735fdb8be"
+      },
+      "evidence_root": "documents/evidence/missing",
+      "invocation": {
+        "verification_id": "50000010-0000-4000-8000-000000000000",
+        "evaluated_at": "2026-07-13T12:00:00Z",
+        "expected_task_id": "yurikuchumov-ux/ai-operating-system#18",
+        "expected_execution_id": "22222222-2222-4222-8222-222222222222",
+        "expected_base_sha": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0",
+        "expected_subject_sha": "c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1",
+        "verifier_identity": {
+          "path": "documents/verifier-identity.json",
+          "sha256": "101e88267f826d1c79bfbb1cde83153cc2b50eedcca7dee9c8f5dfe8209982b8"
+        }
+      },
+      "repeat": 1,
+      "expected": {
+        "exit_code": 1,
+        "passed": false,
+        "failure_codes": [
+          "missing_artifact"
+        ]
+      }
+    },
+    {
+      "id": "reject-artifact-hash-mismatch",
+      "task": {
+        "path": "documents/task-base.json",
+        "sha256": "5d0e73cb03184765765753ec6d79a3b4fc65388fca56aba1351dd77905eb1a73"
+      },
+      "result": {
+        "path": "documents/result-base.json",
+        "sha256": "f16dc44232bb6676ae6f564a763a7ade8afa5cf5b01478e1bc7254ad43dc63fe"
+      },
+      "review_attestation": {
+        "path": "documents/review-base.json",
+        "sha256": "fa4e294b60ea0795129086be6aa8a772943592b15d65986501606e0f298db614"
+      },
+      "git_observation": {
+        "path": "documents/git-observation-base.json",
+        "sha256": "79b690ba5533ad8f199296eb2ca527bb8a3ce366b28f905472c3c67735fdb8be"
+      },
+      "evidence_root": "documents/evidence/tampered",
+      "invocation": {
+        "verification_id": "50000011-0000-4000-8000-000000000000",
+        "evaluated_at": "2026-07-13T12:00:00Z",
+        "expected_task_id": "yurikuchumov-ux/ai-operating-system#18",
+        "expected_execution_id": "22222222-2222-4222-8222-222222222222",
+        "expected_base_sha": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0",
+        "expected_subject_sha": "c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1",
+        "verifier_identity": {
+          "path": "documents/verifier-identity.json",
+          "sha256": "101e88267f826d1c79bfbb1cde83153cc2b50eedcca7dee9c8f5dfe8209982b8"
+        }
+      },
+      "repeat": 1,
+      "expected": {
+        "exit_code": 1,
+        "passed": false,
+        "failure_codes": [
+          "artifact_hash_mismatch"
+        ]
+      }
+    },
+    {
+      "id": "reject-unknown-predicate",
+      "task": {
+        "path": "documents/task-unknown-predicate.json",
+        "sha256": "f850b79a242a6fa9a11a25c6e2f5b70aaee7759aeb698854e461fde921ff4a18"
+      },
+      "result": {
+        "path": "documents/result-base.json",
+        "sha256": "f16dc44232bb6676ae6f564a763a7ade8afa5cf5b01478e1bc7254ad43dc63fe"
+      },
+      "review_attestation": {
+        "path": "documents/review-base.json",
+        "sha256": "fa4e294b60ea0795129086be6aa8a772943592b15d65986501606e0f298db614"
+      },
+      "git_observation": {
+        "path": "documents/git-observation-base.json",
+        "sha256": "79b690ba5533ad8f199296eb2ca527bb8a3ce366b28f905472c3c67735fdb8be"
+      },
+      "evidence_root": "documents/evidence/good",
+      "invocation": {
+        "verification_id": "50000012-0000-4000-8000-000000000000",
+        "evaluated_at": "2026-07-13T12:00:00Z",
+        "expected_task_id": "yurikuchumov-ux/ai-operating-system#18",
+        "expected_execution_id": "22222222-2222-4222-8222-222222222222",
+        "expected_base_sha": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0",
+        "expected_subject_sha": "c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1",
+        "verifier_identity": {
+          "path": "documents/verifier-identity.json",
+          "sha256": "101e88267f826d1c79bfbb1cde83153cc2b50eedcca7dee9c8f5dfe8209982b8"
+        }
+      },
+      "repeat": 1,
+      "expected": {
+        "exit_code": 1,
+        "passed": false,
+        "failure_codes": [
+          "unknown_predicate"
+        ]
+      }
+    },
+    {
+      "id": "reject-unresolved-evidence-reference",
+      "task": {
+        "path": "documents/task-base.json",
+        "sha256": "5d0e73cb03184765765753ec6d79a3b4fc65388fca56aba1351dd77905eb1a73"
+      },
+      "result": {
+        "path": "documents/result-unresolved-reference.json",
+        "sha256": "d7d6cf52db0156255eb2d65076ed5bf4282a6c583ad1bde6129b65cda59e1c6f"
+      },
+      "review_attestation": {
+        "path": "documents/review-base.json",
+        "sha256": "fa4e294b60ea0795129086be6aa8a772943592b15d65986501606e0f298db614"
+      },
+      "git_observation": {
+        "path": "documents/git-observation-base.json",
+        "sha256": "79b690ba5533ad8f199296eb2ca527bb8a3ce366b28f905472c3c67735fdb8be"
+      },
+      "evidence_root": "documents/evidence/good",
+      "invocation": {
+        "verification_id": "50000013-0000-4000-8000-000000000000",
+        "evaluated_at": "2026-07-13T12:00:00Z",
+        "expected_task_id": "yurikuchumov-ux/ai-operating-system#18",
+        "expected_execution_id": "22222222-2222-4222-8222-222222222222",
+        "expected_base_sha": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0",
+        "expected_subject_sha": "c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1",
+        "verifier_identity": {
+          "path": "documents/verifier-identity.json",
+          "sha256": "101e88267f826d1c79bfbb1cde83153cc2b50eedcca7dee9c8f5dfe8209982b8"
+        }
+      },
+      "repeat": 1,
+      "expected": {
+        "exit_code": 1,
+        "passed": false,
+        "failure_codes": [
+          "unresolved_artifact_reference"
+        ]
+      }
+    },
+    {
+      "id": "reject-review-subject-mismatch",
+      "task": {
+        "path": "documents/task-base.json",
+        "sha256": "5d0e73cb03184765765753ec6d79a3b4fc65388fca56aba1351dd77905eb1a73"
+      },
+      "result": {
+        "path": "documents/result-base.json",
+        "sha256": "f16dc44232bb6676ae6f564a763a7ade8afa5cf5b01478e1bc7254ad43dc63fe"
+      },
+      "review_attestation": {
+        "path": "documents/review-subject-mismatch.json",
+        "sha256": "f650d725819eb5579e42d5696bd2e79c34ebac4a0a53ab50634069755fff1586"
+      },
+      "git_observation": {
+        "path": "documents/git-observation-base.json",
+        "sha256": "79b690ba5533ad8f199296eb2ca527bb8a3ce366b28f905472c3c67735fdb8be"
+      },
+      "evidence_root": "documents/evidence/good",
+      "invocation": {
+        "verification_id": "50000014-0000-4000-8000-000000000000",
+        "evaluated_at": "2026-07-13T12:00:00Z",
+        "expected_task_id": "yurikuchumov-ux/ai-operating-system#18",
+        "expected_execution_id": "22222222-2222-4222-8222-222222222222",
+        "expected_base_sha": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0",
+        "expected_subject_sha": "c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1",
+        "verifier_identity": {
+          "path": "documents/verifier-identity.json",
+          "sha256": "101e88267f826d1c79bfbb1cde83153cc2b50eedcca7dee9c8f5dfe8209982b8"
+        }
+      },
+      "repeat": 1,
+      "expected": {
+        "exit_code": 1,
+        "passed": false,
+        "failure_codes": [
+          "review_subject_mismatch"
+        ]
+      }
+    },
+    {
+      "id": "reject-review-lineage-conflict",
+      "task": {
+        "path": "documents/task-base.json",
+        "sha256": "5d0e73cb03184765765753ec6d79a3b4fc65388fca56aba1351dd77905eb1a73"
+      },
+      "result": {
+        "path": "documents/result-base.json",
+        "sha256": "f16dc44232bb6676ae6f564a763a7ade8afa5cf5b01478e1bc7254ad43dc63fe"
+      },
+      "review_attestation": {
+        "path": "documents/review-lineage-conflict.json",
+        "sha256": "2454b970cfac2abb054f750bb3ec366b72636616a4d58530116e7b98db26f2fc"
+      },
+      "git_observation": {
+        "path": "documents/git-observation-base.json",
+        "sha256": "79b690ba5533ad8f199296eb2ca527bb8a3ce366b28f905472c3c67735fdb8be"
+      },
+      "evidence_root": "documents/evidence/good",
+      "invocation": {
+        "verification_id": "50000015-0000-4000-8000-000000000000",
+        "evaluated_at": "2026-07-13T12:00:00Z",
+        "expected_task_id": "yurikuchumov-ux/ai-operating-system#18",
+        "expected_execution_id": "22222222-2222-4222-8222-222222222222",
+        "expected_base_sha": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0",
+        "expected_subject_sha": "c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1",
+        "verifier_identity": {
+          "path": "documents/verifier-identity.json",
+          "sha256": "101e88267f826d1c79bfbb1cde83153cc2b50eedcca7dee9c8f5dfe8209982b8"
+        }
+      },
+      "repeat": 1,
+      "expected": {
+        "exit_code": 1,
+        "passed": false,
+        "failure_codes": [
+          "identity_conflict"
+        ]
+      }
+    },
+    {
+      "id": "reject-review-ineligible",
+      "task": {
+        "path": "documents/task-base.json",
+        "sha256": "5d0e73cb03184765765753ec6d79a3b4fc65388fca56aba1351dd77905eb1a73"
+      },
+      "result": {
+        "path": "documents/result-base.json",
+        "sha256": "f16dc44232bb6676ae6f564a763a7ade8afa5cf5b01478e1bc7254ad43dc63fe"
+      },
+      "review_attestation": {
+        "path": "documents/review-ineligible.json",
+        "sha256": "9292d8dd7aa298127d98d84ee5f11724d669e5fc514dcbde7c18628f4dda411e"
+      },
+      "git_observation": {
+        "path": "documents/git-observation-base.json",
+        "sha256": "79b690ba5533ad8f199296eb2ca527bb8a3ce366b28f905472c3c67735fdb8be"
+      },
+      "evidence_root": "documents/evidence/good",
+      "invocation": {
+        "verification_id": "50000016-0000-4000-8000-000000000000",
+        "evaluated_at": "2026-07-13T12:00:00Z",
+        "expected_task_id": "yurikuchumov-ux/ai-operating-system#18",
+        "expected_execution_id": "22222222-2222-4222-8222-222222222222",
+        "expected_base_sha": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0",
+        "expected_subject_sha": "c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1",
+        "verifier_identity": {
+          "path": "documents/verifier-identity.json",
+          "sha256": "101e88267f826d1c79bfbb1cde83153cc2b50eedcca7dee9c8f5dfe8209982b8"
+        }
+      },
+      "repeat": 1,
+      "expected": {
+        "exit_code": 1,
+        "passed": false,
+        "failure_codes": [
+          "review_ineligible"
+        ]
+      }
+    },
+    {
+      "id": "reject-schema-invalid-input",
+      "task": {
+        "path": "documents/task-schema-invalid.json",
+        "sha256": "a25302a1bc554a1c1d8abc2ee58933db803194310825bc82191dccb46c146527"
+      },
+      "result": {
+        "path": "documents/result-base.json",
+        "sha256": "f16dc44232bb6676ae6f564a763a7ade8afa5cf5b01478e1bc7254ad43dc63fe"
+      },
+      "review_attestation": {
+        "path": "documents/review-base.json",
+        "sha256": "fa4e294b60ea0795129086be6aa8a772943592b15d65986501606e0f298db614"
+      },
+      "git_observation": {
+        "path": "documents/git-observation-base.json",
+        "sha256": "79b690ba5533ad8f199296eb2ca527bb8a3ce366b28f905472c3c67735fdb8be"
+      },
+      "evidence_root": "documents/evidence/good",
+      "invocation": {
+        "verification_id": "50000017-0000-4000-8000-000000000000",
+        "evaluated_at": "2026-07-13T12:00:00Z",
+        "expected_task_id": "yurikuchumov-ux/ai-operating-system#18",
+        "expected_execution_id": "22222222-2222-4222-8222-222222222222",
+        "expected_base_sha": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0",
+        "expected_subject_sha": "c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1",
+        "verifier_identity": {
+          "path": "documents/verifier-identity.json",
+          "sha256": "101e88267f826d1c79bfbb1cde83153cc2b50eedcca7dee9c8f5dfe8209982b8"
+        }
+      },
+      "repeat": 1,
+      "expected": {
+        "exit_code": 1,
+        "passed": false,
+        "failure_codes": [
+          "schema_validation_failed"
+        ]
+      }
+    },
+    {
+      "id": "deterministic-repeat",
+      "task": {
+        "path": "documents/task-base.json",
+        "sha256": "5d0e73cb03184765765753ec6d79a3b4fc65388fca56aba1351dd77905eb1a73"
+      },
+      "result": {
+        "path": "documents/result-base.json",
+        "sha256": "f16dc44232bb6676ae6f564a763a7ade8afa5cf5b01478e1bc7254ad43dc63fe"
+      },
+      "review_attestation": {
+        "path": "documents/review-base.json",
+        "sha256": "fa4e294b60ea0795129086be6aa8a772943592b15d65986501606e0f298db614"
+      },
+      "git_observation": {
+        "path": "documents/git-observation-base.json",
+        "sha256": "79b690ba5533ad8f199296eb2ca527bb8a3ce366b28f905472c3c67735fdb8be"
+      },
+      "evidence_root": "documents/evidence/good",
+      "invocation": {
+        "verification_id": "50000018-0000-4000-8000-000000000000",
+        "evaluated_at": "2026-07-13T12:00:00Z",
+        "expected_task_id": "yurikuchumov-ux/ai-operating-system#18",
+        "expected_execution_id": "22222222-2222-4222-8222-222222222222",
+        "expected_base_sha": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0",
+        "expected_subject_sha": "c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1",
+        "verifier_identity": {
+          "path": "documents/verifier-identity.json",
+          "sha256": "101e88267f826d1c79bfbb1cde83153cc2b50eedcca7dee9c8f5dfe8209982b8"
+        }
+      },
+      "repeat": 2,
+      "expected": {
+        "exit_code": 0,
+        "passed": true,
+        "failure_codes": [],
+        "byte_identical": true
+      }
+    }
+  ]
+}

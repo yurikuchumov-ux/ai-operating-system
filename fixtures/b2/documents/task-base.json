@@ -1,0 +1,60 @@
+{
+  "schema_version": "1.0.0",
+  "task_id": "yurikuchumov-ux/ai-operating-system#18",
+  "repository": "yurikuchumov-ux/ai-operating-system",
+  "issue_number": 18,
+  "objective": "B2 fixture baseline task",
+  "change_policy": {
+    "change_required": true,
+    "policy_exception_id": null,
+    "no_change": {
+      "allowed": false,
+      "reason_codes": [],
+      "required_evidence_types": []
+    }
+  },
+  "base_ref": "main",
+  "base_sha": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0",
+  "branch": "agent/issue-18-b2-fixture",
+  "allowed_paths": ["src/**"],
+  "denied_paths": ["src/secrets/**"],
+  "risk_class": "L1",
+  "executor": {
+    "adapter": "human-supervised-bootstrap",
+    "version": "B2",
+    "max_attempts": 1,
+    "timeout_seconds": 1200
+  },
+  "acceptance_criteria": [
+    {
+      "id": "AC-1",
+      "predicate_id": "process.exit_code.equals",
+      "parameters": {"value": 0},
+      "required": true,
+      "linked_checks": ["contracts"]
+    }
+  ],
+  "required_checks": [
+    {
+      "id": "contracts",
+      "command_id": "repo.contracts.tests",
+      "required": true,
+      "expected_postconditions": [
+        {"predicate_id": "process.exit_code.equals", "parameters": {"value": 0}}
+      ]
+    }
+  ],
+  "review_policy": {
+    "reviewer_class": "independent-engineering",
+    "policy_id": "review-independence.v1",
+    "forbidden_lineage_overlaps": [
+      "agent_runtime_id",
+      "credential_principal",
+      "authored_commits"
+    ],
+    "minimum_distinct_human_operators": 0
+  },
+  "external_side_effects": "forbidden",
+  "created_by": "github:yurikuchumov-ux",
+  "created_at": "2026-07-13T09:00:00Z"
+}
