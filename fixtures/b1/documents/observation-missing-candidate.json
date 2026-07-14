@@ -1,0 +1,38 @@
+{
+  "schema_version": "1.0.0",
+  "task_id": "yurikuchumov-ux/ai-operating-system#18",
+  "execution_id": "b1000000-0000-4000-8000-000000000005",
+  "attempt": 1,
+  "executor": {
+    "adapter": "human-supervised-claude-code",
+    "adapter_version": "2.1.197-pro-b1",
+    "identity": {
+      "operator_principal": "github:yurikuchumov-ux",
+      "agent_runtime_id": "claude-code:df90c69b-2a57-4065-8af5-3551a77527a7",
+      "credential_principal": "local-operator:yuri.kuchumov",
+      "delegation_parent": "session:df90c69b-2a57-4065-8af5-3551a77527a7",
+      "role": "author"
+    }
+  },
+  "started_at": "2026-07-13T16:00:00Z",
+  "finished_at": "2026-07-13T16:05:00Z",
+  "git_observation": {
+    "base_sha": "065f5a75e75c10cadb977c84b54ff75f645e40c5",
+    "head_sha": null,
+    "authored_commits": [],
+    "changed_files": []
+  },
+  "terminal_status": "failed",
+  "terminal_reason": "runner_lost",
+  "no_change_reason": null,
+  "no_change_evidence": [],
+  "finalized_by": {
+    "component_id": "b1-result-finalizer.v1",
+    "credential_principal": "local-operator:yuri.kuchumov"
+  },
+  "warnings": [],
+  "error": {
+    "code": "runner_lost",
+    "message": "executor process exited before producing any candidate artifact"
+  }
+}
