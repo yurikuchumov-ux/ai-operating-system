@@ -255,7 +255,7 @@
       },
       "git_observation": {
         "path": "documents/git-observation-empty-diff.json",
-        "sha256": "9a2c0c2f55d0c00ebb1b19070fe18e71f6508522eaac79b206f944bef87fbdf8"
+        "sha256": "d2dcc397cfb4854b7b159e357ffaa965153e388b4386a03784c5c695f7d21264"
       },
       "evidence_root": "documents/evidence/good",
       "invocation": {
@@ -487,7 +487,7 @@
       },
       "result": {
         "path": "documents/result-unresolved-reference.json",
-        "sha256": "52cb2ea7e056ff7d387d2a1e364b8e3ba15810ca872bd560c7e64df4495df3df"
+        "sha256": "d7d6cf52db0156255eb2d65076ed5bf4282a6c583ad1bde6129b65cda59e1c6f"
       },
       "review_attestation": {
         "path": "documents/review-base.json",

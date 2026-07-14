@@ -2,8 +2,8 @@
   "schema_version": "1.0.0",
   "base_sha": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0",
   "head_sha": "c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1",
-  "authored_commits": [
-    "d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2"
-  ],
-  "changed_files": []
+  "authored_commits": [],
+  "changed_files": [
+    "src/app.py"
+  ]
 }

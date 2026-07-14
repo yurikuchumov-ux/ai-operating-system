@@ -23,6 +23,7 @@ import os
 import stat
 import sys
 import tempfile
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
@@ -41,6 +42,7 @@ RESULT_SCHEMA_PATH = REPO_ROOT / "contracts/schemas/result.v1.schema.json"
 REVIEW_SCHEMA_PATH = REPO_ROOT / "contracts/schemas/review-attestation.v1.schema.json"
 VERIFICATION_SCHEMA_PATH = REPO_ROOT / "contracts/schemas/verification.v1.schema.json"
 PREDICATE_REGISTRY_PATH = REPO_ROOT / "contracts/registries/predicates.v1.json"
+COMMAND_REGISTRY_PATH = REPO_ROOT / "contracts/registries/commands.v1.json"
 
 MAX_INPUT_BYTES = 1024 * 1024
 
@@ -59,12 +61,18 @@ GIT_OBSERVATION_SCHEMA: Dict[str, Any] = {
         "schema_version": {"const": "1.0.0"},
         "base_sha": {"type": "string", "pattern": _SHA_PATTERN},
         "head_sha": {"oneOf": [{"type": "string", "pattern": _SHA_PATTERN}, {"type": "null"}]},
-        "authored_commits": {"type": "array", "items": {"type": "string", "pattern": _SHA_PATTERN}},
-        "changed_files": {"type": "array", "items": {"type": "string", "pattern": _PATH_PATTERN}},
+        "authored_commits": {
+            "type": "array",
+            "items": {"type": "string", "pattern": _SHA_PATTERN},
+            "uniqueItems": True,
+        },
+        "changed_files": {
+            "type": "array",
+            "items": {"type": "string", "pattern": _PATH_PATTERN},
+            "uniqueItems": True,
+        },
     },
 }
-
-_FORBIDDEN_LINEAGE_FIELDS = ("agent_runtime_id", "credential_principal", "authored_commits")
 
 # The required, closed set of predicate IDs this verifier evaluates, in
 # report order (AC-B2-5). Evaluating any predicate outside this set, or
@@ -129,6 +137,8 @@ def _load_bounded_json(path: Path, label: str) -> Any:
 
 _PREDICATE_REGISTRY = load_json(PREDICATE_REGISTRY_PATH)
 _KNOWN_PREDICATE_IDS = {entry["id"] for entry in _PREDICATE_REGISTRY["entries"]}
+_COMMAND_REGISTRY = load_json(COMMAND_REGISTRY_PATH)
+_KNOWN_COMMAND_IDS = {entry["id"] for entry in _COMMAND_REGISTRY["entries"]}
 
 _TASK_VALIDATOR = Draft202012Validator(load_json(TASK_SCHEMA_PATH), format_checker=FormatChecker())
 _RESULT_VALIDATOR = Draft202012Validator(load_json(RESULT_SCHEMA_PATH), format_checker=FormatChecker())
@@ -177,11 +187,17 @@ class EvidenceEntry:
 def _open_evidence_bytes(evidence_root: Path, relative_path: str) -> bytes:
     """Read evidence bytes safely: relative, contained, regular files only.
 
-    The evidence root directory is opened once as a trusted descriptor. The
-    target is opened through that descriptor with O_NOFOLLOW (rejecting a
-    symlinked final component), read through that single bounded descriptor,
-    and its pathname binding is re-checked by device/inode afterwards to
-    detect rebinding/mutation during the read. Any defect fails closed by
+    The evidence root directory is opened once as a trusted descriptor.
+    Every path component -- not just the final one -- is then walked and
+    opened one at a time relative to that trusted descriptor with
+    O_DIRECTORY|O_NOFOLLOW (intermediate components) or O_NOFOLLOW
+    (final component), so a symlink swapped in at any intermediate
+    component is rejected instead of silently followed; `Path.resolve()`
+    alone cannot make this guarantee because it is resolved once before
+    the actual open and is therefore subject to a TOCTOU race. The final
+    descriptor is read through that single bounded descriptor, and its
+    pathname binding is re-checked by device/inode afterwards to detect
+    rebinding/mutation during the read. Any defect fails closed by
     raising; callers translate this into the appropriate failure code.
     """
     import re
@@ -200,18 +216,46 @@ def _open_evidence_bytes(evidence_root: Path, relative_path: str) -> bytes:
     if not isinstance(no_follow, int) or no_follow == 0:
         raise VerifierInputError("safe evidence reads are unavailable: O_NOFOLLOW is unsupported")
 
+    components = [part for part in relative_path.split("/") if part not in ("", ".")]
+    if not components:
+        raise VerifierInputError("evidence path is not a safe relative path: {}".format(relative_path))
+
+    cloexec = getattr(os, "O_CLOEXEC", 0)
     try:
-        root_fd = os.open(str(resolved_root), os.O_DIRECTORY | getattr(os, "O_CLOEXEC", 0))
+        root_fd = os.open(str(resolved_root), os.O_DIRECTORY | cloexec)
     except OSError as exc:
         raise VerifierInputError("evidence root cannot be opened: {}".format(exc)) from exc
     try:
-        flags = os.O_RDONLY | no_follow | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NONBLOCK", 0)
+        dir_fd = root_fd
+        opened_intermediate_fd: Optional[int] = None
         try:
-            fd = os.open(relative_path, flags, dir_fd=root_fd)
-        except FileNotFoundError as exc:
-            raise FileNotFoundError(relative_path) from exc
-        except OSError as exc:
-            raise VerifierInputError("evidence path cannot be opened safely: {}".format(exc)) from exc
+            for component in components[:-1]:
+                try:
+                    next_fd = os.open(
+                        component, os.O_DIRECTORY | no_follow | cloexec, dir_fd=dir_fd
+                    )
+                except FileNotFoundError as exc:
+                    raise FileNotFoundError(relative_path) from exc
+                except OSError as exc:
+                    raise VerifierInputError(
+                        "evidence path cannot be opened safely: {}".format(exc)
+                    ) from exc
+                if opened_intermediate_fd is not None:
+                    os.close(opened_intermediate_fd)
+                dir_fd = next_fd
+                opened_intermediate_fd = next_fd
+
+            final_component = components[-1]
+            flags = os.O_RDONLY | no_follow | cloexec | getattr(os, "O_NONBLOCK", 0)
+            try:
+                fd = os.open(final_component, flags, dir_fd=dir_fd)
+            except FileNotFoundError as exc:
+                raise FileNotFoundError(relative_path) from exc
+            except OSError as exc:
+                raise VerifierInputError("evidence path cannot be opened safely: {}".format(exc)) from exc
+        finally:
+            if opened_intermediate_fd is not None:
+                os.close(opened_intermediate_fd)
         try:
             before = os.fstat(fd)
             if not stat.S_ISREG(before.st_mode):
@@ -364,13 +408,14 @@ class B2Verifier:
             "expected_task_id": expected,
             "task_task_id": self.task["task_id"],
             "result_task_id": self.result["task_id"],
+            "review_task_id": self.review["task_id"],
         }
-        ok = expected == self.task["task_id"] == self.result["task_id"]
+        ok = expected == self.task["task_id"] == self.result["task_id"] == self.review["task_id"]
         return PredicateResult(
             "binding.task_id.equals",
             ok,
             observed,
-            ("task-input", "result-input"),
+            ("task-input", "result-input", "review-attestation-input"),
             None if ok else "task_id_mismatch",
         )
 
@@ -391,14 +436,20 @@ class B2Verifier:
         observed = {
             "expected_base_sha": expected,
             "task_base_sha": self.task["base_sha"],
+            "result_base_sha": self.result["base_sha"],
             "git_observation_base_sha": self.git_observation["base_sha"],
         }
-        ok = expected == self.task["base_sha"] == self.git_observation["base_sha"]
+        ok = (
+            expected
+            == self.task["base_sha"]
+            == self.result["base_sha"]
+            == self.git_observation["base_sha"]
+        )
         return PredicateResult(
             "git.base_sha.equals",
             ok,
             observed,
-            ("task-input", "git-observation-input"),
+            ("task-input", "result-input", "git-observation-input"),
             None if ok else "base_sha_mismatch",
         )
 
@@ -419,38 +470,108 @@ class B2Verifier:
         )
 
     def _git_changed_paths_allowed(self) -> PredicateResult:
+        """Scope check bound to the trusted Git observation, not the result's claim.
+
+        A dishonest result can claim only allowed paths while the trusted
+        observation shows an additional (possibly forbidden) path was
+        actually touched -- e.g. a workflow file omitted from the claimed
+        `changed_files` -- or can claim an extra path never actually
+        observed. `result.changed_files` is therefore required to equal
+        (order-independent) the trusted Git observation's `changed_files`
+        exactly; any discrepancy in either direction, plus any claimed or
+        observed path that fails the task's allow/deny patterns, is a
+        scope violation.
+        """
         allowed_paths = self.task["allowed_paths"]
         denied_paths = self.task["denied_paths"]
-        violations = []
-        for changed_path in self.result["changed_files"]:
-            allowed = any(fnmatch.fnmatchcase(changed_path, pattern) for pattern in allowed_paths)
-            denied = any(fnmatch.fnmatchcase(changed_path, pattern) for pattern in denied_paths)
-            if not allowed or denied:
-                violations.append(changed_path)
+        claimed = list(self.result["changed_files"])
+        observed = list(self.git_observation["changed_files"])
+
+        def violates_scope(path: str) -> bool:
+            allowed = any(fnmatch.fnmatchcase(path, pattern) for pattern in allowed_paths)
+            denied = any(fnmatch.fnmatchcase(path, pattern) for pattern in denied_paths)
+            return (not allowed) or denied
+
+        violations = {path for path in claimed if violates_scope(path)}
+        violations.update(path for path in observed if violates_scope(path))
+        violations.update(set(claimed) ^ set(observed))
+
         ok = not violations
         return PredicateResult(
             "git.changed_paths.allowed",
             ok,
-            {"violations": violations},
-            ("task-input", "result-input"),
+            {"violations": sorted(violations)},
+            ("task-input", "result-input", "git-observation-input"),
             None if ok else "scope_violation",
         )
 
     def _git_diff_non_empty(self) -> PredicateResult:
+        """Require a non-empty, accounted-for diff for a change-required task.
+
+        Bound to the trusted Git observation: both the observed changed
+        files and the observed authored commits must be non-empty, and the
+        result's claimed `authored_commits` must equal (order-independent)
+        the observation's authored commits. A result that claims commits
+        the observation never recorded (or omits ones it did) cannot pass.
+        """
         change_required = self.task["change_policy"]["change_required"]
-        changed_files = self.git_observation["changed_files"]
-        ok = (not change_required) or bool(changed_files)
+        observed_files = self.git_observation["changed_files"]
+        observed_commits = self.git_observation["authored_commits"]
+        result_commits = self.result["authored_commits"]
+        commits_match = Counter(observed_commits) == Counter(result_commits)
+        ok = (
+            not change_required
+            or (bool(observed_files) and bool(observed_commits) and commits_match)
+        )
         return PredicateResult(
             "git.diff.non_empty",
             ok,
-            {"change_required": change_required, "changed_file_count": len(changed_files)},
-            ("task-input", "git-observation-input"),
+            {
+                "change_required": change_required,
+                "changed_file_count": len(observed_files),
+                "authored_commit_count": len(observed_commits),
+                "authored_commits_match": commits_match,
+            },
+            ("task-input", "git-observation-input", "result-input"),
             None if ok else "empty_diff",
         )
 
     def _process_exit_code(self) -> PredicateResult:
+        """A result cannot verify successfully when its terminal status is failed.
+
+        A result can declare `checks` and `acceptance_results` that all
+        claim a zero exit code while its own top-level `status` /
+        `terminal_reason` / `error` say the run actually failed. The
+        terminal status is checked directly here rather than trusted
+        indirectly through the (possibly fabricated) per-check fields.
+        """
         checks_by_id = {check["id"]: check for check in self.result["checks"]}
-        failures = []
+        check_ids = [check["id"] for check in self.result["checks"]]
+        required_ids = [check["id"] for check in self.task["required_checks"]]
+
+        failures: List[str] = []
+        if self.result["status"] not in ("change_proposed", "no_change_required"):
+            failures.append("status:{}".format(self.result["status"]))
+
+        duplicate_check_ids = sorted({cid for cid in check_ids if check_ids.count(cid) > 1})
+        duplicate_required_ids = sorted({cid for cid in required_ids if required_ids.count(cid) > 1})
+        failures.extend("duplicate_check:{}".format(cid) for cid in duplicate_check_ids)
+        failures.extend("duplicate_required_check:{}".format(cid) for cid in duplicate_required_ids)
+
+        unknown_command_ids = sorted(
+            {
+                check["command_id"]
+                for check in self.task["required_checks"]
+                if check["command_id"] not in _KNOWN_COMMAND_IDS
+            }
+            | {
+                check["command_id"]
+                for check in self.result["checks"]
+                if check["command_id"] not in _KNOWN_COMMAND_IDS
+            }
+        )
+        failures.extend("unknown_command:{}".format(cid) for cid in unknown_command_ids)
+
         for required_check in self.task["required_checks"]:
             if not required_check["required"]:
                 continue
@@ -467,7 +588,11 @@ class B2Verifier:
         )
 
     def _acceptance_required_passed(self) -> PredicateResult:
-        results_by_id = {item["id"]: item for item in self.result["acceptance_results"]}
+        result_criteria = self.result["acceptance_results"]
+        result_ids = [item["id"] for item in result_criteria]
+        results_by_id = {item["id"]: item for item in result_criteria}
+        duplicate_result_ids = sorted({rid for rid in result_ids if result_ids.count(rid) > 1})
+
         unknown_predicates: List[str] = []
         failed_criteria: List[str] = []
         missing_criteria: List[str] = []
@@ -489,6 +614,11 @@ class B2Verifier:
                 "unknown_predicate",
             )
 
+        criteria_ids = [criterion["id"] for criterion in self.task["acceptance_criteria"]]
+        duplicate_criteria_ids = sorted({cid for cid in criteria_ids if criteria_ids.count(cid) > 1})
+        unknown_result_ids = sorted(rid for rid in results_by_id if rid not in set(criteria_ids))
+        checks_by_id = {check["id"]: check for check in self.result["checks"]}
+
         for criterion in self.task["acceptance_criteria"]:
             if not criterion["required"]:
                 continue
@@ -496,7 +626,17 @@ class B2Verifier:
             if actual is None:
                 missing_criteria.append(criterion["id"])
                 continue
-            if actual["predicate_id"] != criterion["predicate_id"] or not actual["passed"]:
+            expected_evidence: set = set()
+            for check_id in criterion["linked_checks"]:
+                linked_check = checks_by_id.get(check_id)
+                if linked_check is not None:
+                    expected_evidence.update(linked_check["evidence_artifact_ids"])
+            if (
+                actual["predicate_id"] != criterion["predicate_id"]
+                or actual["parameters"] != criterion["parameters"]
+                or not actual["passed"]
+                or set(actual["evidence_artifact_ids"]) != expected_evidence
+            ):
                 failed_criteria.append(criterion["id"])
 
         if missing_criteria:
@@ -507,11 +647,16 @@ class B2Verifier:
                 ("task-input", "result-input"),
                 "acceptance_failed",
             )
-        ok = not failed_criteria
+        ok = not (failed_criteria or duplicate_result_ids or duplicate_criteria_ids or unknown_result_ids)
         return PredicateResult(
             "acceptance.required.passed",
             ok,
-            {"failed_criteria": failed_criteria},
+            {
+                "failed_criteria": failed_criteria,
+                "duplicate_result_ids": duplicate_result_ids,
+                "duplicate_criteria_ids": duplicate_criteria_ids,
+                "unknown_result_ids": unknown_result_ids,
+            },
             ("task-input", "result-input"),
             None if ok else "acceptance_failed",
         )
@@ -527,6 +672,8 @@ class B2Verifier:
         return referenced
 
     def _artifact_exists(self) -> Tuple[PredicateResult, Dict[str, bytes]]:
+        artifact_ids = [item["id"] for item in self.result["artifacts"]]
+        duplicate_artifact_ids = sorted({aid for aid in artifact_ids if artifact_ids.count(aid) > 1})
         declared = {item["id"]: item for item in self.result["artifacts"]}
         unresolved = sorted({rid for rid in self._referenced_artifact_ids() if rid not in declared})
         if unresolved:
@@ -539,7 +686,7 @@ class B2Verifier:
             )
             return row, {}
 
-        missing: List[str] = []
+        missing: List[str] = list(duplicate_artifact_ids)
         artifact_bytes: Dict[str, bytes] = {}
         for artifact_id, artifact in declared.items():
             try:
@@ -558,7 +705,7 @@ class B2Verifier:
         row = PredicateResult(
             "artifact.exists",
             ok,
-            {"missing_artifacts": sorted(missing)},
+            {"missing_artifacts": sorted(set(missing))},
             ("result-input",),
             None if ok else "missing_artifact",
         )
@@ -594,27 +741,79 @@ class B2Verifier:
         )
 
     def _review_eligibility_passed(self) -> PredicateResult:
-        eligible = self.review["eligibility"]["eligible"]
+        eligibility = self.review["eligibility"]
+        eligible = eligibility["eligible"]
+        policy_ok = eligibility["policy_id"] == self.task["review_policy"]["policy_id"]
+        risk_ok = eligibility["risk_class"] == self.task["risk_class"]
+        # A self-asserted eligible=true carrying non-empty reason_codes is
+        # internally inconsistent (reason_codes are the record of *why*
+        # something is ineligible/flagged) and cannot be trusted at face
+        # value.
+        reason_codes_consistent = not (eligible and eligibility["reason_codes"])
+        ok = bool(eligible) and policy_ok and risk_ok and reason_codes_consistent
+        observed = {
+            "eligible": eligible,
+            "policy_id": eligibility["policy_id"],
+            "expected_policy_id": self.task["review_policy"]["policy_id"],
+            "risk_class": eligibility["risk_class"],
+            "expected_risk_class": self.task["risk_class"],
+            "reason_codes": eligibility["reason_codes"],
+        }
         return PredicateResult(
             "review.eligibility.passed",
-            eligible,
-            {"eligible": eligible, "reason_codes": self.review["eligibility"]["reason_codes"]},
+            ok,
+            observed,
             ("review-attestation-input",),
-            None if eligible else "review_ineligible",
+            None if ok else "review_ineligible",
         )
 
+    def _actual_lineage_overlaps(self) -> Dict[str, bool]:
+        """Recompute lineage overlap from actual identity/commit data.
+
+        The review attestation's own `eligibility.overlap_results[*].overlap`
+        (and its `author_values`/`reviewer_value`/`eligible`) are
+        self-asserted by the reviewer input and are never trusted as the
+        source of truth here. Every field the task forbids from overlapping
+        is recomputed directly from the result's executor identity and
+        authored commits versus the review's reviewer identity.
+        """
+        forbidden = self.task["review_policy"]["forbidden_lineage_overlaps"]
+        executor_identity = self.result["executor"]["identity"]
+        reviewer_identity = self.review["reviewer_identity"]
+        result_commits = set(self.result["authored_commits"])
+        reviewer_commits = set(reviewer_identity["authored_commits"])
+        actual: Dict[str, bool] = {}
+        for field in forbidden:
+            if field == "authored_commits":
+                actual[field] = bool(result_commits & reviewer_commits)
+            else:
+                actual[field] = executor_identity.get(field) == reviewer_identity.get(field)
+        return actual
+
     def _identity_lineage_no_overlap(self) -> PredicateResult:
-        overlaps = [
-            item["field"]
-            for item in self.review["eligibility"]["overlap_results"]
-            if item["field"] in _FORBIDDEN_LINEAGE_FIELDS and item["overlap"]
-        ]
-        ok = not overlaps
+        forbidden = self.task["review_policy"]["forbidden_lineage_overlaps"]
+        actual = self._actual_lineage_overlaps()
+        asserted = {item["field"]: item["overlap"] for item in self.review["eligibility"]["overlap_results"]}
+
+        overlapping: List[str] = []
+        inconsistent: List[str] = []
+        for field in forbidden:
+            actual_value = actual[field]
+            asserted_value = asserted.get(field)
+            if actual_value:
+                overlapping.append(field)
+            if asserted_value is None or asserted_value != actual_value:
+                inconsistent.append(field)
+
+        ok = not overlapping and not inconsistent
         return PredicateResult(
             "identity.lineage.no_overlap",
             ok,
-            {"overlapping_fields": sorted(overlaps)},
-            ("review-attestation-input",),
+            {
+                "overlapping_fields": sorted(overlapping),
+                "inconsistent_self_asserted_fields": sorted(inconsistent),
+            },
+            ("result-input", "review-attestation-input"),
             None if ok else "identity_conflict",
         )
 

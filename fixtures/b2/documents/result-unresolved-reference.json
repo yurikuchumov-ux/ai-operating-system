@@ -51,7 +51,7 @@
       "command_id": "repo.contracts.tests",
       "exit_code": 0,
       "evidence_artifact_ids": [
-        "artifact-1"
+        "artifact-does-not-exist"
       ]
     }
   ],

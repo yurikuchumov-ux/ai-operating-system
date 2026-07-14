@@ -6,6 +6,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Any, Mapping
 from unittest import mock
 
 from jsonschema import Draft202012Validator, FormatChecker
@@ -245,6 +246,15 @@ class B2EvidenceSecurityTests(unittest.TestCase):
         with self.assertRaises(VerifierInputError):
             _open_evidence_bytes(root, "adir")
 
+    def test_intermediate_symlink_component_is_rejected(self) -> None:
+        root = _tmp_dir()
+        victim_dir = root / "victim"
+        victim_dir.mkdir()
+        (victim_dir / "secret.txt").write_bytes(b"secret bytes")
+        (root / "link").symlink_to(victim_dir)
+        with self.assertRaises(VerifierInputError):
+            _open_evidence_bytes(root, "link/secret.txt")
+
     def test_missing_file_raises_file_not_found(self) -> None:
         root = _tmp_dir()
         with self.assertRaises(FileNotFoundError):
@@ -389,6 +399,144 @@ class B2PublicationTests(unittest.TestCase):
         with self.assertRaises(VerifierInputError):
             publish_report(output_path, b'{"a":1}\n')
         self.assertEqual(b"pre-existing unrelated content", output_path.read_bytes())
+
+
+def _write_json(path: Path, document: Mapping[str, Any]) -> Path:
+    path.write_text(json.dumps(document), encoding="utf-8")
+    return path
+
+
+class B2FalseSuccessRegressionTests(unittest.TestCase):
+    """Attempt-1 evaluated these six inputs as passed=True / exit 0. Each must
+    now fail closed with a concrete failure code -- not merely 'not pass'."""
+
+    def setUp(self) -> None:
+        self.workdir = _tmp_dir()
+        self.task = load_json(DOCUMENTS_DIR / "task-base.json")
+        self.result = load_json(DOCUMENTS_DIR / "result-base.json")
+        self.review = load_json(DOCUMENTS_DIR / "review-base.json")
+        self.git_observation = load_json(DOCUMENTS_DIR / "git-observation-base.json")
+        self.evidence_root = DOCUMENTS_DIR / "evidence/good"
+
+    def _run(self, task=None, result=None, review=None, git_observation=None):
+        invocation = _baseline_invocation()
+        return run_verification(
+            invocation,
+            _write_json(self.workdir / "task.json", task if task is not None else self.task),
+            _write_json(self.workdir / "result.json", result if result is not None else self.result),
+            _write_json(self.workdir / "review.json", review if review is not None else self.review),
+            _write_json(
+                self.workdir / "git-observation.json",
+                git_observation if git_observation is not None else self.git_observation,
+            ),
+            self.evidence_root,
+        )
+
+    def _failure_codes(self, report) -> set:
+        return {row["failure_code"] for row in report["predicate_results"] if row["failure_code"]}
+
+    def test_1_unaccounted_denied_path_in_trusted_observation_is_scope_violation(self) -> None:
+        git_observation = dict(self.git_observation)
+        git_observation["changed_files"] = ["src/app.py", ".github/workflows/evil.yml"]
+        exit_code, report = self._run(git_observation=git_observation)
+        self.assertEqual(1, exit_code)
+        self.assertFalse(report["passed"])
+        self.assertIn("scope_violation", self._failure_codes(report))
+
+    def test_2_result_base_sha_divergence_is_base_sha_mismatch(self) -> None:
+        result = dict(self.result)
+        result["base_sha"] = "9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f"
+        exit_code, report = self._run(result=result)
+        self.assertEqual(1, exit_code)
+        self.assertFalse(report["passed"])
+        self.assertIn("base_sha_mismatch", self._failure_codes(report))
+
+    def test_3_review_task_id_divergence_is_task_id_mismatch(self) -> None:
+        review = dict(self.review)
+        review["task_id"] = "yurikuchumov-ux/ai-operating-system#99"
+        exit_code, report = self._run(review=review)
+        self.assertEqual(1, exit_code)
+        self.assertFalse(report["passed"])
+        self.assertIn("task_id_mismatch", self._failure_codes(report))
+
+    def test_4_reviewer_executor_runtime_overlap_is_identity_conflict_despite_self_assertion(self) -> None:
+        review = json.loads(json.dumps(self.review))
+        review["reviewer_identity"]["agent_runtime_id"] = self.result["executor"]["identity"][
+            "agent_runtime_id"
+        ]
+        # Self-asserts no overlap and eligible, even though the identities now
+        # actually collide -- the verifier must not trust this assertion.
+        for item in review["eligibility"]["overlap_results"]:
+            if item["field"] == "agent_runtime_id":
+                item["overlap"] = False
+        review["eligibility"]["eligible"] = True
+        exit_code, report = self._run(review=review)
+        self.assertEqual(1, exit_code)
+        self.assertFalse(report["passed"])
+        self.assertIn("identity_conflict", self._failure_codes(report))
+
+    def test_5_failed_terminal_status_cannot_verify_despite_green_checks(self) -> None:
+        result = json.loads(json.dumps(self.result))
+        result["status"] = "failed"
+        result["terminal_reason"] = "check_failed"
+        result["error"] = {"code": "check_failed", "message": "contract tests failed"}
+        # checks and acceptance_results still claim success.
+        exit_code, report = self._run(result=result)
+        self.assertEqual(1, exit_code)
+        self.assertFalse(report["passed"])
+        self.assertIn("check_failed", self._failure_codes(report))
+
+    def test_6_acceptance_result_parameters_diverge_from_criterion_is_acceptance_failed(self) -> None:
+        result = json.loads(json.dumps(self.result))
+        result["acceptance_results"][0]["parameters"] = {"value": 1}
+        result["acceptance_results"][0]["passed"] = True
+        exit_code, report = self._run(result=result)
+        self.assertEqual(1, exit_code)
+        self.assertFalse(report["passed"])
+        self.assertIn("acceptance_failed", self._failure_codes(report))
+
+    def test_authored_commits_diverge_from_trusted_observation_is_empty_diff(self) -> None:
+        result = json.loads(json.dumps(self.result))
+        result["authored_commits"] = ["ffffffffffffffffffffffffffffffffffffffff"]
+        exit_code, report = self._run(result=result)
+        self.assertEqual(1, exit_code)
+        self.assertFalse(report["passed"])
+        self.assertIn("empty_diff", self._failure_codes(report))
+
+    def test_claimed_extra_path_not_in_trusted_observation_is_scope_violation(self) -> None:
+        result = json.loads(json.dumps(self.result))
+        result["changed_files"].append("src/not-observed.py")
+        exit_code, report = self._run(result=result)
+        self.assertEqual(1, exit_code)
+        self.assertFalse(report["passed"])
+        self.assertIn("scope_violation", self._failure_codes(report))
+
+    def test_acceptance_result_evidence_diverging_from_linked_check_is_acceptance_failed(self) -> None:
+        result = json.loads(json.dumps(self.result))
+        result["acceptance_results"][0]["evidence_artifact_ids"] = []
+        exit_code, report = self._run(result=result)
+        self.assertEqual(1, exit_code)
+        self.assertFalse(report["passed"])
+        self.assertIn("acceptance_failed", self._failure_codes(report))
+
+    def test_unknown_command_id_in_task_and_result_fails_closed(self) -> None:
+        task = json.loads(json.dumps(self.task))
+        result = json.loads(json.dumps(self.result))
+        task["required_checks"][0]["command_id"] = "unknown.command"
+        result["checks"][0]["command_id"] = "unknown.command"
+        exit_code, report = self._run(task=task, result=result)
+        self.assertEqual(1, exit_code)
+        self.assertFalse(report["passed"])
+        self.assertIn("check_failed", self._failure_codes(report))
+
+    def test_eligible_true_with_nonempty_reason_codes_is_review_ineligible(self) -> None:
+        review = json.loads(json.dumps(self.review))
+        review["eligibility"]["eligible"] = True
+        review["eligibility"]["reason_codes"] = ["self_asserted_warning"]
+        exit_code, report = self._run(review=review)
+        self.assertEqual(1, exit_code)
+        self.assertFalse(report["passed"])
+        self.assertIn("review_ineligible", self._failure_codes(report))
 
 
 class B2ReportSchemaTests(unittest.TestCase):
