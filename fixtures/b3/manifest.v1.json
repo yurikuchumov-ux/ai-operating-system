@@ -5,7 +5,7 @@
       "id": "canonical-run-29190170902-false-success",
       "signal": {
         "path": "documents/signal-canonical-run-29190170902.json",
-        "sha256": "61f1ca5a544ca99dfd4542f2c168f2d2737fc2f80587d2b53ac774dffd981b10"
+        "sha256": "c8dc0742dc8f3bc564ee5f652d32b53ffe8d9fc81968f676adbcf4b416a94222"
       },
       "task": {
         "path": "documents/task-baseline.json",
@@ -38,7 +38,7 @@
       "id": "reject-max-turns",
       "signal": {
         "path": "documents/signal-reject-max-turns.json",
-        "sha256": "d51ae91f3b26aeb5e572fd8456e7b8543d8243b0f6b1e196210893d8c0288bb3"
+        "sha256": "5b868014e997ba11e2807a18c56df05571c7e662517a70e9dbd6b1b7e2fb1850"
       },
       "task": {
         "path": "documents/task-baseline.json",
@@ -66,7 +66,7 @@
       "id": "reject-adapter-timeout",
       "signal": {
         "path": "documents/signal-reject-adapter-timeout.json",
-        "sha256": "985d4cf5e746da7b25efafffd50f8242d863a2d5bfb5f4ef1d46f6679d081827"
+        "sha256": "3ac4c666e492c2e18a7d99ef17709fe1a068783d544eb9f0b438c5582f263e0b"
       },
       "task": {
         "path": "documents/task-baseline.json",
@@ -95,7 +95,7 @@
       "id": "reject-job-timeout",
       "signal": {
         "path": "documents/signal-reject-job-timeout.json",
-        "sha256": "335f8803bdd109c9a6eb3cfa8efd944293321579c5d41da7054a49ff63b2d61a"
+        "sha256": "50d133823fb176cd6d92b7f3b26ee99c13ab67f6954c7e86a7ec9ad00cc48efb"
       },
       "task": {
         "path": "documents/task-baseline.json",
@@ -124,7 +124,7 @@
       "id": "reject-missing-commit",
       "signal": {
         "path": "documents/signal-reject-missing-commit.json",
-        "sha256": "5dec3e6803cd5df89ec1226511912f9c6caff090841b6c8093952e0ccfdd8ece"
+        "sha256": "7965ebe82faf90917e318c3d765c95b9ca90b4278287c5da3fb139636ecc1617"
       },
       "task": {
         "path": "documents/task-baseline.json",
@@ -152,7 +152,7 @@
       "id": "reject-missing-result-artifact",
       "signal": {
         "path": "documents/signal-reject-missing-result-artifact.json",
-        "sha256": "9032b2c25a4cc41300498a80417544b6604eda7840dbf1c2d70f4c063f7c7a44"
+        "sha256": "4783a5256bb239fa95d873dbff544e1ff38f7d8977a6af2ee6f5560a28ae9b9c"
       },
       "task": {
         "path": "documents/task-baseline.json",
@@ -181,7 +181,7 @@
       "id": "reject-missing-evidence-artifact",
       "signal": {
         "path": "documents/signal-reject-missing-evidence-artifact.json",
-        "sha256": "e017de8960d1d888dd38736846336dda75c349d730d6141017aba3a2250b075f"
+        "sha256": "a5a87f1b8cfbafb7a1e15f14b71e9aebdb919192e120f24c34184ca92f79296c"
       },
       "task": {
         "path": "documents/task-baseline.json",
@@ -210,7 +210,7 @@
       "id": "reject-empty-diff",
       "signal": {
         "path": "documents/signal-reject-empty-diff.json",
-        "sha256": "4d6bf1b49df1d8c9aaf94908cb696a6ed6d91295082667b5b012cd22413c9d53"
+        "sha256": "c2bc5afe995b9c39141f0f4bdd4f2dc3993476550ac25066461037bbef48989f"
       },
       "task": {
         "path": "documents/task-baseline.json",
@@ -238,7 +238,7 @@
       "id": "reject-check-failed",
       "signal": {
         "path": "documents/signal-reject-check-failed.json",
-        "sha256": "b243119909404b846b7d8f446c1462c630637ef86841c0cbac9779eddb7d0148"
+        "sha256": "5fe26e8adfd7e63cc2659a57ef23cb6802ecd2a5407366c82628e60d062be46c"
       },
       "task": {
         "path": "documents/task-baseline.json",
@@ -266,7 +266,7 @@
       "id": "reject-adapter-error",
       "signal": {
         "path": "documents/signal-reject-adapter-error.json",
-        "sha256": "ab2369d7b28a186f0798f68f1f08025eb9e47f54480da95bc4d2144b9e2f687d"
+        "sha256": "f78d352d3bc0fe4109c8370730f0a4430c3b1f836dc9495afda299cc1baddb60"
       },
       "task": {
         "path": "documents/task-baseline.json",
@@ -294,7 +294,7 @@
       "id": "reject-cancelled",
       "signal": {
         "path": "documents/signal-reject-cancelled.json",
-        "sha256": "500097a95c9dc81132df38b1e4d6fdfadaee70906ef091de3ce51293c1eefe85"
+        "sha256": "a9fffcad913085c5cf9b347772fde02792d739eb76ede26d2839ef4348da9100"
       },
       "task": {
         "path": "documents/task-baseline.json",
@@ -322,7 +322,7 @@
       "id": "reject-verifier-overrides-adapter-self-report",
       "signal": {
         "path": "documents/signal-reject-verifier-overrides-adapter-self-report.json",
-        "sha256": "1ebe55ef26c2091f0849a2d0a4d2a3cb7e777ee495bd60d41fb936d7a086525d"
+        "sha256": "3fa664900eba07de96c0dcf85577c89f73f066a9dde68ee117e025cf52ec0b67"
       },
       "task": {
         "path": "documents/task-baseline.json",
@@ -352,7 +352,7 @@
       "id": "accept-genuine-success",
       "signal": {
         "path": "documents/signal-accept-genuine-success.json",
-        "sha256": "05f3696a234080637b2d011107e55b79628932521fa07039a9df970f87ffcb88"
+        "sha256": "f577946464e080a97872a2b4108a06e0999a0b54702f8af92f0bc2c1baec1fae"
       },
       "task": {
         "path": "documents/task-baseline.json",
@@ -381,7 +381,7 @@
       "id": "reject-runner-lost",
       "signal": {
         "path": "documents/signal-reject-runner-lost.json",
-        "sha256": "84bccd40b582f3a1699fa25286e612daae35194d4784f2834413cc995f82aa55"
+        "sha256": "d6285fe404e7f6e1e8e4c953a507d75ad58508f61b3b9ac63aff27925784884c"
       },
       "task": {
         "path": "documents/task-baseline.json",
@@ -410,7 +410,7 @@
       "id": "reject-adapter-session-unresolvable",
       "signal": {
         "path": "documents/signal-reject-adapter-session-unresolvable.json",
-        "sha256": "3b90d9d1de7a6f5b1a74952dda0de98d03b171645084d5c1c9056bd6224b402f"
+        "sha256": "52cfb51bc4a92bea44f3085ac0e104dd3c90269d69817b874b70ec1392a64d6d"
       },
       "task": {
         "path": "documents/task-baseline.json",

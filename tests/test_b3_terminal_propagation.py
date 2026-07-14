@@ -38,6 +38,10 @@ WORKFLOW_PATH = REPO_ROOT / ".github/workflows/b3-terminal-propagation.yml"
 TASK_ID = "yurikuchumov-ux/ai-operating-system#19"
 PINNED_ADAPTER_ACTION = "anthropics/claude-code-action@6902c227aaa9536481b99d56f3014bbbad6c6da8"
 HEAD_BRANCH = "agent/issue-19-b3-terminal-propagation"
+CONTROL_TASK_COMMIT = "86e2826c85ce444127cc95a8551b8570002ec6cf"
+CONTROL_TASK_PATH = ".ai/tasks/19/b3-task.v1.json"
+REVIEW_REF = "control/issue-19-b3-review-attestation"
+REVIEW_PATH = ".ai/reviews/19/review-attestation.v1.json"
 
 ALL_SCENARIO_IDS = {
     "canonical-run-29190170902-false-success",
@@ -206,6 +210,7 @@ class B3ClassificationPriorityTests(unittest.TestCase):
             "workflow_run_id": "1",
             "workflow_run_attempt": "1",
             "source_run_id": None,
+            "trusted_subject_sha": "b" * 40,
             "cancelled_by_owner": False,
             "adapter_attempted": True,
             "adapter_step_outcome": "success",
@@ -654,6 +659,7 @@ class B3WorkflowRunMetadataTests(unittest.TestCase):
             "workflow_run_id": "1",
             "workflow_run_attempt": "1",
             "source_run_id": None,
+            "trusted_subject_sha": "b" * 40,
             "raw_provider_terminal_reason": None,
             "adapter_self_report": {"status": "success", "claimed_status": "change_proposed", "claimed_terminal_reason": "completed"},
             "actions_job_conclusion": "success",
@@ -663,6 +669,7 @@ class B3WorkflowRunMetadataTests(unittest.TestCase):
         }
         metadata = build_workflow_run_metadata(signal, result, verification, "failure", None, "some session error")
         self.assertEqual("failure", metadata["check_run_conclusion"])
+        self.assertEqual("b" * 40, metadata["subject_sha"])
         self.assertEqual("success", metadata["adapter_self_reported_status"])
         self.assertEqual("success", metadata["actions_job_conclusion"])
         self.assertEqual("pipeline_derived", metadata["execution_id_source"])
@@ -755,13 +762,294 @@ class B3WorkflowContentTests(unittest.TestCase):
 
     def test_workflow_yaml_is_syntactically_well_formed(self) -> None:
         # A lightweight structural check that does not require a YAML
-        # parser dependency: every `run: |` block must be non-empty and the
-        # two expected job names must be present with correct dependency.
+        # parser dependency: the three expected job names must be present
+        # with correct dependency ordering.
         self.assertIn("jobs:", self.text)
+        self.assertIn("resolve-subject:", self.text)
         self.assertIn("execute:", self.text)
         self.assertIn("finalize-and-verify:", self.text)
-        self.assertIn("needs: execute", self.text)
+        self.assertIn("needs: resolve-subject", self.text)
+        self.assertIn("needs: [resolve-subject, execute]", self.text)
         self.assertIn("if: always()", self.text)
+
+
+class B3ExactHeadCheckoutTests(unittest.TestCase):
+    """Corrective attempt 3, blocker 1: `actions/checkout` on `pull_request`
+    defaults to the synthetic merge ref/commit, and `context.sha` on that
+    same event is *also* the merge commit -- not the PR head. Exactly one
+    trusted subject SHA must be resolved and reused everywhere."""
+
+    def setUp(self) -> None:
+        self.assertTrue(WORKFLOW_PATH.is_file())
+        self.text = WORKFLOW_PATH.read_text(encoding="utf-8")
+
+    def test_resolve_subject_job_uses_pull_request_head_sha_not_merge_ref(self) -> None:
+        resolve_section = self.text.split("resolve-subject:", 1)[1].split("\n  execute:", 1)[0]
+        self.assertIn("github.event.pull_request.head.sha", resolve_section)
+        # `workflow_dispatch` has no PR context, so it -- and only it --
+        # may fall back to `github.sha`.
+        fallback_match = re.search(r"else\s*\n\s*echo \"subject_sha=\$\{\{\s*([^}]+)\}\}", resolve_section)
+        self.assertIsNotNone(fallback_match, "expected an else-branch github.sha fallback for workflow_dispatch")
+        self.assertEqual("github.sha", fallback_match.group(1).strip())
+
+    def test_both_checkout_steps_use_the_resolved_trusted_subject_sha(self) -> None:
+        checkout_refs = re.findall(r"uses:\s*actions/checkout@v4\s*\n\s*with:\s*\n\s*ref:\s*([^\n]+)", self.text)
+        self.assertEqual(2, len(checkout_refs), "expected exactly two checkout steps, both with an explicit ref")
+        for ref in checkout_refs:
+            self.assertIn("needs.resolve-subject.outputs.subject_sha", ref)
+            # Never the bare, event-dependent context value directly.
+            self.assertNotRegex(ref.strip(), r"^\$\{\{\s*github\.sha\s*\}\}$")
+
+    def test_neither_checkout_step_falls_back_to_default_pull_request_ref(self) -> None:
+        # A checkout step with no `ref:` at all defaults to the triggering
+        # event's ref, which on `pull_request` is the synthetic merge ref.
+        # Every checkout in this workflow must carry an explicit `ref:`.
+        checkout_blocks = re.findall(r"uses:\s*actions/checkout@v4\s*\n(\s*with:[^\n]*\n(?:\s{4,}.*\n)*)", self.text)
+        self.assertEqual(2, len(checkout_blocks))
+        for block in checkout_blocks:
+            self.assertIn("ref:", block)
+
+    def test_check_run_head_sha_is_never_context_sha_on_pull_request(self) -> None:
+        checks_create_section = self.text.split("checks.create(", 1)[1].split(");", 1)[0]
+        self.assertNotIn("context.sha", checks_create_section)
+        self.assertIn("head_sha: metadata.subject_sha", checks_create_section)
+
+    def test_git_observation_head_sha_is_bound_to_trusted_subject_sha(self) -> None:
+        # The corrected collect-signal script must derive
+        # `git_observation.head_sha` from the same trusted value, not from
+        # an independent `git rev-parse HEAD` capture.
+        self.assertIn('"head_sha": trusted_subject_sha if authored_commits_raw else None', self.text)
+        self.assertNotIn('"head_sha": head_sha if authored_commits_raw else None', self.text)
+
+    def test_collect_signal_detects_checkout_drift(self) -> None:
+        # Defense in depth: even with the correct `ref:`, the collect-signal
+        # step independently re-checks that what actually got checked out
+        # matches the trusted subject SHA, and refuses to proceed if not.
+        self.assertIn("checkout drift detected", self.text)
+        self.assertIn("actual_checked_out_sha != trusted_subject_sha", self.text)
+
+    def test_propagate_b3_uses_trusted_subject_sha_not_derived_head_sha(self) -> None:
+        source = (REPO_ROOT / "tools/propagate_b3.py").read_text(encoding="utf-8")
+        self.assertIn('expected_subject_sha = signal["trusted_subject_sha"]', source)
+        self.assertNotIn('expected_subject_sha = go["head_sha"]', source)
+
+    def test_provider_signal_schema_requires_trusted_subject_sha(self) -> None:
+        self.assertIn("trusted_subject_sha", PROVIDER_SIGNAL_SCHEMA["required"])
+        self.assertIn("trusted_subject_sha", PROVIDER_SIGNAL_SCHEMA["properties"])
+
+    def test_workflow_run_metadata_carries_the_trusted_subject_sha(self) -> None:
+        signal = _load_json(DOCUMENTS_DIR / "signal-accept-genuine-success.json")
+        result = {"execution_id": "x", "task_id": TASK_ID, "artifacts": [], "authored_commits": []}
+        verification = {"verification_id": "v", "passed": True}
+        metadata = build_workflow_run_metadata(signal, result, verification, "success", None, None)
+        self.assertEqual(signal["trusted_subject_sha"], metadata["subject_sha"])
+
+
+class B3RealControlEvidenceTests(unittest.TestCase):
+    """Corrective attempt 3, blocker 2: the live workflow must never verify
+    against the repository-owned fixture task/review-attestation
+    identities. It must bind the real task to the exact immutable control
+    commit and require an independent review attestation for the exact
+    trusted subject SHA, failing closed -- via the existing, unmodified B2
+    verifier -- when either is missing, malformed, ineligible, or reviews
+    another SHA."""
+
+    def setUp(self) -> None:
+        self.assertTrue(WORKFLOW_PATH.is_file())
+        self.text = WORKFLOW_PATH.read_text(encoding="utf-8")
+
+    def test_workflow_never_invokes_the_pipeline_with_fixture_task_or_review_baseline(self) -> None:
+        # Explanatory comments describing what this attempt moved *away*
+        # from may still mention the fixture filenames; the live
+        # `propagate_b3.py run` invocation itself must not.
+        self.assertNotIn("--task fixtures/b3/documents/task-baseline.json", self.text)
+        self.assertNotIn(
+            "--review-attestation fixtures/b3/documents/review-baseline.json", self.text
+        )
+        # The verifier-identity fixture is a distinct, legitimately
+        # repository-fixed service identity for the automated verifier
+        # component itself (analogous to B2's own fixture), not a claim
+        # about the task or the reviewer, and is intentionally still used.
+        self.assertIn("fixtures/b3/documents/verifier-identity.json", self.text)
+
+    def test_workflow_binds_the_exact_immutable_control_task_commit(self) -> None:
+        self.assertIn(CONTROL_TASK_COMMIT, self.text)
+        self.assertIn(CONTROL_TASK_PATH, self.text)
+        self.assertIn("git show", self.text)
+        self.assertIn("--task b3-output/task.json", self.text)
+
+    def test_workflow_requires_the_independent_review_attestation_ref_and_path(self) -> None:
+        self.assertIn(REVIEW_REF, self.text)
+        self.assertIn(REVIEW_PATH, self.text)
+        self.assertIn("--review-attestation b3-output/review-attestation.json", self.text)
+
+    def test_task_and_review_fetch_steps_are_read_only(self) -> None:
+        fetch_task_section = self.text.split("Fetch real B3 task", 1)[1].split("- name:", 1)[0]
+        fetch_review_section = self.text.split("Fetch independent review attestation", 1)[1].split(
+            "- name:", 1
+        )[0]
+        for section in (fetch_task_section, fetch_review_section):
+            self.assertIn("git fetch", section)
+            self.assertNotIn("git push", section)
+            self.assertNotIn("git commit", section)
+
+    def test_neither_fetch_step_synthesizes_or_fabricates_review_content(self) -> None:
+        # No literal construction of review-attestation fields anywhere in
+        # the workflow -- the only source of review content is the
+        # verbatim `git show` redirect into b3-output/review-attestation.json.
+        self.assertNotIn("reviewer_identity", self.text)
+        self.assertNotIn('"eligible": true', self.text)
+        self.assertNotIn("eligible=true", self.text)
+
+    def test_fetch_failures_leave_files_absent_rather_than_hard_failing_the_job(self) -> None:
+        # Both fetch steps run unconditionally (`if: always()`) and are
+        # written so that any failure leaves the corresponding file simply
+        # absent, rather than aborting the job before the always-run
+        # propagate/publish steps can still produce a closed-failure
+        # Check Run through the normal verifier path.
+        fetch_task_section = self.text.split("id: fetch_task", 1)[1].split("- name:", 1)[0]
+        fetch_review_section = self.text.split("id: fetch_review", 1)[1].split("- name:", 1)[0]
+        for section in (fetch_task_section, fetch_review_section):
+            self.assertIn("set +e", section)
+        propagate_section = self.text.split("id: propagate", 1)[1].split("- name:", 1)[0]
+        self.assertIn("if: always()", propagate_section)
+
+    def test_propagate_step_runs_unconditionally_regardless_of_fetch_outcome(self) -> None:
+        propagate_index = self.text.index("Run B3 terminal propagation pipeline")
+        fetch_task_index = self.text.index("Fetch real B3 task")
+        fetch_review_index = self.text.index("Fetch independent review attestation")
+        self.assertLess(fetch_task_index, propagate_index)
+        self.assertLess(fetch_review_index, propagate_index)
+
+    def test_b2_verifier_fails_closed_when_review_attestation_file_is_absent(self) -> None:
+        """Direct proof of the actual mechanism this attempt relies on
+        (not just workflow text): pointing --review-attestation at a path
+        that was never created (exactly what happens when the fetch step
+        above finds nothing) makes the existing, unmodified B2 verifier
+        fail closed through run_pipeline, with no new bypass logic."""
+        workdir = _tmp_dir()
+        missing_review_path = workdir / "never-created" / "review-attestation.json"
+        outputs = run_pipeline(
+            DOCUMENTS_DIR / "signal-accept-genuine-success.json",
+            DOCUMENTS_DIR / "task-baseline.json",
+            missing_review_path,
+            DOCUMENTS_DIR / "verifier-identity.json",
+            "90000000-0000-4000-8000-000000000010",
+            "2026-07-14T12:00:00Z",
+            workdir / "missing-review-test",
+        )
+        self.assertFalse(outputs.verification["passed"])
+        self.assertEqual("failure", outputs.check_run_conclusion)
+        failure_codes = {
+            row["failure_code"] for row in outputs.verification["predicate_results"] if row["failure_code"]
+        }
+        self.assertIn("schema_validation_failed", failure_codes)
+
+    def test_b2_verifier_fails_closed_when_task_document_is_absent(self) -> None:
+        """Same mechanism, proven for a missing real task document -- the
+        state this attempt's task-fetch step leaves things in if the
+        pinned control commit or path is ever unreachable."""
+        workdir = _tmp_dir()
+        missing_task_path = workdir / "never-created" / "task.json"
+        outputs = run_pipeline(
+            DOCUMENTS_DIR / "signal-accept-genuine-success.json",
+            missing_task_path,
+            DOCUMENTS_DIR / "review-baseline.json",
+            DOCUMENTS_DIR / "verifier-identity.json",
+            "90000000-0000-4000-8000-000000000011",
+            "2026-07-14T12:00:00Z",
+            workdir / "missing-task-test",
+        )
+        self.assertFalse(outputs.verification["passed"])
+        self.assertEqual("failure", outputs.check_run_conclusion)
+
+    def test_b2_verifier_fails_closed_when_review_reviews_a_different_sha(self) -> None:
+        """Proves `review.subject_sha.equals` -- an existing, unmodified B2
+        predicate -- is what rejects a review published for the wrong
+        commit; this attempt adds no new SHA-comparison logic of its own."""
+        review = json.loads((DOCUMENTS_DIR / "review-baseline.json").read_text())
+        review["reviewed_sha"] = "9" * 40  # not the accept-genuine-success subject SHA
+        workdir = _tmp_dir()
+        review_path = workdir / "wrong-sha-review.json"
+        review_path.parent.mkdir(parents=True, exist_ok=True)
+        review_path.write_text(json.dumps(review), encoding="utf-8")
+        outputs = run_pipeline(
+            DOCUMENTS_DIR / "signal-accept-genuine-success.json",
+            DOCUMENTS_DIR / "task-baseline.json",
+            review_path,
+            DOCUMENTS_DIR / "verifier-identity.json",
+            "90000000-0000-4000-8000-000000000012",
+            "2026-07-14T12:00:00Z",
+            workdir / "wrong-sha-review-test",
+        )
+        self.assertFalse(outputs.verification["passed"])
+        self.assertEqual("failure", outputs.check_run_conclusion)
+        failure_codes = {
+            row["failure_code"] for row in outputs.verification["predicate_results"] if row["failure_code"]
+        }
+        self.assertIn("review_subject_mismatch", failure_codes)
+
+    def test_b2_verifier_fails_closed_when_review_is_ineligible(self) -> None:
+        review = json.loads((DOCUMENTS_DIR / "review-baseline.json").read_text())
+        review["eligibility"]["eligible"] = False
+        review["eligibility"]["reason_codes"] = ["reviewer_declined"]
+        workdir = _tmp_dir()
+        review_path = workdir / "ineligible-review.json"
+        review_path.parent.mkdir(parents=True, exist_ok=True)
+        review_path.write_text(json.dumps(review), encoding="utf-8")
+        outputs = run_pipeline(
+            DOCUMENTS_DIR / "signal-accept-genuine-success.json",
+            DOCUMENTS_DIR / "task-baseline.json",
+            review_path,
+            DOCUMENTS_DIR / "verifier-identity.json",
+            "90000000-0000-4000-8000-000000000013",
+            "2026-07-14T12:00:00Z",
+            workdir / "ineligible-review-test",
+        )
+        self.assertFalse(outputs.verification["passed"])
+        self.assertEqual("failure", outputs.check_run_conclusion)
+        failure_codes = {
+            row["failure_code"] for row in outputs.verification["predicate_results"] if row["failure_code"]
+        }
+        self.assertIn("review_ineligible", failure_codes)
+
+    def test_real_control_task_commit_is_reachable_and_schema_valid_when_available(self) -> None:
+        """Best-effort deeper check: when the immutable control commit
+        object happens to be present in the local Git object store (as it
+        is in this development sandbox, but is not guaranteed in every CI
+        checkout of just this branch), fetch its real task document exactly
+        as the workflow does and confirm it is schema-valid via the
+        existing B0 validator. Skips cleanly, never fails, when the object
+        is not locally reachable -- this test must never depend on network
+        access or a specific checkout's ref history."""
+        import subprocess
+
+        reachable = subprocess.run(
+            ["git", "cat-file", "-e", "{}^{{commit}}".format(CONTROL_TASK_COMMIT)],
+            cwd=REPO_ROOT,
+            capture_output=True,
+        )
+        if reachable.returncode != 0:
+            self.skipTest("immutable control commit {} is not locally reachable".format(CONTROL_TASK_COMMIT))
+
+        show = subprocess.run(
+            ["git", "show", "{}:{}".format(CONTROL_TASK_COMMIT, CONTROL_TASK_PATH)],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(0, show.returncode, show.stderr)
+        task_document = json.loads(show.stdout)
+        self.assertEqual("yurikuchumov-ux/ai-operating-system#19", task_document["task_id"])
+
+        import sys
+
+        sys.path.insert(0, str(REPO_ROOT))
+        from tools.validate_b0 import ContractValidator
+
+        validator = ContractValidator()
+        findings = validator.validate_document("task", task_document)
+        self.assertEqual([], [f.as_dict() for f in findings], "real control task failed B0 validation")
 
 
 if __name__ == "__main__":

@@ -1,6 +1,54 @@
 # Changelog
 
 ## Unreleased
+- Close two remaining B3 truthful-live blockers found by architect
+  postcondition review of the second corrective attempt: (1)
+  `actions/checkout` on `pull_request` defaults to the synthetic merge
+  ref/commit, and a Check Run keyed off `context.sha` on that event is also
+  the merge commit, not the PR head -- a new `resolve-subject` job now
+  resolves exactly one trusted subject SHA
+  (`github.event.pull_request.head.sha` on `pull_request`, `github.sha`
+  only on `workflow_dispatch`) and every downstream use (both jobs'
+  `checkout` `ref:`, the Git observation's `head_sha`, the B2 verifier's
+  `expected_subject_sha` binding via a new required, non-nullable
+  `trusted_subject_sha` provider-signal field, the published
+  `workflow-run-metadata`'s `subject_sha`, and the Check Run's `head_sha`)
+  is bound to that one value, never `context.sha` directly. The
+  collect-signal step also independently re-checks that the actual checkout
+  matches the trusted subject SHA and refuses to proceed if not. (2) the
+  live pipeline no longer verifies against the repository-owned
+  `fixtures/b3/documents/task-baseline.json` / `review-baseline.json`
+  fixture identities (which remain correct and necessary for the offline
+  fixture suite only). It now fetches the real task read-only from the
+  immutable control commit `86e2826c85ce444127cc95a8551b8570002ec6cf` at
+  `.ai/tasks/19/b3-task.v1.json`, and the independent review attestation
+  read-only from the separate control ref
+  `control/issue-19-b3-review-attestation` at
+  `.ai/reviews/19/review-attestation.v1.json`. Neither fetch step
+  synthesizes, fabricates, or falls back to fixture content on failure: a
+  missing ref, missing path, or unreadable file simply leaves the
+  corresponding file absent, and the existing, unmodified B2 verifier's own
+  fail-closed handling of an unreadable input document
+  (`schema.instance.valid: false`) does the rest, with the existing,
+  unmodified `review.subject_sha.equals` and `review.eligibility.passed`
+  predicates rejecting a review of the wrong SHA or an ineligible review --
+  no new bypass or synthesis logic is added anywhere. It is therefore
+  expected, and required, that the first Draft PR run fails closed until an
+  independent review attestation for the exact head SHA exists on that
+  ref; re-running the same exact-head workflow afterward can then pass.
+  Extends `tests/test_b3_terminal_propagation.py` with direct workflow-text
+  assertions (exact-head checkout on both jobs, `context.sha` never used
+  for the Check Run, the pinned control task commit and independent review
+  ref/path both bound, no fixture-baseline invocation, no synthesized
+  review content) and direct `run_pipeline` integration tests proving the
+  fail-closed mechanism itself for a missing task document, a missing
+  review-attestation document, a review of the wrong SHA, and an
+  ineligible review -- plus a best-effort (network/history-independent,
+  self-skipping) test that schema-validates the real control task via the
+  existing B0 validator when the pinned commit happens to be locally
+  reachable. All 15 offline fixture scenarios and their expected outcomes
+  are unchanged. B0, B1, and B2 schemas, registries, fixtures, and tests
+  remain untouched.
 - Close B3 false-success gaps found by architect postcondition review of the
   first implementation attempt: (1) the workflow's `execute` job now invokes
   the real, pinned `anthropics/claude-code-action@6902c227aaa9536481b99d56f3014bbbad6c6da8`

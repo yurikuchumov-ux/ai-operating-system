@@ -47,6 +47,7 @@
   "started_at": "2026-07-14T08:00:00Z",
   "structured_output_raw": null,
   "task_id": "yurikuchumov-ux/ai-operating-system#19",
+  "trusted_subject_sha": "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3",
   "untrusted_candidate": null,
   "workflow_run_attempt": "1",
   "workflow_run_id": "40000000002"

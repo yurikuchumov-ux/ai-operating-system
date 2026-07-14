@@ -222,29 +222,58 @@ real GitHub Actions workflow around them:
   `success` iff `verification.v1.passed` is `true`. It is never derived from
   the adapter's self-report, the Actions job's own conclusion, or the raw
   provider terminal reason;
-- `.github/workflows/b3-terminal-propagation.yml` is a real, two-job Actions
-  workflow, triggered by `pull_request` (`opened`/`synchronize`/`reopened`,
-  guarded to this exact head branch so opening or updating the Draft PR
-  produces a real pre-merge run) with `workflow_dispatch` retained only as a
-  supplemental trigger. The `execute` job, bounded by `timeout-minutes`,
-  invokes the real, pinned `anthropics/claude-code-action@6902c227aaa9536481b99d56f3014bbbad6c6da8`
+- `.github/workflows/b3-terminal-propagation.yml` is a real, three-job
+  Actions workflow, triggered by `pull_request`
+  (`opened`/`synchronize`/`reopened`, guarded to this exact head branch so
+  opening or updating the Draft PR produces a real pre-merge run) with
+  `workflow_dispatch` retained only as a supplemental trigger. A
+  `resolve-subject` job resolves exactly one trusted subject SHA --
+  `github.event.pull_request.head.sha` on `pull_request` (never the
+  synthetic merge ref/commit `actions/checkout` and `context.sha` default
+  to on that event), `github.sha` only on `workflow_dispatch` -- and every
+  downstream use (both jobs' `checkout` `ref:`, the Git observation, the B2
+  verifier's `expected_subject_sha` binding, and the published Check Run's
+  `head_sha`) is bound to that one value. The `execute` job, bounded by
+  `timeout-minutes` and checked out at that exact subject SHA, invokes the
+  real, pinned `anthropics/claude-code-action@6902c227aaa9536481b99d56f3014bbbad6c6da8`
   -- the same adapter action previously exercised on
   `origin/design/issue-12-executor-orchestrator` -- in a bounded, read-only
   diagnostic mode that may only read the repository and run the registered
   B3 test command, granted no push/commit/merge/deploy tools. The always-run
-  (`if: always()`) `finalize-and-verify` job collects the trusted provider
-  signal from directly observable facts only: the real, downloaded
-  `execution_file`/`structured_output` from the adapter action, real
-  execute-job start/completion timestamps fetched from the Actions REST API
-  itself (never the possibly-dead job's own self-report), real on-disk
-  artifact presence from a directly, deterministically executed run of the
-  B3 test command (never derived from Git commit existence), and real Git
-  state. It then runs the propagator, uploads the `result-artifact`,
-  `verification-report`, and `workflow-run-metadata` artifacts, and
-  publishes the Check Run from the verifier's own report. Both the Actions
-  run ID (`github.run_id`) and the trusted `execution_id` are required
-  non-null on the published `workflow-run-metadata`, and the job's own final
-  step still gates its exit code on that same verifier-sourced conclusion;
+  (`if: always()`) `finalize-and-verify` job, also checked out at that exact
+  subject SHA, collects the trusted provider signal from directly
+  observable facts only: the real, downloaded `execution_file`/
+  `structured_output` from the adapter action, real execute-job
+  start/completion timestamps fetched from the Actions REST API itself
+  (never the possibly-dead job's own self-report), real on-disk artifact
+  presence from a directly, deterministically executed run of the B3 test
+  command (never derived from Git commit existence), the real task fetched
+  read-only from the immutable control commit
+  `86e2826c85ce444127cc95a8551b8570002ec6cf` at
+  `.ai/tasks/19/b3-task.v1.json`, the real independent review attestation
+  fetched read-only from the separate control ref
+  `control/issue-19-b3-review-attestation` at
+  `.ai/reviews/19/review-attestation.v1.json` (never the repository-owned
+  `fixtures/b3/documents/task-baseline.json` / `review-baseline.json`
+  fixtures, which remain correct only for the offline suite), and real Git
+  state. Neither fetch step ever synthesizes or falls back to fixture
+  content: a missing ref, missing path, or unreadable file simply leaves
+  the corresponding file absent, and the existing, unmodified B2 verifier's
+  own fail-closed handling of an unreadable input document does the rest,
+  with `review.subject_sha.equals` and `review.eligibility.passed` (also
+  existing, unmodified) rejecting a review of the wrong SHA or an
+  ineligible review. It is therefore expected, and required, that the first
+  Draft PR run fails closed until an independent review attestation for
+  the exact head SHA is published; re-running the same exact-head workflow
+  afterward can then pass. The job then runs the propagator, uploads the
+  `result-artifact`, `verification-report`, and `workflow-run-metadata`
+  artifacts (plus the fetched task/review evidence, or its meaningful
+  absence), and publishes the Check Run -- keyed by the one trusted subject
+  SHA, never `context.sha` -- from the verifier's own report. Both the
+  Actions run ID (`github.run_id`) and the trusted `execution_id` are
+  required non-null on the published `workflow-run-metadata`, and the job's
+  own final step still gates its exit code on that same verifier-sourced
+  conclusion;
 - the immutable, hash-pinned `fixtures/b3/manifest.v1.json` fixture suite
   covers all terminal failure reasons the Issue #19 B3 control contract
   requires (max-turns, adapter timeout, job timeout, missing commit, missing

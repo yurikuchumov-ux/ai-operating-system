@@ -42,19 +42,55 @@ name: B3 Terminal Failure Propagation
 #      `success` iff `verification.v1.passed`; the final job step still
 #      gates this job's own exit code on that same value.
 #
+# Corrective attempt 3 (two remaining truthful-live blockers closed):
+#   1. `actions/checkout` on `pull_request` defaults to the synthetic merge
+#      ref/commit, and a Check Run keyed off `context.sha` on that same
+#      event is *also* the merge commit, not the PR head. A dedicated
+#      `resolve-subject` job now resolves exactly one trusted subject SHA
+#      -- `github.event.pull_request.head.sha` on `pull_request` events,
+#      `github.sha` only on `workflow_dispatch` -- and every downstream use
+#      (both jobs' `checkout` `ref:`, the Git observation, the B2
+#      verifier's `expected_subject_sha` binding, the published
+#      `workflow-run-metadata`, and the Check Run's `head_sha`) is bound to
+#      that one value, never `context.sha` directly;
+#   2. the live pipeline no longer verifies against the repository-owned
+#      `fixtures/b3/documents/task-baseline.json` /
+#      `review-baseline.json` fixture identities (those remain correct and
+#      necessary for the offline fixture suite only). It instead fetches
+#      the real task read-only from the immutable control commit
+#      `86e2826c85ce444127cc95a8551b8570002ec6cf` at
+#      `.ai/tasks/19/b3-task.v1.json`, and the independent review
+#      attestation read-only from the separate control ref
+#      `control/issue-19-b3-review-attestation` at
+#      `.ai/reviews/19/review-attestation.v1.json`. Neither fetch step ever
+#      synthesizes, fabricates, or falls back to fixture content on
+#      failure: a missing ref, missing path, or unreadable file simply
+#      leaves the corresponding local file absent, and the existing,
+#      unmodified B2 verifier's own fail-closed handling of an unreadable
+#      input document (`schema.instance.valid: false`) does the rest --
+#      exactly the same mechanism already proven for every other missing
+#      required document. `review.subject_sha.equals` and
+#      `review.eligibility.passed` (both existing, unmodified B2
+#      predicates) then reject a review of the wrong SHA or an ineligible
+#      review with no new logic required. The first Draft PR run is
+#      therefore expected, and required, to fail closed until an
+#      independent review attestation for this exact head SHA exists on
+#      that ref; re-running the same exact-head workflow after publication
+#      can then pass.
+#
 # Bootstrap limitation (tracked as a known limitation, not silently papered
-# over): the `finalize-and-verify` job below verifies against the
-# repository-owned B3 fixture baseline task/review-attestation/verifier
-# identity under fixtures/b3/documents/, the same documents the offline
-# fixture suite (fixtures/b3/manifest.v1.json) already exercises. Wiring
-# this workflow to the real, owner-authored `.ai/tasks/19/b3-task.v1.json`
-# control-plane task and a real independent reviewer's attestation is later,
-# owner-approved control-plane wiring -- outside this bootstrap step's
-# `allowed_paths`, which forbid touching `.ai/tasks/**` at all. The
-# elapsed-time-versus-budget timeout evidence relies on the Actions REST
-# API's per-job timing; if that call itself fails (permissions, rate limit),
-# the signal fails closed to no timeout evidence rather than fabricating a
-# number, and the run is classified `runner_lost`/`adapter_error` instead.
+# over): the `--verifier-identity` argument still points at the
+# repository-owned `fixtures/b3/documents/verifier-identity.json`. That
+# document declares the automated verifier component's own service
+# identity (`service:b3-verifier`), not a claim about the task, the
+# executor, or the reviewer -- it is analogous to B2's own
+# `fixtures/b2/documents/verifier-identity.json` and is legitimately
+# repository-fixed, unlike the task and review-attestation documents this
+# attempt moves off fixture paths. The elapsed-time-versus-budget timeout
+# evidence relies on the Actions REST API's per-job timing; if that call
+# itself fails (permissions, rate limit), the signal fails closed to no
+# timeout evidence rather than fabricating a number, and the run is
+# classified `runner_lost`/`adapter_error` instead.
 
 on:
   pull_request:
@@ -83,6 +119,20 @@ concurrency:
 env:
   B3_TASK_ID: "yurikuchumov-ux/ai-operating-system#19"
   B3_HEAD_BRANCH: "agent/issue-19-b3-terminal-propagation"
+  # The immutable control commit this workflow trusts for the real Issue
+  # #19 B3 task contract. Pinned by exact SHA, not a movable branch tip:
+  # `git fetch origin <sha>` either resolves to exactly this commit or
+  # fails outright, so there is no separate "did the branch move" check to
+  # get wrong.
+  B3_CONTROL_TASK_COMMIT: "86e2826c85ce444127cc95a8551b8570002ec6cf"
+  B3_CONTROL_TASK_PATH: ".ai/tasks/19/b3-task.v1.json"
+  # The independent review-attestation control ref/path. Unlike the task
+  # commit above, this ref is expected to be updated over time as new
+  # reviews are published for new head SHAs, so it is fetched by branch
+  # name; the B2 verifier's own `review.subject_sha.equals` predicate (not
+  # this workflow) is what rejects a review of the wrong commit.
+  B3_REVIEW_REF: "control/issue-19-b3-review-attestation"
+  B3_REVIEW_PATH: ".ai/reviews/19/review-attestation.v1.json"
   # Single source of truth for the job-level timeout, duplicated into the
   # `execute` job's own `timeout-minutes` below; the finalize job re-derives
   # the same number in seconds when computing real elapsed-vs-budget
@@ -95,15 +145,39 @@ env:
   B3_ADAPTER_TIMEOUT_BUDGET_SECONDS: "600"
 
 jobs:
+  resolve-subject:
+    name: Resolve trusted subject SHA
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.ref == 'agent/issue-19-b3-terminal-propagation'
+    runs-on: ubuntu-latest
+    outputs:
+      subject_sha: ${{ steps.resolve.outputs.subject_sha }}
+    steps:
+      - name: Resolve the one trusted subject SHA
+        id: resolve
+        # On `pull_request`, `actions/checkout`'s default ref and
+        # `context.sha`/`github.sha` both resolve to the synthetic merge
+        # commit (`refs/pull/<n>/merge`), not the PR head. The explicit PR
+        # head SHA is the only trustworthy subject on that event; on
+        # `workflow_dispatch` there is no PR context at all, so `github.sha`
+        # (the ref that triggered the dispatch) is used instead.
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "subject_sha=${{ github.event.pull_request.head.sha }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "subject_sha=${{ github.sha }}" >> "$GITHUB_OUTPUT"
+          fi
+
   execute:
     name: Execute adapter (owner-scoped, read-only diagnostic, timeout-bounded)
+    needs: resolve-subject
     if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.ref == 'agent/issue-19-b3-terminal-propagation'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - name: Checkout
+      - name: Checkout exact trusted subject SHA
         uses: actions/checkout@v4
         with:
+          ref: ${{ needs.resolve-subject.outputs.subject_sha }}
           fetch-depth: 0
 
       - name: Set up Python
@@ -197,14 +271,15 @@ jobs:
 
   finalize-and-verify:
     name: Finalize, verify, and publish Check Run (always runs)
-    needs: execute
-    if: always()
+    needs: [resolve-subject, execute]
+    if: always() && needs.resolve-subject.result != 'skipped'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - name: Checkout
+      - name: Checkout exact trusted subject SHA
         uses: actions/checkout@v4
         with:
+          ref: ${{ needs.resolve-subject.outputs.subject_sha }}
           fetch-depth: 0
 
       - name: Set up Python
@@ -222,6 +297,73 @@ jobs:
         with:
           name: b3-adapter-output
           path: b3-adapter-output
+
+      - name: Fetch real B3 task from the immutable control commit (read-only)
+        id: fetch_task
+        if: always()
+        # Never synthesizes or falls back: any failure here (the pinned
+        # commit is unreachable, or the path does not exist at that exact
+        # commit) simply leaves `b3-output/task.json` absent. The existing,
+        # unmodified B2 verifier fails closed on an unreadable task
+        # document exactly as it already does for a missing result or
+        # review-attestation document -- no new fallback logic is added.
+        run: |
+          mkdir -p b3-output
+          set +e
+          git fetch --depth=1 origin "$B3_CONTROL_TASK_COMMIT" >/dev/null 2>&1
+          if [ "$(git rev-parse --verify -q "$B3_CONTROL_TASK_COMMIT^{commit}" 2>/dev/null)" = "$B3_CONTROL_TASK_COMMIT" ]; then
+            git show "$B3_CONTROL_TASK_COMMIT:$B3_CONTROL_TASK_PATH" > b3-output/task.json 2>/dev/null
+            if [ ! -s b3-output/task.json ]; then
+              rm -f b3-output/task.json
+            fi
+          fi
+          set -e
+          if [ -f b3-output/task.json ]; then
+            echo "task_fetched=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "task_fetched=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::could not fetch the real B3 task from immutable commit $B3_CONTROL_TASK_COMMIT at $B3_CONTROL_TASK_PATH; the run will fail closed"
+          fi
+
+      - name: Validate fetched task with the B0 offline validator (evidence only)
+        id: validate_task
+        if: always()
+        continue-on-error: true
+        run: |
+          mkdir -p b3-output
+          if [ -f b3-output/task.json ]; then
+            python3 tools/validate_b0.py validate --type task --document b3-output/task.json > b3-output/task-validation.json || true
+          else
+            echo '{"valid": false, "error_codes": ["task_document_unavailable"]}' > b3-output/task-validation.json
+          fi
+
+      - name: Fetch independent review attestation (read-only)
+        id: fetch_review
+        if: always()
+        # Read-only fetch of a ref this workflow never writes to. A missing
+        # ref, missing path, or unreadable file leaves
+        # `b3-output/review-attestation.json` absent -- never synthesized,
+        # never a fixture fallback. It is expected and required that this
+        # step finds nothing until an independent reviewer has published a
+        # real attestation for this exact head SHA on
+        # `control/issue-19-b3-review-attestation`.
+        run: |
+          mkdir -p b3-output
+          set +e
+          git fetch --depth=1 origin "$B3_REVIEW_REF" >/dev/null 2>&1
+          if [ $? -eq 0 ]; then
+            git show "FETCH_HEAD:$B3_REVIEW_PATH" > b3-output/review-attestation.json 2>/dev/null
+            if [ ! -s b3-output/review-attestation.json ]; then
+              rm -f b3-output/review-attestation.json
+            fi
+          fi
+          set -e
+          if [ -f b3-output/review-attestation.json ]; then
+            echo "review_fetched=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "review_fetched=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::no independent review attestation found on $B3_REVIEW_REF at $B3_REVIEW_PATH; the run will fail closed until one is published for this exact head SHA"
+          fi
 
       - name: Fetch real execute-job timing from the Actions API
         id: job_timing
@@ -264,12 +406,14 @@ jobs:
       - name: Collect trusted provider signal
         id: collect_signal
         if: always()
+        continue-on-error: true
         env:
           EXECUTE_JOB_RESULT: ${{ needs.execute.result }}
           WORKFLOW_RUN_ID: ${{ github.run_id }}
           WORKFLOW_RUN_ATTEMPT: ${{ github.run_attempt }}
           SOURCE_RUN_ID: ${{ github.event.inputs.source_run_id }}
           ATTEMPT: ${{ github.event.inputs.attempt }}
+          TRUSTED_SUBJECT_SHA: ${{ needs.resolve-subject.outputs.subject_sha }}
           B3_JOB_TIMEOUT_MINUTES: ${{ env.B3_EXECUTE_JOB_TIMEOUT_MINUTES }}
           B3_ADAPTER_TIMEOUT_BUDGET: ${{ env.B3_ADAPTER_TIMEOUT_BUDGET_SECONDS }}
           B3_TEST_EXIT_CODE: ${{ steps.run_b3_tests.outputs.exit_code }}
@@ -287,6 +431,22 @@ jobs:
           source_run_id = os.environ.get("SOURCE_RUN_ID") or None
           attempt = int(os.environ.get("ATTEMPT") or "1")
           finished_at = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+          # The one explicit trusted subject SHA, resolved once by the
+          # `resolve-subject` job -- never `context.sha`/`github.sha`
+          # directly, and never re-derived from `git rev-parse HEAD` alone.
+          # It is cross-checked against the actual checkout below and the
+          # run fails closed (via a deliberately invalid signal) if they
+          # ever disagree, rather than silently trusting whichever one.
+          trusted_subject_sha = os.environ["TRUSTED_SUBJECT_SHA"]
+          actual_checked_out_sha = subprocess.run(
+              ["git", "rev-parse", "HEAD"], capture_output=True, text=True
+          ).stdout.strip()
+          if actual_checked_out_sha != trusted_subject_sha:
+              raise SystemExit(
+                  "checkout drift detected: HEAD is {} but the trusted subject SHA is {}; "
+                  "refusing to propagate".format(actual_checked_out_sha, trusted_subject_sha)
+              )
 
           # Real adapter output, downloaded from the execute job's own
           # artifact -- never synthesized here. Its absence (the download
@@ -352,9 +512,6 @@ jobs:
           base_sha = subprocess.run(
               ["git", "merge-base", "HEAD", "origin/main"], capture_output=True, text=True
           ).stdout.strip() or "0" * 40
-          head_sha = subprocess.run(
-              ["git", "rev-parse", "HEAD"], capture_output=True, text=True
-          ).stdout.strip()
           authored_commits_raw = subprocess.run(
               ["git", "rev-list", "{}..HEAD".format(base_sha)], capture_output=True, text=True
           ).stdout.split()
@@ -398,6 +555,7 @@ jobs:
               "workflow_run_id": str(workflow_run_id),
               "workflow_run_attempt": str(workflow_run_attempt),
               "source_run_id": source_run_id,
+              "trusted_subject_sha": trusted_subject_sha,
               "cancelled_by_owner": cancelled_by_owner,
               "adapter_attempted": adapter_attempted,
               "adapter_step_outcome": adapter_manifest.get("adapter_outcome"),
@@ -423,7 +581,7 @@ jobs:
               "structured_output_raw": structured_output_raw,
               "git_observation": {
                   "base_sha": base_sha,
-                  "head_sha": head_sha if authored_commits_raw else None,
+                  "head_sha": trusted_subject_sha if authored_commits_raw else None,
                   "authored_commits": authored_commits_raw,
                   "changed_files": changed_files,
               },
@@ -444,11 +602,18 @@ jobs:
         id: propagate
         if: always()
         continue-on-error: true
+        # `--task` and `--review-attestation` point only at the paths the
+        # two fetch steps above may have populated -- never at
+        # fixtures/b3/documents/task-baseline.json or review-baseline.json.
+        # When either fetch failed, the corresponding path is absent and
+        # the existing, unmodified B2 verifier fails this run closed on
+        # `schema.instance.valid` exactly as it already does for any other
+        # missing required document; nothing here works around that.
         run: |
           python3 tools/propagate_b3.py run \
             --signal b3-output/provider-signal.json \
-            --task fixtures/b3/documents/task-baseline.json \
-            --review-attestation fixtures/b3/documents/review-baseline.json \
+            --task b3-output/task.json \
+            --review-attestation b3-output/review-attestation.json \
             --verifier-identity fixtures/b3/documents/verifier-identity.json \
             --verification-id "$(python3 -c 'import uuid; print(uuid.uuid4())')" \
             --evaluated-at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
@@ -469,6 +634,18 @@ jobs:
           if-no-files-found: error
           retention-days: 90
 
+      - name: Upload fetched task/review evidence (absence is meaningful evidence)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: b3-run-${{ github.run_id }}-control-evidence
+          path: |
+            b3-output/task.json
+            b3-output/task-validation.json
+            b3-output/review-attestation.json
+          if-no-files-found: ignore
+          retention-days: 90
+
       - name: Publish Check Run conclusion from verifier output
         if: always()
         uses: actions/github-script@v7
@@ -482,18 +659,22 @@ jobs:
             // verifier's own `passed` field, carried through as
             // `check_run_conclusion` by tools/propagate_b3.py. Adapter
             // self-report and this job's own conclusion are never read
-            // here.
+            // here. `head_sha` is the same one trusted subject SHA
+            // threaded through the whole run -- never `context.sha`, which
+            // on `pull_request` is the synthetic merge commit, not the PR
+            // head this Check Run must attach to.
             const conclusion = metadata.check_run_conclusion === 'success' ? 'success' : 'failure';
             await github.rest.checks.create({
               owner: context.repo.owner,
               repo: context.repo.repo,
               name: 'b3-terminal-propagation',
-              head_sha: context.sha,
+              head_sha: metadata.subject_sha,
               status: 'completed',
               conclusion: conclusion,
               output: {
                 title: `B3 terminal propagation: ${conclusion}`,
                 summary: [
+                  `subject_sha: ${metadata.subject_sha}`,
                   `workflow_run_id: ${metadata.workflow_run_id}`,
                   `execution_id: ${metadata.execution_id}`,
                   `execution_id_source: ${metadata.execution_id_source}`,

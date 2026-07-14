@@ -38,6 +38,17 @@ Two further trust boundaries are enforced structurally, not by convention:
   that evidence is classified `runner_lost` (the adapter never attempted) or
   `adapter_error` (it attempted but its session is unresolvable, or it
   reported a real error) -- never blanket-mapped to `timeout`.
+
+`trusted_subject_sha` is a required, non-nullable signal field: the one
+explicit subject SHA the calling workflow resolved (`github.event.
+pull_request.head.sha` on `pull_request`, never the synthetic merge ref/
+commit `actions/checkout` and `context.sha` default to on that event; `github.
+sha` only on `workflow_dispatch`). It is used, unchanged, for the B2
+verifier's `expected_subject_sha` binding and republished on
+`workflow-run-metadata` as `subject_sha` for the workflow's Check Run
+`head_sha` -- so every trust-bearing use of "the commit under test" in this
+pipeline traces back to that one caller-resolved value, never `context.sha`
+read again independently downstream.
 """
 
 from __future__ import annotations
@@ -123,6 +134,7 @@ PROVIDER_SIGNAL_SCHEMA: Dict[str, Any] = {
         "workflow_run_id",
         "workflow_run_attempt",
         "source_run_id",
+        "trusted_subject_sha",
         "cancelled_by_owner",
         "adapter_attempted",
         "adapter_step_outcome",
@@ -169,6 +181,18 @@ PROVIDER_SIGNAL_SCHEMA: Dict[str, Any] = {
         "workflow_run_id": {"type": "string", "minLength": 1},
         "workflow_run_attempt": {"type": "string", "minLength": 1},
         "source_run_id": {"oneOf": [{"type": "string", "minLength": 1}, {"type": "null"}]},
+        # The one, explicit, trusted subject SHA for this run -- resolved by
+        # the workflow from `github.event.pull_request.head.sha` on
+        # `pull_request` events (never the synthetic merge ref/commit
+        # `actions/checkout` defaults to) or `github.sha` on
+        # `workflow_dispatch`, and used consistently for the checkout `ref`,
+        # the Git observation, the B2 verifier's `expected_subject_sha`
+        # binding, and the published Check Run's `head_sha`. Never null:
+        # this is always the exact commit actually under test, independent
+        # of whether any commits are observed ahead of `base_sha` (that
+        # distinction is `git_observation.head_sha`, which -- unlike this
+        # field -- is nulled to drive `missing_commit` classification).
+        "trusted_subject_sha": {"type": "string", "pattern": _SHA_PATTERN},
         "cancelled_by_owner": {"type": "boolean"},
         # Whether the adapter action step actually started executing (e.g.
         # observed via the execute job's own `steps.adapter.outcome` being
@@ -667,6 +691,11 @@ def build_workflow_run_metadata(
         "workflow_run_id": signal["workflow_run_id"],
         "workflow_run_attempt": signal["workflow_run_attempt"],
         "source_run_id": signal.get("source_run_id"),
+        # The one explicit trusted subject SHA, threaded through unchanged
+        # from the signal -- this is what the workflow's Check Run
+        # publication step must use for `head_sha`, never `context.sha`
+        # (which is the synthetic merge commit on `pull_request` events).
+        "subject_sha": signal["trusted_subject_sha"],
         "execution_id": result["execution_id"],
         # Whether `execution_id` above is the adapter's own real session_id
         # or the deterministic Actions-run-derived fallback (never random).
@@ -735,7 +764,11 @@ def run_pipeline(
     git_observation_path = _write_json(output_dir / "git-observation.json", git_observation_doc)
 
     verifier_identity = load_json(verifier_identity_path)
-    expected_subject_sha = go["head_sha"] or ("0" * 40)
+    # Bound to the one explicit trusted subject SHA the signal carries --
+    # never derived from the (possibly nulled, for missing_commit
+    # classification) `git_observation.head_sha`, and never `context.sha`
+    # or any other value a caller could substitute.
+    expected_subject_sha = signal["trusted_subject_sha"]
     invocation = Invocation(
         verification_id=verification_id,
         evaluated_at=evaluated_at,
