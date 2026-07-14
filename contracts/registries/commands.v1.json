@@ -15,6 +15,13 @@
       "working_directory": ".",
       "environment_allowlist": [],
       "timeout_seconds": 120
+    },
+    {
+      "id": "repo.contracts.b3.tests",
+      "argv": ["python3", "-m", "unittest", "discover", "-s", "tests", "-p", "test_b3_*.py"],
+      "working_directory": ".",
+      "environment_allowlist": [],
+      "timeout_seconds": 300
     }
   ]
 }

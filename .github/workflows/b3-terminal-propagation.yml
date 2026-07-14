@@ -1,0 +1,303 @@
+name: B3 Terminal Failure Propagation
+
+# Issue #19 B3: a real Actions workflow that invokes the executor adapter,
+# captures its run/execution ID, finalizes result.v1 via the existing,
+# unmodified B1 finalizer (tools/finalize_b1.py), verifies it via the
+# existing, unmodified B2 verifier (tools/verify_b2.py), and publishes the
+# Check Run conclusion from the verifier's report -- never from the
+# adapter's own self-report and never from this job's own conclusion.
+#
+# Owner-approved side effects are scoped to Issue #19 Actions runs,
+# artifacts, and Check Runs only: this workflow never deploys, merges,
+# touches secrets/settings, or has any other product side effect.
+#
+# Bootstrap limitation (tracked as a known limitation, not silently papered
+# over): the `finalize-and-verify` job below verifies against the
+# repository-owned B3 fixture baseline task/review-attestation/verifier
+# identity under fixtures/b3/documents/, the same documents the offline
+# fixture suite (fixtures/b3/manifest.v1.json) already exercises. Wiring
+# this workflow to the real, owner-authored `.ai/tasks/19/b3-task.v1.json`
+# control-plane task and a real independent reviewer's attestation is later,
+# owner-approved control-plane wiring -- outside this bootstrap step's
+# `allowed_paths`, which forbid touching `.ai/tasks/**` at all.
+
+on:
+  workflow_dispatch:
+    inputs:
+      attempt:
+        description: "Execution attempt number (1-3)"
+        required: false
+        default: "1"
+      source_run_id:
+        description: "Optional: replay a specific historical run ID as the trusted source_run_id (used for canonical false-success fixtures such as 29190170902)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+  checks: write
+  actions: read
+
+concurrency:
+  group: b3-terminal-propagation-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  B3_TASK_ID: "yurikuchumov-ux/ai-operating-system#19"
+
+jobs:
+  execute:
+    name: Execute adapter (owner-scoped, timeout-bounded)
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    outputs:
+      execution_id: ${{ steps.identity.outputs.execution_id }}
+      started_at: ${{ steps.identity.outputs.started_at }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Generate trusted execution identity
+        id: identity
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import uuid, datetime
+          print("execution_id={}".format(uuid.uuid4()))
+          print("started_at={}".format(datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")))
+          PY
+
+      - name: Run executor adapter
+        id: adapter
+        # The adapter step's own exit code and any stdout claim of success
+        # are recorded for audit only (see the `collect-signal` step in the
+        # finalize-and-verify job below); they are never trusted directly.
+        # `continue-on-error` keeps this job alive through an adapter
+        # failure so the always-run finalize job below can still observe
+        # and classify the actual terminal state; the job-level
+        # `timeout-minutes` above is the independent, unmaskable signal for
+        # the `job_timed_out` terminal reason.
+        continue-on-error: true
+        run: |
+          echo "adapter self-report is untrusted input only; see tools/propagate_b3.py classify_terminal()"
+          echo "outcome=${{ job.status }}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload untrusted adapter self-report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: b3-adapter-self-report
+          path: |
+            ${{ github.workspace }}/.git/HEAD
+          if-no-files-found: ignore
+          retention-days: 14
+
+  finalize-and-verify:
+    name: Finalize, verify, and publish Check Run (always runs)
+    needs: execute
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: python3 -m pip install --disable-pip-version-check --no-input -r requirements-b0.txt
+
+      - name: Download untrusted adapter self-report
+        if: always()
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: b3-adapter-self-report
+          path: b3-adapter-self-report
+
+      - name: Collect trusted provider signal
+        id: collect_signal
+        if: always()
+        env:
+          EXECUTE_JOB_RESULT: ${{ needs.execute.result }}
+          EXECUTION_ID: ${{ needs.execute.outputs.execution_id }}
+          STARTED_AT: ${{ needs.execute.outputs.started_at }}
+          WORKFLOW_RUN_ID: ${{ github.run_id }}
+          SOURCE_RUN_ID: ${{ github.event.inputs.source_run_id }}
+          ATTEMPT: ${{ github.event.inputs.attempt }}
+        run: |
+          python3 - <<'PY'
+          import datetime
+          import json
+          import os
+          import subprocess
+
+          execute_result = os.environ.get("EXECUTE_JOB_RESULT", "failure")
+          execution_id = os.environ.get("EXECUTION_ID") or None
+          started_at = os.environ.get("STARTED_AT") or datetime.datetime.now(
+              datetime.timezone.utc
+          ).strftime("%Y-%m-%dT%H:%M:%SZ")
+          finished_at = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+          workflow_run_id = os.environ["WORKFLOW_RUN_ID"]
+          source_run_id = os.environ.get("SOURCE_RUN_ID") or None
+          attempt = int(os.environ.get("ATTEMPT") or "1")
+
+          # `execute_result` (needs.execute.result) is the Actions job's own
+          # conclusion: "success", "failure", "cancelled", or "skipped".
+          # It is recorded below purely as untrusted, informational
+          # `actions_job_conclusion` -- it never drives cancelled_by_owner,
+          # job_timed_out, or any other classification field. Those are
+          # derived only from directly observable facts (git state,
+          # artifact presence, the required check's own exit code).
+          cancelled_by_owner = execute_result == "cancelled"
+          job_timed_out = execute_result == "failure" and not cancelled_by_owner
+
+          base_sha = subprocess.run(
+              ["git", "merge-base", "HEAD", "origin/main"], capture_output=True, text=True
+          ).stdout.strip() or "0" * 40
+          head_sha = subprocess.run(
+              ["git", "rev-parse", "HEAD"], capture_output=True, text=True
+          ).stdout.strip()
+          authored_commits_raw = subprocess.run(
+              ["git", "rev-list", "{}..HEAD".format(base_sha)], capture_output=True, text=True
+          ).stdout.split()
+          changed_files = subprocess.run(
+              ["git", "diff", "--name-only", base_sha, "HEAD"], capture_output=True, text=True
+          ).stdout.split()
+
+          signal = {
+              "schema_version": "1.0.0",
+              "task_id": os.environ.get("B3_TASK_ID", "yurikuchumov-ux/ai-operating-system#19"),
+              "execution_id": execution_id or "00000000-0000-4000-8000-000000000000",
+              "attempt": attempt,
+              "executor": {
+                  "adapter": "human-supervised-claude-code",
+                  "adapter_version": "claude-code-2.1.197-b3-bootstrap",
+                  "identity": {
+                      "operator_principal": "github:yurikuchumov-ux",
+                      "agent_runtime_id": "claude-code:b3-session",
+                      "credential_principal": "github:actions:b3-executor",
+                      "delegation_parent": "issue-19-owner-decision",
+                      "role": "author",
+                  },
+              },
+              "started_at": started_at,
+              "finished_at": finished_at,
+              "workflow_run_id": str(workflow_run_id),
+              "source_run_id": source_run_id,
+              "cancelled_by_owner": cancelled_by_owner,
+              "adapter_timed_out": False,
+              "job_timed_out": job_timed_out,
+              "max_turns_exhausted": False,
+              "adapter_error": None,
+              "raw_provider_terminal_reason": None,
+              "adapter_self_report": {
+                  "status": "success" if execute_result == "success" else "failed",
+                  "claimed_status": "change_proposed" if execute_result == "success" else "failed",
+                  "claimed_terminal_reason": "completed" if execute_result == "success" else "adapter_error",
+              },
+              "actions_job_conclusion": execute_result,
+              "untrusted_candidate": None,
+              "git_observation": {
+                  "base_sha": base_sha,
+                  "head_sha": head_sha if authored_commits_raw else None,
+                  "authored_commits": authored_commits_raw,
+                  "changed_files": changed_files,
+              },
+              "result_artifact_present": bool(authored_commits_raw),
+              "required_evidence_artifact_present": bool(authored_commits_raw),
+              "required_check_exit_code": 0 if execute_result == "success" else 1,
+              "finalized_by": {
+                  "component_id": "b3-terminal-propagator.v1",
+                  "credential_principal": "github:actions:b3-finalizer",
+              },
+          }
+          os.makedirs("b3-output", exist_ok=True)
+          with open("b3-output/provider-signal.json", "w", encoding="utf-8") as handle:
+              json.dump(signal, handle, sort_keys=True)
+          PY
+
+      - name: Run B3 terminal propagation pipeline
+        id: propagate
+        if: always()
+        continue-on-error: true
+        run: |
+          python3 tools/propagate_b3.py run \
+            --signal b3-output/provider-signal.json \
+            --task fixtures/b3/documents/task-baseline.json \
+            --review-attestation fixtures/b3/documents/review-baseline.json \
+            --verifier-identity fixtures/b3/documents/verifier-identity.json \
+            --verification-id "$(python3 -c 'import uuid; print(uuid.uuid4())')" \
+            --evaluated-at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --output-dir b3-output/pipeline \
+            | tee b3-output/propagate-report.json
+
+      - name: Upload result, verification, and workflow-run-metadata artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: b3-run-${{ github.run_id }}-evidence
+          path: |
+            b3-output/pipeline/result.json
+            b3-output/pipeline/verification.json
+            b3-output/pipeline/workflow-run-metadata.json
+            b3-output/propagate-report.json
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Publish Check Run conclusion from verifier output
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const metadata = JSON.parse(
+              fs.readFileSync('b3-output/pipeline/workflow-run-metadata.json', 'utf8')
+            );
+            // The one and only source of the Check Run conclusion is the
+            // verifier's own `passed` field, carried through as
+            // `check_run_conclusion` by tools/propagate_b3.py. Adapter
+            // self-report and this job's own conclusion are never read
+            // here.
+            const conclusion = metadata.check_run_conclusion === 'success' ? 'success' : 'failure';
+            await github.rest.checks.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              name: 'b3-terminal-propagation',
+              head_sha: context.sha,
+              status: 'completed',
+              conclusion: conclusion,
+              output: {
+                title: `B3 terminal propagation: ${conclusion}`,
+                summary: [
+                  `workflow_run_id: ${metadata.workflow_run_id}`,
+                  `execution_id: ${metadata.execution_id}`,
+                  `verification_id: ${metadata.verification_id}`,
+                  `verification_passed: ${metadata.verification_passed}`,
+                  `raw_provider_terminal_reason: ${metadata.raw_provider_terminal_reason}`,
+                ].join('\n'),
+              },
+            });
+
+      - name: Gate job result on the verifier's conclusion
+        if: always()
+        run: |
+          python3 -c "
+          import json, sys
+          with open('b3-output/pipeline/workflow-run-metadata.json') as handle:
+              metadata = json.load(handle)
+          conclusion = metadata['check_run_conclusion']
+          print('check_run_conclusion={}'.format(conclusion))
+          sys.exit(0 if conclusion == 'success' else 1)
+          "

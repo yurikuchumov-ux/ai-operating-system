@@ -1,15 +1,18 @@
-# B0/B1/B2 contract bootstrap
+# B0/B1/B2/B3 contract bootstrap
 
 This directory (together with `../tools`, `../tests`, and `../fixtures`)
-implements only the owner-approved `B0`, `B1`, and `B2` scope of Issue #18.
-`B0` provides versioned data contracts, versioned registries, deterministic
-offline validation, and hash-pinned fixtures. `B1` adds a deterministic,
-human-supervised harness and a trusted always-run result finalizer that
-consumes those `B0` contracts. `B2` adds a bounded, deterministic offline
-verifier that evaluates a fixed set of registered predicates over `B0`
-contract documents and a `B1`-shaped result. None of these steps implements
-a GitHub Actions adapter, Check Run publisher, or automated merge/
-delegation pipeline.
+implements the owner-approved `B0`, `B1`, `B2` scope of Issue #18 and the
+`B3` scope of Issue #19. `B0` provides versioned data contracts, versioned
+registries, deterministic offline validation, and hash-pinned fixtures. `B1`
+adds a deterministic, human-supervised harness and a trusted always-run
+result finalizer that consumes those `B0` contracts. `B2` adds a bounded,
+deterministic offline verifier that evaluates a fixed set of registered
+predicates over `B0` contract documents and a `B1`-shaped result. `B3` adds
+a deterministic terminal-reason propagator that composes the existing,
+unmodified `B1` finalizer and `B2` verifier, plus the first real GitHub
+Actions workflow (`../.github/workflows/b3-terminal-propagation.yml`), whose
+Check Run conclusion is published only from the `B2` verifier's own
+`verification.v1.passed` field.
 
 ## Canonical B0 boundary
 
@@ -174,6 +177,85 @@ pipeline.
   evidence mutation/rebinding, output collision, and staging
   write/fsync/link failure.
 
+## Canonical B3 boundary
+
+B3 is a bounded, deterministic terminal-reason propagator built entirely by
+composing the existing, unmodified `B1` finalizer and `B2` verifier, plus a
+real GitHub Actions workflow around them:
+
+- the propagator (`../tools/propagate_b3.py`) consumes a trusted,
+  schema-validated provider signal -- cancellation, adapter/job timeout,
+  max-turns exhaustion, adapter error, Git observation, required-artifact
+  presence, and required-check exit code -- and deterministically classifies
+  exactly one `result.v1` terminal status/reason from it, in a fixed
+  priority order (`cancelled_by_owner` > `job_timed_out` > `adapter_timed_out`
+  > `max_turns_exhausted` > `adapter_error` > `missing_commit` >
+  `missing_artifact` (result-artifact, then required-evidence-artifact) >
+  `empty_diff` > `check_failed` > `completed`). The adapter's own
+  self-reported status and the Actions job's own conclusion are never read
+  by this classification -- they are carried through only as untrusted,
+  informational fields on the published `workflow-run-metadata` artifact;
+- the trusted observation it derives is finalized into a schema-valid
+  `result.v1` by calling `../tools/finalize_b1.py`'s `finalize` function
+  directly, unmodified; that result is then verified against a task, a
+  review-attestation, and a trusted Git observation by calling
+  `../tools/verify_b2.py`'s `run_verification` function directly,
+  unmodified, producing a schema-valid `verification.v1` report;
+- the Check Run conclusion this tool computes -- and the only conclusion the
+  workflow's `finalize-and-verify` job is permitted to publish -- is
+  `success` iff `verification.v1.passed` is `true`. It is never derived from
+  the adapter's self-report, the Actions job's own conclusion, or the raw
+  provider terminal reason;
+- `.github/workflows/b3-terminal-propagation.yml` is a real, two-job Actions
+  workflow: an `execute` job bounded by `timeout-minutes` runs the executor
+  adapter, and an always-run (`if: always()`) `finalize-and-verify` job
+  collects the trusted provider signal from directly observable facts
+  (the `execute` job's own `needs.execute.result`, Git state, and artifact
+  presence -- not adapter prose), runs the propagator, uploads the
+  `result-artifact`, `verification-report`, and `workflow-run-metadata`
+  artifacts, and publishes the Check Run from the verifier's own report.
+  Both the Actions run ID (`github.run_id`) and the trusted `execution_id`
+  generated once in the `execute` job and threaded through as a job output
+  are required non-null on the published `workflow-run-metadata`;
+- the immutable, hash-pinned `fixtures/b3/manifest.v1.json` fixture suite
+  covers all terminal failure reasons the Issue #19 B3 control contract
+  requires (max-turns, adapter timeout, job timeout, missing commit, missing
+  result artifact, missing required-evidence artifact, empty diff, failed
+  required check, adapter error, cancellation, and the case where a green
+  adapter self-report and a green Actions job conclusion cannot mask a real
+  check failure), plus the immutable false-success replay of the historical
+  run `29190170902` (green, `error_max_turns`, zero artifacts, no commit)
+  and one genuine-success scenario that passes cleanly;
+- no component in B3 has independent verifier authority beyond composing
+  the existing `B1`/`B2` bootstrap tools unmodified; B3 adds exactly one
+  narrow command registry entry (`repo.contracts.b3.tests`) and no new
+  predicate or schema.
+
+These limits are normative. B3 evidence must not be represented as
+authoritative beyond what the composed, unmodified `B1` finalizer and `B2`
+verifier already establish, and the Check Run conclusion it publishes must
+never be attributable to adapter or Actions-job self-report.
+
+## Contents (B3)
+
+- `../tools/propagate_b3.py`: the bounded provider-signal loader, the fixed
+  terminal-reason classifier, the trusted-observation builder, the pipeline
+  that calls the unmodified `B1` finalizer and `B2` verifier in sequence,
+  the `workflow-run-metadata` publisher, and a `suite` subcommand that runs
+  the immutable B3 fixture manifest;
+- `../fixtures/b3/manifest.v1.json`: immutable fixture definitions for all
+  13 contract-oracle scenarios required by Issue #19's `AC-B3-1`, with
+  SHA-256 hashes over every fixture document;
+- `../fixtures/b3/documents/`: the hash-pinned provider-signal, task,
+  review-attestation, and verifier-identity documents referenced by the
+  manifest;
+- `../tests/test_b3_terminal_propagation.py`: fixture-oracle regression
+  tests (status, terminal reason, and Check Run conclusion per scenario),
+  direct classification priority-order unit tests, override-detection,
+  artifact-publication, and identity-separation coverage;
+- `../.github/workflows/b3-terminal-propagation.yml`: the real, two-job
+  Actions workflow described above.
+
 ## Local validation
 
 ```bash
@@ -182,9 +264,11 @@ python3 -m venv .venv
 .venv/bin/python tools/validate_b0.py suite --manifest fixtures/b0/manifest.v1.json
 .venv/bin/python tools/finalize_b1.py suite --manifest fixtures/b1/manifest.v1.json
 .venv/bin/python tools/verify_b2.py suite --manifest fixtures/b2/manifest.v1.json
+.venv/bin/python tools/propagate_b3.py suite --manifest fixtures/b3/manifest.v1.json
 .venv/bin/python -m unittest discover -s tests -p 'test_b0_contracts.py'
 .venv/bin/python -m unittest discover -s tests -p 'test_b1_finalizer.py'
 .venv/bin/python -m unittest discover -s tests -p 'test_b2_verifier.py'
+.venv/bin/python -m unittest discover -s tests -p 'test_b3_*.py'
 ```
 
 The B0 fixture suite succeeds only when all positive and negative cases match
@@ -210,6 +294,14 @@ failure-code set, and the `deterministic-repeat` scenario's two runs
 publish byte-identical `verification.v1` reports. A hash change in any
 source fixture document fails closed before any verification attempt runs.
 
+The B3 fixture suite succeeds only when every one of the 13 required
+scenarios matches its declared `result.v1` status/terminal_reason and the
+Check Run conclusion the composed, unmodified B1/B2 tools force -- including
+the immutable false-success replay of historical run `29190170902`, which
+must fail closed on `max_turns` despite a green adapter self-report and a
+green Actions job conclusion. A hash change in any source fixture document
+fails closed before any pipeline attempt runs.
+
 Every report contains:
 
 ```json
@@ -219,7 +311,10 @@ Every report contains:
 }
 ```
 
-(or `"bootstrap_scope": "B1"` / `"bootstrap_scope": "B2"` for the finalizer
-and verifier suites, respectively). These flags are normative: B0, B1, and
-B2 evidence must not be represented as a working truthful execution
-pipeline.
+(or `"bootstrap_scope": "B1"` / `"bootstrap_scope": "B2"` / `"bootstrap_scope":
+"B3"` for the finalizer, verifier, and propagator suites, respectively).
+These flags are normative: B0, B1, B2, and B3 evidence must not be
+represented as a working truthful execution pipeline beyond what each step
+actually establishes -- B3's real Actions workflow notwithstanding, its own
+Check Run conclusion is only ever as trustworthy as the composed B1/B2
+tools' own evaluation of the artifacts it collects.

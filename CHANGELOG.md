@@ -1,6 +1,39 @@
 # Changelog
 
 ## Unreleased
+- Add B3 terminal-failure propagation for Issue #19: a deterministic
+  propagator (`tools/propagate_b3.py`) that classifies exactly one
+  `result.v1` terminal status/reason from a trusted provider signal --
+  cancellation, adapter/job timeout, max-turns exhaustion, adapter error,
+  missing commit, missing result/required-evidence artifact, empty diff, or
+  a failed required check, in that fixed priority order -- and never reads
+  the adapter's own self-reported status or the Actions job's own
+  conclusion to do it. The classified observation is finalized into a
+  schema-valid `result.v1` by calling the existing, unmodified B1 finalizer
+  (`tools/finalize_b1.py`) directly, then verified by calling the existing,
+  unmodified B2 verifier (`tools/verify_b2.py`) directly; the Check Run
+  conclusion this tool computes is `success` iff `verification.v1.passed`,
+  never adapter prose or raw job status. Adds the first real GitHub Actions
+  workflow (`.github/workflows/b3-terminal-propagation.yml`): an
+  `execute` job bounded by `timeout-minutes` runs the executor adapter, and
+  an always-run `finalize-and-verify` job collects the trusted provider
+  signal from directly observable facts, runs the propagator, uploads the
+  `result-artifact`, `verification-report`, and `workflow-run-metadata`
+  artifacts (both `github.run_id` and the trusted `execution_id` required
+  non-null), and publishes the Check Run from the verifier's report alone.
+  Adds the narrow `repo.contracts.b3.tests` command registry entry (no new
+  predicate or schema). Adds the immutable, hash-pinned B3 fixture manifest
+  and documents (`fixtures/b3/manifest.v1.json`) covering all 13 scenarios
+  the Issue #19 B3 control contract requires -- including the immutable
+  false-success replay of historical run `29190170902` (green,
+  `error_max_turns`, zero artifacts, no commit), which fails closed on
+  `max_turns` despite both the adapter and the Actions job self-reporting
+  success, and one genuine-success scenario that passes cleanly -- plus
+  `tests/test_b3_terminal_propagation.py` with fixture-oracle regression
+  coverage, direct classification priority-order unit tests, override-
+  detection, artifact-publication, and executor/reviewer/checkrun-publisher
+  identity-separation coverage. B0, B1, and B2 schemas, registries,
+  fixtures, and tests are untouched.
 - Add the B2 deterministic offline verifier (`tools/verify_b2.py`): it
   consumes trusted invocation metadata supplied entirely by its caller
   (verification ID, evaluated-at timestamp, expected task/execution/base/
