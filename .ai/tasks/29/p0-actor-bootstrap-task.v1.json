@@ -1,0 +1,202 @@
+{
+  "schema_version": "1.0.0",
+  "task_id": "yurikuchumov-ux/ai-operating-system#29",
+  "repository": "yurikuchumov-ux/ai-operating-system",
+  "issue_number": 29,
+  "objective": "Implement the single bounded infrastructure bootstrap explicitly authorized by the Product Owner after repository evidence showed that main contains no generic write-capable Actions executor or B4-capable verifier context. Add one thin Actions-first adapter/check for subsequent Issue #20 canary work. It must load an immutable task contract, validate it before execution, bind execution to an exact protected-main base SHA and dedicated target branch, invoke Claude in a clean ephemeral checkout with only the permissions needed to edit and push that branch, preserve real run/session/result evidence even on failure, never merge, and publish a verifier-owned stable Check Run conclusion. Keep the existing B0-B3 contracts and workflows unchanged. Do not implement canonical naming, readiness scoring, voice-agent, deployment, orchestration service, product behavior, or repository-setting changes in this PR.",
+  "change_policy": {
+    "change_required": true,
+    "policy_exception_id": "owner-approved-bounded-p0-actor-bootstrap-2026-07-15",
+    "no_change": {
+      "allowed": false,
+      "reason_codes": [],
+      "required_evidence_types": []
+    }
+  },
+  "base_ref": "main",
+  "base_sha": "5033581665f759971f8a6c5875efd2be93c2b109",
+  "branch": "agent/issue-29-p0-actor-bootstrap",
+  "allowed_paths": [
+    ".github/workflows/p0-actions-adapter.yml",
+    "tools/p0_actions_adapter.py",
+    "tests/test_b3_p0_actions_adapter.py",
+    "fixtures/p0/**",
+    "requirements-p0-actions.txt",
+    "contracts/registries/commands.v1.json",
+    "contracts/README.md",
+    "CHANGELOG.md"
+  ],
+  "denied_paths": [
+    ".ai/tasks/**",
+    "AI_OS.md",
+    "README.md",
+    ".github/PULL_REQUEST_TEMPLATE.md",
+    ".github/workflows/b3-terminal-propagation.yml",
+    "contracts/schemas/**",
+    "contracts/registries/predicates.v1.json",
+    "contracts/registries/fixture-coverage.v1.json",
+    "docs/**",
+    "fixtures/b0/**",
+    "fixtures/b1/**",
+    "fixtures/b2/**",
+    "fixtures/b3/**",
+    "standards/**",
+    "templates/**",
+    "tests/test_b0_contracts.py",
+    "tests/test_b1_finalizer.py",
+    "tests/test_b2_verifier.py",
+    "tests/test_b3_terminal_propagation.py",
+    "tools/finalize_b1.py",
+    "tools/propagate_b3.py",
+    "tools/validate_b0.py",
+    "tools/verify_b2.py"
+  ],
+  "risk_class": "L2",
+  "executor": {
+    "adapter": "human-supervised-claude-code",
+    "version": "claude-code-2.1.197-p0-actor-bootstrap",
+    "max_attempts": 3,
+    "timeout_seconds": 7200
+  },
+  "acceptance_criteria": [
+    {
+      "id": "AC-A1",
+      "predicate_id": "process.exit_code.equals",
+      "parameters": {
+        "component": "p0-actions-bootstrap-registered-suite",
+        "value": 0,
+        "trusted_evidence_source": "workflow_controlled_process_exit_code",
+        "forbidden_sources": [
+          "executor_self_report",
+          "actions_job_conclusion"
+        ]
+      },
+      "required": true,
+      "linked_checks": [
+        "p0-actions-bootstrap-tests"
+      ]
+    },
+    {
+      "id": "AC-A2",
+      "predicate_id": "fixture.pass_rate.equals",
+      "parameters": {
+        "manifest": "fixtures/p0/manifest.v1.json",
+        "expected": 1.0,
+        "oracle_owner": "control-plane-contract",
+        "required_scenarios": [
+          "reject-mutable-task-ref",
+          "reject-invalid-task",
+          "reject-base-sha-mismatch",
+          "reject-target-branch-mismatch",
+          "reject-missing-executor-evidence",
+          "reject-self-review",
+          "reject-post-review-head-change",
+          "accept-bounded-executor-result"
+        ]
+      },
+      "required": true,
+      "linked_checks": [
+        "p0-actions-bootstrap-tests"
+      ]
+    },
+    {
+      "id": "AC-A3",
+      "predicate_id": "artifact.exists",
+      "parameters": {
+        "required_result_artifact_ids": [
+          "executor-transcript",
+          "result-artifact",
+          "verification-report",
+          "workflow-run-metadata"
+        ],
+        "required_provenance": [
+          "workflow_run_id",
+          "workflow_run_attempt",
+          "execution_id",
+          "subject_sha",
+          "task_commit"
+        ],
+        "forbidden_synthetic_evidence": true
+      },
+      "required": true,
+      "linked_checks": [
+        "p0-actions-bootstrap-tests"
+      ]
+    },
+    {
+      "id": "AC-A4",
+      "predicate_id": "identity.lineage.no_overlap",
+      "parameters": {
+        "required_policy_id": "review-independence.v1",
+        "required_risk_class": "L2",
+        "forbidden_lineage_overlaps": [
+          "agent_runtime_id",
+          "credential_principal",
+          "authored_commits"
+        ],
+        "required_distinct_from_executor": true,
+        "new_head_invalidates_review": true
+      },
+      "required": true,
+      "linked_checks": [
+        "p0-actions-bootstrap-tests"
+      ]
+    },
+    {
+      "id": "AC-A5",
+      "predicate_id": "schema.instance.valid",
+      "parameters": {
+        "required_workflow_invariants": [
+          "immutable-task-commit",
+          "clean-ephemeral-checkout",
+          "exact-base-and-target-branch",
+          "least-privilege-write-scope",
+          "always-run-finalizer",
+          "verifier-controls-check-run",
+          "human-only-merge"
+        ],
+        "forbidden_capabilities": [
+          "automatic-merge",
+          "force-push",
+          "default-branch-write",
+          "settings-write",
+          "deployment",
+          "standalone-orchestrator-service"
+        ]
+      },
+      "required": true,
+      "linked_checks": [
+        "p0-actions-bootstrap-tests"
+      ]
+    }
+  ],
+  "required_checks": [
+    {
+      "id": "p0-actions-bootstrap-tests",
+      "command_id": "repo.contracts.b3.tests",
+      "required": true,
+      "expected_postconditions": [
+        {
+          "predicate_id": "process.exit_code.equals",
+          "parameters": {
+            "value": 0,
+            "architect_invocation": "python3 -m unittest discover -s tests -p test_b3_*.py"
+          }
+        }
+      ]
+    }
+  ],
+  "review_policy": {
+    "reviewer_class": "independent-engineering",
+    "policy_id": "review-independence.v1",
+    "forbidden_lineage_overlaps": [
+      "agent_runtime_id",
+      "credential_principal",
+      "authored_commits"
+    ],
+    "minimum_distinct_human_operators": 1
+  },
+  "external_side_effects": "owner_approved",
+  "created_by": "github:yurikuchumov-ux/codex-control-plane",
+  "created_at": "2026-07-15T19:33:09Z"
+}
