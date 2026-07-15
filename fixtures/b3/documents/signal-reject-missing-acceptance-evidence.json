@@ -17,7 +17,7 @@
   "execution_file_content": "[{\"type\": \"system\", \"subtype\": \"init\", \"session_id\": \"a4a4a4a4-a4a4-4a4a-8a4a-a4a4a4a4a4a4\"}, {\"type\": \"assistant\", \"message\": {\"content\": [{\"type\": \"tool_use\", \"id\": \"toolu_live_1\", \"name\": \"Bash\", \"input\": {\"command\": \"python3 -m unittest discover -s tests -p test_b3_*.py\"}}]}}, {\"type\": \"user\", \"message\": {\"content\": [{\"type\": \"tool_result\", \"tool_use_id\": \"toolu_live_1\", \"content\": \"Ran 74 tests in 0.5s\\n\\nOK\", \"is_error\": false}]}}]",
   "executor": {
     "adapter": "human-supervised-claude-code",
-    "adapter_version": "claude-code-2.1.197-b3-correction",
+    "adapter_version": "claude-code-2.1.197-b3-correction-v2",
     "identity": {
       "agent_runtime_id": "claude-code:b3-session-27",
       "credential_principal": "github:actions:b3-executor-27",
@@ -54,7 +54,7 @@
   "source_run_id": null,
   "started_at": "2026-07-15T09:00:00Z",
   "structured_output_raw": null,
-  "task_commit": "9b6db4412eb5ef032d4333ff8023c1527383de87",
+  "task_commit": "6f9ed9f849896936de482504c01d6447a6394d6d",
   "task_id": "yurikuchumov-ux/ai-operating-system#27",
   "trusted_subject_sha": "e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5",
   "untrusted_candidate": null,

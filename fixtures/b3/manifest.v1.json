@@ -439,11 +439,11 @@
       "id": "accept-live-required-evidence",
       "signal": {
         "path": "documents/signal-accept-live-required-evidence.json",
-        "sha256": "c9bcf43ffd8ec58b7743d88e3bb6b792af5ad8de6456628378d0b6a58c26c7a4"
+        "sha256": "1a3c3a49f0486df54f5e4657ae55fd49d1f4cf176ba48caf1745b0ea3e19bf76"
       },
       "task": {
         "path": "documents/task-issue-27-live.json",
-        "sha256": "f46baecfa8c4f4b3098a2b23b86388c1a97c4fd7e7cb690f8255f578dd6fbf46"
+        "sha256": "970faabcdc6d1c57e94f079143097101aa6082212785560e8da305a98a5d73c3"
       },
       "review_attestation": {
         "path": "documents/review-issue-27-live.json",
@@ -468,11 +468,11 @@
       "id": "reject-adapter-command-failure",
       "signal": {
         "path": "documents/signal-reject-adapter-command-failure.json",
-        "sha256": "953ef4a2c0f27cb671943abaa254c4dc4becd70a26bd29dca1d8bb96017373ff"
+        "sha256": "c188724c7492fd0da66932328fa6d4077317ab900ccacd7c3485d15213bec005"
       },
       "task": {
         "path": "documents/task-issue-27-live.json",
-        "sha256": "f46baecfa8c4f4b3098a2b23b86388c1a97c4fd7e7cb690f8255f578dd6fbf46"
+        "sha256": "970faabcdc6d1c57e94f079143097101aa6082212785560e8da305a98a5d73c3"
       },
       "review_attestation": {
         "path": "documents/review-issue-27-live.json",
@@ -496,11 +496,11 @@
       "id": "reject-direct-check-failure",
       "signal": {
         "path": "documents/signal-reject-direct-check-failure.json",
-        "sha256": "8dfb9c97df1101116a2f458476fe08df2d24b536513d1e173fcd44899b443cae"
+        "sha256": "218ebd98a7d901bb4cf2d0ec418fec15d6c3174b587aa55bc084cc32b00b7378"
       },
       "task": {
         "path": "documents/task-issue-27-live.json",
-        "sha256": "f46baecfa8c4f4b3098a2b23b86388c1a97c4fd7e7cb690f8255f578dd6fbf46"
+        "sha256": "970faabcdc6d1c57e94f079143097101aa6082212785560e8da305a98a5d73c3"
       },
       "review_attestation": {
         "path": "documents/review-issue-27-live.json",
@@ -524,11 +524,11 @@
       "id": "reject-missing-acceptance-evidence",
       "signal": {
         "path": "documents/signal-reject-missing-acceptance-evidence.json",
-        "sha256": "37b9847212f56a5114959819230218349942db092ef884f3b2ea59e7cdcaa475"
+        "sha256": "86d8d2792dea8ae5d32cac44d6a51739c9f2739f4fa9cd400348ba707e7609dc"
       },
       "task": {
         "path": "documents/task-issue-27-live.json",
-        "sha256": "f46baecfa8c4f4b3098a2b23b86388c1a97c4fd7e7cb690f8255f578dd6fbf46"
+        "sha256": "970faabcdc6d1c57e94f079143097101aa6082212785560e8da305a98a5d73c3"
       },
       "review_attestation": {
         "path": "documents/review-issue-27-live.json",
@@ -552,11 +552,11 @@
       "id": "reject-self-report-override",
       "signal": {
         "path": "documents/signal-reject-self-report-override.json",
-        "sha256": "c9d5696c08cddb92bb54a5b824546c0edd9de3184e7f43959d38dbd0de563740"
+        "sha256": "084feee7d17866f9ddb004e59cbafbe827a1ef356f701ec74a9b3f01cbc8014a"
       },
       "task": {
         "path": "documents/task-issue-27-live.json",
-        "sha256": "f46baecfa8c4f4b3098a2b23b86388c1a97c4fd7e7cb690f8255f578dd6fbf46"
+        "sha256": "970faabcdc6d1c57e94f079143097101aa6082212785560e8da305a98a5d73c3"
       },
       "review_attestation": {
         "path": "documents/review-issue-27-live.json",

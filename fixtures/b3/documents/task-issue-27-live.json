@@ -3,7 +3,7 @@
   "task_id": "yurikuchumov-ux/ai-operating-system#27",
   "repository": "yurikuchumov-ux/ai-operating-system",
   "issue_number": 27,
-  "objective": "Correct the B3 live pipeline on the existing Draft PR #26 branch after run 29397325438 attempt 2 proved that a valid independent review still produced an unverifiable result with empty checks and acceptance_results. Preserve all prior fail-closed terminal classifications, install declared dependencies before the real Claude adapter command, and propagate only trusted directly observed check and acceptance evidence into result.v1. The verifier and Check Run must never trust adapter self-report or Actions job conclusion. Continue from reviewed implementation head 84634c57222ca9bc0dbad35b42968124d4882273, keep the full PR diff bound to main base ae8bfab665e9a6777affaa448e872d24b87ea36c, preserve run/execution/verifier/task/review provenance, and forbid merge, deployment, secrets, settings, or product changes.",
+  "objective": "Supersede Issue #27 task v1 after independent review of head a7e4572f1f954741ba1f863fcc5c6a23a8dfdb9b found an unsatisfiable and false-positive AC-C5. Preserve the truthful B3 adapter/check/acceptance correction while making AC-C5 assert only artifacts, control inputs, and provenance independently observable at result-finalization time; verification-report and workflow-run-metadata remain post-publication evidence checked after result finalization and are not claimed by AC-C5. AC-C6 must require the configured review policy, L2 risk, eligible=true, empty reason_codes, and independently recomputed lineage separation. Preserve all fail-closed terminal behavior, exact task/review provenance, and actor separation. Continue the existing Draft PR #26; forbid B0/B1/B2, schema, predicate, product, deployment, merge, secrets, and settings changes.",
   "change_policy": {
     "change_required": true,
     "policy_exception_id": null,
@@ -51,7 +51,7 @@
   "risk_class": "L2",
   "executor": {
     "adapter": "human-supervised-claude-code",
-    "version": "claude-code-2.1.197-b3-correction",
+    "version": "claude-code-2.1.197-b3-correction-v2",
     "max_attempts": 3,
     "timeout_seconds": 7200
   },
@@ -160,10 +160,12 @@
       "id": "AC-C5",
       "predicate_id": "artifact.exists",
       "parameters": {
-        "required_artifact_types": [
-          "result-artifact",
-          "verification-report",
-          "workflow-run-metadata",
+        "evaluation_phase": "result_finalization",
+        "required_result_artifact_ids": [
+          "adapter-transcript",
+          "required-check-log"
+        ],
+        "required_control_inputs": [
           "task-artifact",
           "review-attestation"
         ],
@@ -171,11 +173,15 @@
           "workflow_run_id",
           "workflow_run_attempt",
           "execution_id",
-          "verification_id",
           "subject_sha",
           "task_commit",
           "review_attestation_commit"
-        ]
+        ],
+        "not_asserted_until_post_publication": [
+          "verification-report",
+          "workflow-run-metadata"
+        ],
+        "post_publication_gate": "verification.passed_and_check_run_conclusion"
       },
       "required": true,
       "linked_checks": [
@@ -187,6 +193,9 @@
       "predicate_id": "identity.lineage.no_overlap",
       "parameters": {
         "required_policy_id": "review-independence.v1",
+        "required_risk_class": "L2",
+        "require_eligible": true,
+        "require_reason_codes_empty": true,
         "forbidden_lineage_overlaps": [
           "agent_runtime_id",
           "credential_principal",
@@ -228,5 +237,5 @@
   },
   "external_side_effects": "owner_approved",
   "created_by": "github:yurikuchumov-ux/codex-control-plane",
-  "created_at": "2026-07-15T07:47:46Z"
+  "created_at": "2026-07-15T08:47:55Z"
 }

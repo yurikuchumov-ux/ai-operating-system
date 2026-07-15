@@ -10,6 +10,7 @@ from typing import Any, Mapping
 
 from jsonschema import Draft202012Validator, FormatChecker
 
+from tools import propagate_b3
 from tools.propagate_b3 import (
     B3PropagatorError,
     Classification,
@@ -40,8 +41,8 @@ WORKFLOW_PATH = REPO_ROOT / ".github/workflows/b3-terminal-propagation.yml"
 TASK_ID = "yurikuchumov-ux/ai-operating-system#27"
 PINNED_ADAPTER_ACTION = "anthropics/claude-code-action@6902c227aaa9536481b99d56f3014bbbad6c6da8"
 HEAD_BRANCH = "agent/issue-19-b3-terminal-propagation"
-CONTROL_TASK_COMMIT = "9b6db4412eb5ef032d4333ff8023c1527383de87"
-CONTROL_TASK_PATH = ".ai/tasks/27/b3-correction-task.v1.json"
+CONTROL_TASK_COMMIT = "6f9ed9f849896936de482504c01d6447a6394d6d"
+CONTROL_TASK_PATH = ".ai/tasks/27/b3-correction-task.v2.json"
 REVIEW_REF = "control/issue-27-b3-review-attestation"
 REVIEW_PATH = ".ai/reviews/27/review-attestation.v1.json"
 REGISTERED_TEST_COMMAND = "python3 -m unittest discover -s tests -p test_b3_*.py"
@@ -696,7 +697,7 @@ class B3LiveChecksAndAcceptanceTests(unittest.TestCase):
         signal.pop("required_check_log", None)
         task = json.loads(self.TASK_PATH.read_text())
         checks, acceptance_results, artifacts = build_checks_and_acceptance(
-            task, None, signal, None, _tmp_dir()
+            task, None, signal, None, "11111111-1111-4111-8111-111111111111", _tmp_dir()
         )
         self.assertEqual([], checks)
         self.assertEqual([], acceptance_results)
@@ -987,7 +988,7 @@ class B3WorkflowContentTests(unittest.TestCase):
         that exact task, not Issue #19's original bootstrap task."""
         task = _load_json(DOCUMENTS_DIR / "task-issue-27-live.json")
         expected_version = task["executor"]["version"]
-        self.assertEqual("claude-code-2.1.197-b3-correction", expected_version)
+        self.assertEqual("claude-code-2.1.197-b3-correction-v2", expected_version)
         version_line = next(
             line for line in self.text.splitlines() if line.strip().startswith('"adapter_version":')
         )
@@ -1402,6 +1403,541 @@ class B3RealControlEvidenceTests(unittest.TestCase):
         validator = ContractValidator()
         findings = validator.validate_document("task", task_document)
         self.assertEqual([], [f.as_dict() for f in findings], "real control task failed B0 validation")
+
+
+class B3AcceptanceCriteriaV2Tests(unittest.TestCase):
+    """Issue #27 v2 correction: independent review of commit a7e4572
+    (Draft PR #26) returned REQUEST_CHANGES because AC-C5 became
+    `passed=true` from only two commit fields being present, without
+    verifying any of the artifact/provenance facts the v1 criterion
+    actually claimed -- some of which (verification-report,
+    workflow-run-metadata) do not exist yet at result-finalization time and
+    so can never be truthfully asserted there. This class calls the
+    rewritten `propagate_b3._evaluate_ac_c5` / `_evaluate_ac_c6` directly,
+    each test flipping exactly one real, independently observable fact and
+    confirming the criterion fails closed on it alone."""
+
+    SUBJECT_SHA = "b" * 40
+    BASE_SHA = "a" * 40
+
+    def _ac_c5_params(self) -> Dict[str, Any]:
+        return {
+            "evaluation_phase": "result_finalization",
+            "required_result_artifact_ids": ["adapter-transcript", "required-check-log"],
+            "required_control_inputs": ["task-artifact", "review-attestation"],
+            "required_provenance": [
+                "workflow_run_id",
+                "workflow_run_attempt",
+                "execution_id",
+                "subject_sha",
+                "task_commit",
+                "review_attestation_commit",
+            ],
+            "not_asserted_until_post_publication": ["verification-report", "workflow-run-metadata"],
+            "post_publication_gate": "verification.passed_and_check_run_conclusion",
+        }
+
+    def _ac_c6_params(self) -> Dict[str, Any]:
+        return {
+            "required_policy_id": "review-independence.v1",
+            "required_risk_class": "L2",
+            "require_eligible": True,
+            "require_reason_codes_empty": True,
+            "forbidden_lineage_overlaps": ["agent_runtime_id", "credential_principal", "authored_commits"],
+            "required_distinct_from_executor": True,
+        }
+
+    def _task(self) -> Dict[str, Any]:
+        return {
+            "task_id": TASK_ID,
+            "base_sha": self.BASE_SHA,
+            "risk_class": "L2",
+            "review_policy": {
+                "policy_id": "review-independence.v1",
+                "forbidden_lineage_overlaps": ["agent_runtime_id", "credential_principal", "authored_commits"],
+            },
+        }
+
+    def _signal(self) -> Dict[str, Any]:
+        return {
+            "task_id": TASK_ID,
+            "workflow_run_id": "999",
+            "workflow_run_attempt": "1",
+            "trusted_subject_sha": self.SUBJECT_SHA,
+            "task_commit": propagate_b3._EXPECTED_V2_TASK_COMMIT,
+            "review_attestation_commit": "c" * 40,
+            "git_observation": {"base_sha": self.BASE_SHA, "authored_commits": ["d" * 40]},
+            "executor": {
+                "identity": {
+                    "agent_runtime_id": "claude-code:test-session",
+                    "credential_principal": "github:actions:test-executor",
+                }
+            },
+        }
+
+    def _review(self) -> Dict[str, Any]:
+        return {
+            "task_id": TASK_ID,
+            "reviewed_sha": self.SUBJECT_SHA,
+            "reviewer_identity": {
+                "agent_runtime_id": "openai:chatgpt:test-reviewer",
+                "credential_principal": "openai:chatgpt:account:test-reviewer",
+                "authored_commits": [],
+            },
+            "eligibility": {
+                "policy_id": "review-independence.v1",
+                "risk_class": "L2",
+                "eligible": True,
+                "reason_codes": [],
+                "overlap_results": [
+                    {
+                        "field": "agent_runtime_id",
+                        "overlap": False,
+                        "author_values": ["claude-code:test-session"],
+                        "reviewer_value": "openai:chatgpt:test-reviewer",
+                    },
+                    {
+                        "field": "credential_principal",
+                        "overlap": False,
+                        "author_values": ["github:actions:test-executor"],
+                        "reviewer_value": "openai:chatgpt:account:test-reviewer",
+                    },
+                    {
+                        "field": "authored_commits",
+                        "overlap": False,
+                        "author_values": ["d" * 40],
+                        "reviewer_value": "none",
+                    },
+                ],
+            },
+        }
+
+    def _artifacts(self, output_dir: Path) -> list:
+        artifacts = []
+        for artifact_id, name, content in (
+            ("adapter-transcript", "adapter-transcript.txt", b"transcript-bytes"),
+            ("required-check-log", "required-check-log.txt", b"check-log-bytes"),
+        ):
+            evidence_dir = output_dir / "evidence"
+            evidence_dir.mkdir(parents=True, exist_ok=True)
+            path = evidence_dir / name
+            path.write_bytes(content)
+            artifacts.append(
+                {
+                    "id": artifact_id,
+                    "path": "evidence/{}".format(name),
+                    "sha256": propagate_b3.sha256_bytes(content),
+                    "media_type": "text/plain",
+                    "size_bytes": len(content),
+                }
+            )
+        return artifacts
+
+    def _evaluate_c5(
+        self,
+        output_dir: Path,
+        params: Any = None,
+        task: Any = None,
+        signal: Any = None,
+        review: Any = None,
+        execution_id: Any = None,
+        artifacts: Any = None,
+        task_loaded: bool = True,
+        review_loaded: bool = True,
+    ):
+        if params is None:
+            params = self._ac_c5_params()
+        if task is None and task_loaded:
+            task = self._task()
+        if signal is None:
+            signal = self._signal()
+        if review is None and review_loaded:
+            review = self._review()
+        if execution_id is None:
+            execution_id = "exec-baseline-0001"
+        if artifacts is None:
+            artifacts = self._artifacts(output_dir)
+        return propagate_b3._evaluate_ac_c5(params, task, signal, review, execution_id, artifacts, output_dir)
+
+    def _evaluate_c6(
+        self,
+        params: Any = None,
+        task: Any = None,
+        signal: Any = None,
+        review: Any = None,
+        review_loaded: bool = True,
+    ):
+        if params is None:
+            params = self._ac_c6_params()
+        if task is None:
+            task = self._task()
+        if signal is None:
+            signal = self._signal()
+        if review is None and review_loaded:
+            review = self._review()
+        return propagate_b3._evaluate_ac_c6(params, task, signal, review)
+
+    # -- AC-C5 baseline ---------------------------------------------------
+
+    def test_ac_c5_baseline_all_correct_passes(self) -> None:
+        passed, observed = self._evaluate_c5(_tmp_dir())
+        self.assertTrue(passed, observed)
+
+    # -- AC-C5: missing/inconsistent provenance fields ---------------------
+
+    def test_ac_c5_missing_workflow_run_id_fails_alone(self) -> None:
+        signal = self._signal()
+        signal["workflow_run_id"] = None
+        passed, observed = self._evaluate_c5(_tmp_dir(), signal=signal)
+        self.assertFalse(passed)
+        self.assertFalse(observed["provenance_present:workflow_run_id"])
+
+    def test_ac_c5_missing_workflow_run_attempt_fails_alone(self) -> None:
+        signal = self._signal()
+        signal["workflow_run_attempt"] = None
+        passed, observed = self._evaluate_c5(_tmp_dir(), signal=signal)
+        self.assertFalse(passed)
+        self.assertFalse(observed["provenance_present:workflow_run_attempt"])
+
+    def test_ac_c5_missing_execution_id_fails_alone(self) -> None:
+        passed, observed = self._evaluate_c5(_tmp_dir(), execution_id="")
+        self.assertFalse(passed)
+        self.assertFalse(observed["provenance_present:execution_id"])
+
+    def test_ac_c5_missing_subject_sha_fails_alone(self) -> None:
+        signal = self._signal()
+        signal["trusted_subject_sha"] = None
+        passed, observed = self._evaluate_c5(_tmp_dir(), signal=signal)
+        self.assertFalse(passed)
+        self.assertFalse(observed["provenance_present:subject_sha"])
+
+    def test_ac_c5_missing_task_commit_fails_alone(self) -> None:
+        signal = self._signal()
+        signal["task_commit"] = None
+        passed, observed = self._evaluate_c5(_tmp_dir(), signal=signal)
+        self.assertFalse(passed)
+        self.assertFalse(observed["provenance_present:task_commit"])
+        self.assertFalse(observed["task_commit_matches_pinned_v2_commit"])
+
+    def test_ac_c5_missing_review_attestation_commit_fails_alone(self) -> None:
+        signal = self._signal()
+        signal["review_attestation_commit"] = None
+        passed, observed = self._evaluate_c5(_tmp_dir(), signal=signal)
+        self.assertFalse(passed)
+        self.assertFalse(observed["provenance_present:review_attestation_commit"])
+
+    def test_ac_c5_task_commit_not_the_pinned_v2_commit_fails_alone(self) -> None:
+        """The exact reviewed false-positive class: a signal claiming *some*
+        task_commit value (non-null) that is not the one pinned v2 control
+        commit this evaluator independently checks against."""
+        signal = self._signal()
+        signal["task_commit"] = "1" * 40
+        passed, observed = self._evaluate_c5(_tmp_dir(), signal=signal)
+        self.assertFalse(passed)
+        self.assertTrue(observed["provenance_present:task_commit"])
+        self.assertFalse(observed["task_commit_matches_pinned_v2_commit"])
+
+    # -- AC-C5: missing/wrong result evidence artifacts ---------------------
+
+    def test_ac_c5_missing_adapter_transcript_artifact_fails_alone(self) -> None:
+        output_dir = _tmp_dir()
+        artifacts = [a for a in self._artifacts(output_dir) if a["id"] != "adapter-transcript"]
+        passed, observed = self._evaluate_c5(output_dir, artifacts=artifacts)
+        self.assertFalse(passed)
+        self.assertFalse(observed["artifact_verified:adapter-transcript"])
+
+    def test_ac_c5_missing_required_check_log_artifact_fails_alone(self) -> None:
+        output_dir = _tmp_dir()
+        artifacts = [a for a in self._artifacts(output_dir) if a["id"] != "required-check-log"]
+        passed, observed = self._evaluate_c5(output_dir, artifacts=artifacts)
+        self.assertFalse(passed)
+        self.assertFalse(observed["artifact_verified:required-check-log"])
+
+    def test_ac_c5_artifact_declared_path_does_not_exist_fails(self) -> None:
+        output_dir = _tmp_dir()
+        artifacts = self._artifacts(output_dir)
+        artifacts[0]["path"] = "evidence/does-not-exist.txt"
+        passed, observed = self._evaluate_c5(output_dir, artifacts=artifacts)
+        self.assertFalse(passed)
+        self.assertFalse(observed["artifact_verified:{}".format(artifacts[0]["id"])])
+
+    def test_ac_c5_artifact_path_escaping_evidence_root_fails(self) -> None:
+        output_dir = _tmp_dir()
+        artifacts = self._artifacts(output_dir)
+        artifacts[0]["path"] = "../escaped.txt"
+        passed, observed = self._evaluate_c5(output_dir, artifacts=artifacts)
+        self.assertFalse(passed)
+        self.assertFalse(observed["artifact_verified:{}".format(artifacts[0]["id"])])
+
+    def test_ac_c5_artifact_wrong_declared_size_fails(self) -> None:
+        output_dir = _tmp_dir()
+        artifacts = self._artifacts(output_dir)
+        artifacts[0]["size_bytes"] = artifacts[0]["size_bytes"] + 1
+        passed, observed = self._evaluate_c5(output_dir, artifacts=artifacts)
+        self.assertFalse(passed)
+        self.assertFalse(observed["artifact_verified:{}".format(artifacts[0]["id"])])
+
+    def test_ac_c5_artifact_wrong_declared_sha256_fails(self) -> None:
+        output_dir = _tmp_dir()
+        artifacts = self._artifacts(output_dir)
+        artifacts[0]["sha256"] = "0" * 64
+        passed, observed = self._evaluate_c5(output_dir, artifacts=artifacts)
+        self.assertFalse(passed)
+        self.assertFalse(observed["artifact_verified:{}".format(artifacts[0]["id"])])
+
+    # -- AC-C5: task/review control-input binding mismatches ---------------
+
+    def test_ac_c5_task_not_loaded_fails(self) -> None:
+        passed, observed = self._evaluate_c5(_tmp_dir(), task_loaded=False)
+        self.assertFalse(passed)
+        self.assertFalse(observed["control_input_loaded_and_bound:task-artifact"])
+
+    def test_ac_c5_task_id_binding_mismatch_fails(self) -> None:
+        task = self._task()
+        task["task_id"] = "someone-else/other-repo#1"
+        passed, observed = self._evaluate_c5(_tmp_dir(), task=task)
+        self.assertFalse(passed)
+        self.assertFalse(observed["control_input_loaded_and_bound:task-artifact"])
+
+    def test_ac_c5_task_base_sha_binding_mismatch_fails(self) -> None:
+        task = self._task()
+        task["base_sha"] = "9" * 40
+        passed, observed = self._evaluate_c5(_tmp_dir(), task=task)
+        self.assertFalse(passed)
+        self.assertFalse(observed["control_input_loaded_and_bound:task-artifact"])
+
+    def test_ac_c5_review_not_loaded_fails(self) -> None:
+        passed, observed = self._evaluate_c5(_tmp_dir(), review_loaded=False)
+        self.assertFalse(passed)
+        self.assertFalse(observed["control_input_loaded_and_bound:review-attestation"])
+
+    def test_ac_c5_review_task_id_binding_mismatch_fails(self) -> None:
+        review = self._review()
+        review["task_id"] = "someone-else/other-repo#1"
+        passed, observed = self._evaluate_c5(_tmp_dir(), review=review)
+        self.assertFalse(passed)
+        self.assertFalse(observed["control_input_loaded_and_bound:review-attestation"])
+
+    def test_ac_c5_review_reviewed_sha_binding_mismatch_fails(self) -> None:
+        """The review must attest exactly this run's subject SHA -- a
+        review that is otherwise well-formed but reviewed a different
+        commit must not bind."""
+        review = self._review()
+        review["reviewed_sha"] = "9" * 40
+        passed, observed = self._evaluate_c5(_tmp_dir(), review=review)
+        self.assertFalse(passed)
+        self.assertFalse(observed["control_input_loaded_and_bound:review-attestation"])
+
+    # -- AC-C5: post-publication outputs must never be claimed early -------
+
+    def test_ac_c5_claiming_verification_report_as_a_required_artifact_fails_closed(self) -> None:
+        output_dir = _tmp_dir()
+        params = self._ac_c5_params()
+        params["required_result_artifact_ids"] = list(params["required_result_artifact_ids"]) + [
+            "verification-report"
+        ]
+        passed, observed = self._evaluate_c5(output_dir, params=params)
+        self.assertFalse(passed)
+        self.assertIn("verification-report", observed.get("post_publication_outputs_wrongly_claimed", []))
+
+    def test_ac_c5_claiming_workflow_run_metadata_as_a_control_input_fails_closed(self) -> None:
+        output_dir = _tmp_dir()
+        params = self._ac_c5_params()
+        params["required_control_inputs"] = list(params["required_control_inputs"]) + [
+            "workflow-run-metadata"
+        ]
+        passed, observed = self._evaluate_c5(output_dir, params=params)
+        self.assertFalse(passed)
+        self.assertIn("workflow-run-metadata", observed.get("post_publication_outputs_wrongly_claimed", []))
+
+    # -- AC-C5: malformed/unknown parameter shapes fail closed -------------
+
+    def test_ac_c5_wrong_evaluation_phase_fails_closed(self) -> None:
+        output_dir = _tmp_dir()
+        params = self._ac_c5_params()
+        params["evaluation_phase"] = "post_publication"
+        passed, observed = self._evaluate_c5(output_dir, params=params)
+        self.assertFalse(passed)
+        self.assertEqual("unsupported_evaluation_phase", observed.get("error"))
+
+    def test_ac_c5_missing_required_provenance_parameter_fails_closed(self) -> None:
+        output_dir = _tmp_dir()
+        params = self._ac_c5_params()
+        del params["required_provenance"]
+        passed, observed = self._evaluate_c5(output_dir, params=params)
+        self.assertFalse(passed)
+        self.assertEqual("malformed_ac_c5_parameters", observed.get("error"))
+
+    def test_ac_c5_unsupported_control_input_type_fails_closed(self) -> None:
+        output_dir = _tmp_dir()
+        params = self._ac_c5_params()
+        params["required_control_inputs"] = list(params["required_control_inputs"]) + ["unexpected-input"]
+        passed, observed = self._evaluate_c5(output_dir, params=params)
+        self.assertFalse(passed)
+        self.assertTrue(observed.get("unsupported_control_input:unexpected-input"))
+
+    # -- AC-C6 baseline -----------------------------------------------------
+
+    def test_ac_c6_baseline_all_correct_passes(self) -> None:
+        passed, observed = self._evaluate_c6()
+        self.assertTrue(passed, observed)
+
+    # -- AC-C6: ineligible review / non-empty reason codes ------------------
+
+    def test_ac_c6_ineligible_review_fails_alone(self) -> None:
+        review = self._review()
+        review["eligibility"]["eligible"] = False
+        passed, observed = self._evaluate_c6(review=review)
+        self.assertFalse(passed)
+        self.assertFalse(observed["eligible"])
+
+    def test_ac_c6_non_empty_reason_codes_fails_alone(self) -> None:
+        review = self._review()
+        review["eligibility"]["reason_codes"] = ["reviewer_declined"]
+        passed, observed = self._evaluate_c6(review=review)
+        self.assertFalse(passed)
+        self.assertFalse(observed["reason_codes_empty"])
+
+    # -- AC-C6: wrong policy / wrong risk class ------------------------------
+
+    def test_ac_c6_wrong_eligibility_policy_id_fails_alone(self) -> None:
+        review = self._review()
+        review["eligibility"]["policy_id"] = "some-other-policy.v1"
+        passed, observed = self._evaluate_c6(review=review)
+        self.assertFalse(passed)
+        self.assertFalse(observed["policy_id_matches"])
+
+    def test_ac_c6_wrong_task_review_policy_id_fails_alone(self) -> None:
+        task = self._task()
+        task["review_policy"]["policy_id"] = "some-other-policy.v1"
+        passed, observed = self._evaluate_c6(task=task)
+        self.assertFalse(passed)
+        self.assertFalse(observed["policy_id_matches"])
+
+    def test_ac_c6_wrong_eligibility_risk_class_fails_alone(self) -> None:
+        review = self._review()
+        review["eligibility"]["risk_class"] = "L1"
+        passed, observed = self._evaluate_c6(review=review)
+        self.assertFalse(passed)
+        self.assertFalse(observed["risk_class_matches"])
+
+    def test_ac_c6_wrong_task_risk_class_fails_alone(self) -> None:
+        task = self._task()
+        task["risk_class"] = "L1"
+        passed, observed = self._evaluate_c6(task=task)
+        self.assertFalse(passed)
+        self.assertFalse(observed["risk_class_matches"])
+
+    # -- AC-C6: independently recomputed lineage overlap ---------------------
+
+    def test_ac_c6_recomputed_lineage_overlap_fails_alone(self) -> None:
+        """A real credential_principal overlap between executor and
+        reviewer, correctly self-reported as such -- the recomputation
+        itself, not merely the self-report, must be what fails this."""
+        signal = self._signal()
+        review = self._review()
+        shared = signal["executor"]["identity"]["credential_principal"]
+        review["reviewer_identity"]["credential_principal"] = shared
+        review["eligibility"]["overlap_results"] = [
+            {**entry, "overlap": True, "reviewer_value": shared}
+            if entry["field"] == "credential_principal"
+            else entry
+            for entry in review["eligibility"]["overlap_results"]
+        ]
+        passed, observed = self._evaluate_c6(signal=signal, review=review)
+        self.assertFalse(passed)
+        self.assertFalse(observed["recomputed_lineage_overlap_free"])
+        # Self-report and recomputation agree here, so this specific test
+        # isolates the recomputed-overlap failure mode, not a contradiction.
+        self.assertTrue(observed["self_reported_overlap_results_consistent"])
+
+    # -- AC-C6: self-reported overlap_results contradicting recomputation ---
+
+    def test_ac_c6_self_reported_overlap_contradicting_recomputation_fails_alone(self) -> None:
+        """Self-report falsely claims a lineage overlap that does not
+        actually exist: recomputation itself finds no real overlap, but the
+        self-report's own claim disagrees with that recomputation, so
+        AC-C6 must still fail on the contradiction alone."""
+        review = self._review()
+        review["eligibility"]["overlap_results"] = [
+            {**entry, "overlap": True} if entry["field"] == "agent_runtime_id" else entry
+            for entry in review["eligibility"]["overlap_results"]
+        ]
+        passed, observed = self._evaluate_c6(review=review)
+        self.assertFalse(passed)
+        self.assertFalse(observed["self_reported_overlap_results_consistent"])
+        self.assertTrue(observed["recomputed_lineage_overlap_free"])
+
+    def test_ac_c6_missing_overlap_results_entry_for_forbidden_field_fails(self) -> None:
+        review = self._review()
+        review["eligibility"]["overlap_results"] = [
+            entry for entry in review["eligibility"]["overlap_results"] if entry["field"] != "authored_commits"
+        ]
+        passed, observed = self._evaluate_c6(review=review)
+        self.assertFalse(passed)
+        self.assertFalse(observed["self_reported_overlap_results_consistent"])
+
+    # -- AC-C6: unloaded review / malformed parameters fail closed ----------
+
+    def test_ac_c6_review_not_loaded_fails_closed(self) -> None:
+        passed, observed = self._evaluate_c6(review_loaded=False)
+        self.assertFalse(passed)
+        self.assertEqual("review_attestation_not_loaded", observed.get("error"))
+
+    def test_ac_c6_missing_forbidden_lineage_overlaps_parameter_fails_closed(self) -> None:
+        params = self._ac_c6_params()
+        del params["forbidden_lineage_overlaps"]
+        passed, observed = self._evaluate_c6(params=params)
+        self.assertFalse(passed)
+        self.assertEqual("malformed_ac_c6_parameters", observed.get("error"))
+
+    def test_ac_c6_require_eligible_not_true_parameter_fails_closed(self) -> None:
+        params = self._ac_c6_params()
+        params["require_eligible"] = False
+        passed, observed = self._evaluate_c6(params=params)
+        self.assertFalse(passed)
+        self.assertEqual("malformed_ac_c6_parameters", observed.get("error"))
+
+    # -- Dispatch sanity: `_evaluate_criterion` routes to the new evaluators -
+
+    def test_evaluate_criterion_dispatches_artifact_exists_to_ac_c5(self) -> None:
+        output_dir = _tmp_dir()
+        criterion = {"id": "AC-C5", "predicate_id": "artifact.exists", "parameters": self._ac_c5_params()}
+        passed, observed = propagate_b3._evaluate_criterion(
+            criterion,
+            self._task(),
+            [],
+            self._signal(),
+            self._review(),
+            None,
+            None,
+            False,
+            "exec-1",
+            self._artifacts(output_dir),
+            output_dir,
+        )
+        self.assertTrue(passed, observed)
+
+    def test_evaluate_criterion_dispatches_identity_lineage_to_ac_c6(self) -> None:
+        criterion = {
+            "id": "AC-C6",
+            "predicate_id": "identity.lineage.no_overlap",
+            "parameters": self._ac_c6_params(),
+        }
+        passed, observed = propagate_b3._evaluate_criterion(
+            criterion,
+            self._task(),
+            [],
+            self._signal(),
+            self._review(),
+            None,
+            None,
+            False,
+            "exec-1",
+            [],
+            _tmp_dir(),
+        )
+        self.assertTrue(passed, observed)
 
 
 if __name__ == "__main__":

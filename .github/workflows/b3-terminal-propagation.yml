@@ -125,6 +125,34 @@ name: B3 Terminal Failure Propagation
 #      (`git rev-parse FETCH_HEAD`) and threads both commits through to
 #      `workflow-run-metadata.json` as `task_commit` /
 #      `review_attestation_commit`.
+#
+# Corrective attempt 5 (Issue #27 v2 -- independent review of commit
+# a7e4572 on this same Draft PR returned REQUEST_CHANGES: AC-C5 became
+# `passed=true` from only the presence of `task_commit` and
+# `review_attestation_commit`, without verifying the artifact/provenance
+# claims the v1 criterion actually declared, some of which -- the
+# verification report and workflow-run metadata -- do not exist yet at
+# result-finalization time and so can never truthfully be asserted there):
+#   1. `B3_CONTROL_TASK_COMMIT` / `B3_CONTROL_TASK_PATH` below now pin the
+#      replacement immutable v2 task contract
+#      (`.ai/tasks/27/b3-correction-task.v2.json` at commit
+#      `6f9ed9f849896936de482504c01d6447a6394d6d`), which narrows AC-C5 to
+#      only artifacts/provenance actually observable at result-finalization
+#      time and tightens AC-C6 to require the full review-eligibility
+#      shape, not just lineage-overlap freedom. The v1 task commit and the
+#      externally reviewed a7e4572 commit remain unmodified historical
+#      evidence; this workflow no longer fetches v1 at all;
+#   2. the live provider signal's `executor.adapter_version` now reports
+#      `claude-code-2.1.197-b3-correction-v2`, matching the v2 task
+#      contract's own `executor.version` exactly, so a run under this
+#      workflow can never be mistaken for one executed under the
+#      superseded v1 task;
+#   3. `tools/propagate_b3.py`'s AC-C5/AC-C6 evaluators were rewritten to
+#      match the v2 contract's narrowed parameter shapes (see that file's
+#      own `_evaluate_ac_c5` / `_evaluate_ac_c6` docstrings for the full,
+#      independently-verified fact list); no workflow step above changes as
+#      a result -- the corrected evaluation is entirely internal to the
+#      existing `propagate_b3.py run` invocation already wired up below.
 
 
 
@@ -171,8 +199,13 @@ env:
   # branch tip: `git fetch origin <sha>` either resolves to exactly this
   # commit or fails outright, so there is no separate "did the branch move"
   # check to get wrong.
-  B3_CONTROL_TASK_COMMIT: "9b6db4412eb5ef032d4333ff8023c1527383de87"
-  B3_CONTROL_TASK_PATH: ".ai/tasks/27/b3-correction-task.v1.json"
+  #
+  # Corrective attempt 5 (Issue #27 v2 -- independent review of a7e4572
+  # returned REQUEST_CHANGES on AC-C5): superseded from the v1 task commit
+  # to the v2 task commit/path below. v1 remains historical evidence; it is
+  # never fetched by this workflow again.
+  B3_CONTROL_TASK_COMMIT: "6f9ed9f849896936de482504c01d6447a6394d6d"
+  B3_CONTROL_TASK_PATH: ".ai/tasks/27/b3-correction-task.v2.json"
   # The independent review-attestation control ref/path -- a *separate*
   # control ref/path from Issue #19's own
   # (`control/issue-19-b3-review-attestation`), because a review published
@@ -641,11 +674,14 @@ jobs:
               "attempt": attempt,
               "executor": {
                   "adapter": "human-supervised-claude-code",
-                  # Must match the immutable Issue #27 task contract's own
-                  # `executor.version` (`claude-code-2.1.197-b3-correction`)
-                  # -- this live signal is produced under that exact task,
-                  # not Issue #19's original bootstrap task.
-                  "adapter_version": "claude-code-2.1.197-b3-correction",
+                  # Must match the immutable Issue #27 v2 task contract's
+                  # own `executor.version`
+                  # (`claude-code-2.1.197-b3-correction-v2`) -- this live
+                  # signal is produced under that exact v2 correction task,
+                  # not Issue #19's original bootstrap task nor the v1
+                  # correction task (superseded after REQUEST_CHANGES on
+                  # AC-C5).
+                  "adapter_version": "claude-code-2.1.197-b3-correction-v2",
                   "identity": {
                       "operator_principal": "github:yurikuchumov-ux",
                       "agent_runtime_id": "claude-code:b3-session",

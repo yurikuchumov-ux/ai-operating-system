@@ -772,29 +772,282 @@ def _fixture_manifest_matches_required_scenarios(
     return True
 
 
+def _recompute_field_overlap(
+    field: str, signal: Mapping[str, Any], review: Mapping[str, Any]
+) -> bool:
+    """Real, per-field recomputation of one lineage-overlap fact from the
+    executor identity/authored commits actually observed and the reviewer
+    identity actually loaded from the fetched review-attestation document.
+    Shared by `_identity_lineage_passes` (the aggregate AC-C6 gate) and
+    `_self_reported_overlap_results_consistent` (the self-report
+    cross-check) so both read the exact same recomputation."""
+    executor_identity = signal.get("executor", {}).get("identity", {})
+    reviewer_identity = review.get("reviewer_identity", {})
+    if field == "authored_commits":
+        result_commits = set(signal.get("git_observation", {}).get("authored_commits", []))
+        reviewer_commits = set(reviewer_identity.get("authored_commits", []))
+        return bool(result_commits & reviewer_commits)
+    return executor_identity.get(field) == reviewer_identity.get(field)
+
+
 def _identity_lineage_passes(
     task: Mapping[str, Any], signal: Mapping[str, Any], review: Optional[Mapping[str, Any]]
 ) -> bool:
-    """Real recomputation of lineage-overlap freedom from the executor
-    identity/authored commits actually observed and the reviewer identity
-    actually loaded from the fetched review-attestation document -- mirrors
-    (without importing or modifying) `verify_b2.B2Verifier._actual_lineage_overlaps`."""
+    """Real recomputation of lineage-overlap freedom -- mirrors (without
+    importing or modifying) `verify_b2.B2Verifier._actual_lineage_overlaps`."""
     if review is None:
         return False
-    forbidden = task.get("review_policy", {}).get("forbidden_lineage_overlaps", [])
-    executor_identity = signal.get("executor", {}).get("identity", {})
-    reviewer_identity = review.get("reviewer_identity", {})
+    reviewer_identity = review.get("reviewer_identity")
     if not isinstance(reviewer_identity, dict):
         return False
-    result_commits = set(signal.get("git_observation", {}).get("authored_commits", []))
-    reviewer_commits = set(reviewer_identity.get("authored_commits", []))
+    forbidden = task.get("review_policy", {}).get("forbidden_lineage_overlaps", [])
+    return not any(_recompute_field_overlap(field, signal, review) for field in forbidden)
+
+
+def _self_reported_overlap_results_consistent(
+    review: Mapping[str, Any], signal: Mapping[str, Any], forbidden: Sequence[str]
+) -> bool:
+    """The review-attestation's own self-asserted `eligibility.overlap_results`
+    must not disagree with what is independently recomputed here for every
+    forbidden lineage field -- a reviewer document claiming `overlap: false`
+    for a field this tool recomputes as actually overlapping (or vice
+    versa) fails closed rather than being trusted at face value. A missing,
+    malformed, or incomplete `overlap_results` array also fails closed."""
+    entries = review.get("eligibility", {}).get("overlap_results")
+    if not isinstance(entries, list):
+        return False
+    self_reported: Dict[str, Any] = {}
+    for entry in entries:
+        if not isinstance(entry, dict) or "field" not in entry or "overlap" not in entry:
+            return False
+        self_reported[entry["field"]] = entry["overlap"]
     for field in forbidden:
-        if field == "authored_commits":
-            if result_commits & reviewer_commits:
-                return False
-        elif executor_identity.get(field) == reviewer_identity.get(field):
+        if field not in self_reported:
+            return False
+        if bool(self_reported[field]) != _recompute_field_overlap(field, signal, review):
             return False
     return True
+
+
+_AC_C5_RECOGNIZED_CONTROL_INPUTS = {"task-artifact", "review-attestation"}
+
+# Issue #27 v2 correction: the exact, pinned immutable v2 task control
+# commit AC-C5 independently checks `signal["task_commit"]` against --
+# never merely "is task_commit present" (the reviewed false-positive), but
+# "is it the one specific commit the workflow's fetch step is pinned to".
+# A compromised or buggy signal claiming any other commit value is
+# rejected here, independent of the workflow's own fetch-step self-report.
+_EXPECTED_V2_TASK_COMMIT = "6f9ed9f849896936de482504c01d6447a6394d6d"
+
+
+def _artifact_matches_declared(artifact: Mapping[str, Any], output_dir: Path) -> bool:
+    """Independently re-read one already-built result-artifact entry's own
+    bytes from disk under the evidence root and recompute size/sha256 --
+    never trust the entry dict's own claims about itself. Fails closed
+    (`False`) on any missing file, path escaping the evidence root,
+    oversized content, or size/hash mismatch; never raises."""
+    path_value = artifact.get("path")
+    if not isinstance(path_value, str) or not path_value:
+        return False
+    try:
+        output_root = output_dir.resolve()
+        absolute = (output_dir / path_value).resolve()
+        absolute.relative_to(output_root)
+    except (OSError, ValueError):
+        return False
+    if not absolute.is_file():
+        return False
+    try:
+        raw = absolute.read_bytes()
+    except OSError:
+        return False
+    if len(raw) > MAX_INPUT_BYTES:
+        return False
+    return len(raw) == artifact.get("size_bytes") and sha256_bytes(raw) == artifact.get("sha256")
+
+
+def _evaluate_ac_c5(
+    params: Mapping[str, Any],
+    task: Mapping[str, Any],
+    signal: Mapping[str, Any],
+    review: Optional[Mapping[str, Any]],
+    execution_id: str,
+    artifacts: Sequence[Mapping[str, Any]],
+    output_dir: Path,
+) -> Tuple[bool, Dict[str, Any]]:
+    """Independently verify, at result-finalization time only, exactly the
+    facts the v2 task contract narrows AC-C5 to: real result evidence
+    artifacts (bytes re-read and re-hashed from disk via
+    `_artifact_matches_declared`, never trusted from the already-built
+    artifact dict alone), real task/review control inputs actually loaded
+    and bound to this run's own task ID / base SHA / subject SHA, and every
+    required provenance field genuinely non-null -- including that
+    `task_commit` is exactly the one pinned v2 control commit
+    (`_EXPECTED_V2_TASK_COMMIT`). Never asserts `verification-report` or
+    `workflow-run-metadata` existence: both are post-publication outputs
+    that do not exist yet at this point in the pipeline (they are gated
+    later by `verification.passed` and the Check Run conclusion), and any
+    parameter shape that tries to claim one of those as already-required
+    here is rejected outright, not silently ignored. Any other
+    missing/malformed/unrecognized parameter shape also fails closed."""
+    observed: Dict[str, Any] = {}
+
+    if params.get("evaluation_phase") != "result_finalization":
+        return False, {"error": "unsupported_evaluation_phase"}
+
+    required_artifact_ids = params.get("required_result_artifact_ids")
+    required_control_inputs = params.get("required_control_inputs")
+    required_provenance = params.get("required_provenance")
+    post_publication_only = params.get("not_asserted_until_post_publication")
+    if (
+        not isinstance(required_artifact_ids, list)
+        or not required_artifact_ids
+        or not isinstance(required_control_inputs, list)
+        or not required_control_inputs
+        or not isinstance(required_provenance, list)
+        or not required_provenance
+        or not isinstance(post_publication_only, list)
+    ):
+        return False, {"error": "malformed_ac_c5_parameters"}
+
+    # Structural guard against the exact false-positive class this
+    # correction closes: a parameter shape that lists a post-publication
+    # artifact/control-input type (`verification-report`,
+    # `workflow-run-metadata`) among what must already be present at
+    # result-finalization time. Never silently ignored -- fails the whole
+    # criterion closed instead of pretending not-yet-existing evidence is
+    # already there.
+    claimed_early = (set(required_artifact_ids) | set(required_control_inputs)) & set(
+        post_publication_only
+    )
+    if claimed_early:
+        observed["post_publication_outputs_wrongly_claimed"] = sorted(claimed_early)
+        return False, observed
+
+    by_id = {a.get("id"): a for a in artifacts if isinstance(a, Mapping)}
+    artifacts_ok = True
+    for artifact_id in required_artifact_ids:
+        entry = by_id.get(artifact_id)
+        entry_ok = entry is not None and _artifact_matches_declared(entry, output_dir)
+        observed["artifact_verified:{}".format(artifact_id)] = entry_ok
+        artifacts_ok = artifacts_ok and entry_ok
+
+    provenance_values: Dict[str, Any] = {
+        "workflow_run_id": signal.get("workflow_run_id"),
+        "workflow_run_attempt": signal.get("workflow_run_attempt"),
+        "execution_id": execution_id,
+        "subject_sha": signal.get("trusted_subject_sha"),
+        "task_commit": signal.get("task_commit"),
+        "review_attestation_commit": signal.get("review_attestation_commit"),
+    }
+    provenance_ok = True
+    for field in required_provenance:
+        value = provenance_values.get(field)
+        present = value is not None and value != ""
+        observed["provenance_present:{}".format(field)] = present
+        provenance_ok = provenance_ok and present
+
+    task_commit_ok = signal.get("task_commit") == _EXPECTED_V2_TASK_COMMIT
+    observed["task_commit_matches_pinned_v2_commit"] = task_commit_ok
+
+    go = signal.get("git_observation", {})
+    task_bound = (
+        task is not None
+        and task.get("task_id") == signal.get("task_id")
+        and task.get("base_sha") == go.get("base_sha")
+    )
+    review_bound = (
+        review is not None
+        and review.get("task_id") == signal.get("task_id")
+        and review.get("reviewed_sha") == signal.get("trusted_subject_sha")
+    )
+    control_inputs_ok = True
+    for control_input in required_control_inputs:
+        if control_input not in _AC_C5_RECOGNIZED_CONTROL_INPUTS:
+            observed["unsupported_control_input:{}".format(control_input)] = True
+            control_inputs_ok = False
+            continue
+        bound = task_bound if control_input == "task-artifact" else review_bound
+        observed["control_input_loaded_and_bound:{}".format(control_input)] = bound
+        control_inputs_ok = control_inputs_ok and bound
+
+    passed = artifacts_ok and provenance_ok and task_commit_ok and control_inputs_ok
+    return passed, observed
+
+
+def _evaluate_ac_c6(
+    params: Mapping[str, Any],
+    task: Mapping[str, Any],
+    signal: Mapping[str, Any],
+    review: Optional[Mapping[str, Any]],
+) -> Tuple[bool, Dict[str, Any]]:
+    """Independently verify every fact the v2 task contract narrows AC-C6
+    to, never trusting the review-attestation's own self-assertions alone:
+    the configured review policy and risk class actually match both this
+    criterion's own parameters and the task's own declared policy/risk
+    class, eligibility is genuinely `true` with empty `reason_codes`,
+    forbidden lineage overlaps are independently recomputed as absent, and
+    the review document's own self-reported `overlap_results` cannot
+    disagree with that recomputation. Any missing/malformed parameter
+    shape, an unloaded review, or a missing `eligibility` object fails
+    closed."""
+    if (
+        not isinstance(params.get("required_policy_id"), str)
+        or not params.get("required_policy_id")
+        or not isinstance(params.get("required_risk_class"), str)
+        or not params.get("required_risk_class")
+        or not isinstance(params.get("forbidden_lineage_overlaps"), list)
+        or not params.get("forbidden_lineage_overlaps")
+        or params.get("require_eligible") is not True
+        or params.get("require_reason_codes_empty") is not True
+        or params.get("required_distinct_from_executor") is not True
+    ):
+        return False, {"error": "malformed_ac_c6_parameters"}
+
+    if review is None:
+        return False, {"error": "review_attestation_not_loaded"}
+    eligibility = review.get("eligibility")
+    if not isinstance(eligibility, dict):
+        return False, {"error": "review_eligibility_missing"}
+
+    required_policy_id = params["required_policy_id"]
+    required_risk_class = params["required_risk_class"]
+    forbidden = params["forbidden_lineage_overlaps"]
+    observed: Dict[str, Any] = {}
+
+    policy_ok = (
+        eligibility.get("policy_id") == required_policy_id
+        and task.get("review_policy", {}).get("policy_id") == required_policy_id
+    )
+    observed["policy_id_matches"] = policy_ok
+
+    risk_class_ok = (
+        eligibility.get("risk_class") == required_risk_class
+        and task.get("risk_class") == required_risk_class
+    )
+    observed["risk_class_matches"] = risk_class_ok
+
+    eligible_ok = eligibility.get("eligible") is True
+    observed["eligible"] = eligible_ok
+
+    reason_codes_ok = eligibility.get("reason_codes") == []
+    observed["reason_codes_empty"] = reason_codes_ok
+
+    recomputed_overlap_free = _identity_lineage_passes(task, signal, review)
+    observed["recomputed_lineage_overlap_free"] = recomputed_overlap_free
+
+    self_report_consistent = _self_reported_overlap_results_consistent(review, signal, forbidden)
+    observed["self_reported_overlap_results_consistent"] = self_report_consistent
+
+    passed = (
+        policy_ok
+        and risk_class_ok
+        and eligible_ok
+        and reason_codes_ok
+        and recomputed_overlap_free
+        and self_report_consistent
+    )
+    return passed, observed
 
 
 def _evaluate_criterion(
@@ -806,6 +1059,9 @@ def _evaluate_criterion(
     adapter_check_result: Optional[bool],
     direct_exit: Optional[int],
     deps_installed: bool,
+    execution_id: str,
+    artifacts: Sequence[Mapping[str, Any]],
+    output_dir: Path,
 ) -> Tuple[bool, Dict[str, Any]]:
     """Truthfully evaluate one task-declared acceptance criterion from real,
     directly observed evidence only. Never reads `adapter_self_report`,
@@ -848,16 +1104,10 @@ def _evaluate_criterion(
         return manifest_ok and linked_ok, {"manifest_matches_required_scenarios": manifest_ok}
 
     if predicate_id == "artifact.exists":
-        task_commit_present = bool(signal.get("task_commit"))
-        review_commit_present = bool(signal.get("review_attestation_commit"))
-        return task_commit_present and review_commit_present, {
-            "task_commit_present": task_commit_present,
-            "review_attestation_commit_present": review_commit_present,
-        }
+        return _evaluate_ac_c5(params, task, signal, review, execution_id, artifacts, output_dir)
 
     if predicate_id == "identity.lineage.no_overlap":
-        passed = _identity_lineage_passes(task, signal, review)
-        return passed, {"lineage_overlap_free": passed}
+        return _evaluate_ac_c6(params, task, signal, review)
 
     return False, {"error": "unsupported_predicate"}
 
@@ -867,6 +1117,7 @@ def build_checks_and_acceptance(
     review: Optional[Mapping[str, Any]],
     signal: Mapping[str, Any],
     adapter_check_result: Optional[bool],
+    execution_id: str,
     output_dir: Path,
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]]]:
     """Build `result.checks` / `result.acceptance_results` / additional
@@ -948,7 +1199,8 @@ def build_checks_and_acceptance(
         if not any(cid in checks_ids for cid in criterion.get("linked_checks", [])):
             continue
         passed, observed = _evaluate_criterion(
-            criterion, task, checks, signal, review, adapter_check_result, direct_exit, deps_installed
+            criterion, task, checks, signal, review, adapter_check_result, direct_exit, deps_installed,
+            execution_id, artifacts, output_dir,
         )
         acceptance_results.append(
             {
@@ -1129,7 +1381,7 @@ def run_pipeline(
         review_doc = None
 
     checks, acceptance_results, extra_artifacts = build_checks_and_acceptance(
-        task_doc, review_doc, signal, adapter_check_result, output_dir
+        task_doc, review_doc, signal, adapter_check_result, execution_id, output_dir
     )
     # B1 candidate-evidence artifact paths are relative to its own nested
     # `b1-raw/` output dir; rewritten here so they still resolve correctly
