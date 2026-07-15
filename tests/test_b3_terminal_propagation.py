@@ -67,7 +67,7 @@ def _load_json(path: Path) -> Any:
 
 
 def _tmp_dir() -> Path:
-    return Path(tempfile.mkdtemp(prefix="b3-propagator-test-", dir="/private/tmp"))
+    return Path(tempfile.mkdtemp(prefix="b3-propagator-test-"))
 
 
 class B3FixtureOracleTests(unittest.TestCase):
