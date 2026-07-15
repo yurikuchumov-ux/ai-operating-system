@@ -439,11 +439,11 @@
       "id": "accept-live-required-evidence",
       "signal": {
         "path": "documents/signal-accept-live-required-evidence.json",
-        "sha256": "1a3c3a49f0486df54f5e4657ae55fd49d1f4cf176ba48caf1745b0ea3e19bf76"
+        "sha256": "4a6bd661ad4ce03d4f23cbf825507d68881a8a52e9df823ff7349937c5a0ad00"
       },
       "task": {
         "path": "documents/task-issue-27-live.json",
-        "sha256": "970faabcdc6d1c57e94f079143097101aa6082212785560e8da305a98a5d73c3"
+        "sha256": "a8d91702bd7b931899370cc5b49479a82fa4be80ead53fba473f59b5ecc7a564"
       },
       "review_attestation": {
         "path": "documents/review-issue-27-live.json",
@@ -468,11 +468,11 @@
       "id": "reject-adapter-command-failure",
       "signal": {
         "path": "documents/signal-reject-adapter-command-failure.json",
-        "sha256": "c188724c7492fd0da66932328fa6d4077317ab900ccacd7c3485d15213bec005"
+        "sha256": "4202d6dd81d29b3ea9b4e2e5107d9183fa1eceaf4f4593db43d2ddaabdcd1534"
       },
       "task": {
         "path": "documents/task-issue-27-live.json",
-        "sha256": "970faabcdc6d1c57e94f079143097101aa6082212785560e8da305a98a5d73c3"
+        "sha256": "a8d91702bd7b931899370cc5b49479a82fa4be80ead53fba473f59b5ecc7a564"
       },
       "review_attestation": {
         "path": "documents/review-issue-27-live.json",
@@ -496,11 +496,11 @@
       "id": "reject-direct-check-failure",
       "signal": {
         "path": "documents/signal-reject-direct-check-failure.json",
-        "sha256": "218ebd98a7d901bb4cf2d0ec418fec15d6c3174b587aa55bc084cc32b00b7378"
+        "sha256": "8817876016014a4515dd77dc7f13b4a627be1422d7c8fe5f3a2dc3a36dce9fd0"
       },
       "task": {
         "path": "documents/task-issue-27-live.json",
-        "sha256": "970faabcdc6d1c57e94f079143097101aa6082212785560e8da305a98a5d73c3"
+        "sha256": "a8d91702bd7b931899370cc5b49479a82fa4be80ead53fba473f59b5ecc7a564"
       },
       "review_attestation": {
         "path": "documents/review-issue-27-live.json",
@@ -524,11 +524,11 @@
       "id": "reject-missing-acceptance-evidence",
       "signal": {
         "path": "documents/signal-reject-missing-acceptance-evidence.json",
-        "sha256": "86d8d2792dea8ae5d32cac44d6a51739c9f2739f4fa9cd400348ba707e7609dc"
+        "sha256": "e845151a428d00fa9133805645f07bef3b40287e80d414527c532f47505689ae"
       },
       "task": {
         "path": "documents/task-issue-27-live.json",
-        "sha256": "970faabcdc6d1c57e94f079143097101aa6082212785560e8da305a98a5d73c3"
+        "sha256": "a8d91702bd7b931899370cc5b49479a82fa4be80ead53fba473f59b5ecc7a564"
       },
       "review_attestation": {
         "path": "documents/review-issue-27-live.json",
@@ -552,11 +552,11 @@
       "id": "reject-self-report-override",
       "signal": {
         "path": "documents/signal-reject-self-report-override.json",
-        "sha256": "084feee7d17866f9ddb004e59cbafbe827a1ef356f701ec74a9b3f01cbc8014a"
+        "sha256": "4cbdcb6132a823aaab45391d4af9fc4d1faa2ed6d7054a3626675478dad5e0bc"
       },
       "task": {
         "path": "documents/task-issue-27-live.json",
-        "sha256": "970faabcdc6d1c57e94f079143097101aa6082212785560e8da305a98a5d73c3"
+        "sha256": "a8d91702bd7b931899370cc5b49479a82fa4be80ead53fba473f59b5ecc7a564"
       },
       "review_attestation": {
         "path": "documents/review-issue-27-live.json",
@@ -576,6 +576,89 @@
         "check_run_conclusion": "failure",
         "adapter_self_reported_status": "success",
         "actions_job_conclusion": "success"
+      }
+    },
+    {
+      "id": "reject-ac-c5-parameter-shape",
+      "signal": {
+        "path": "documents/signal-accept-live-required-evidence.json",
+        "sha256": "4a6bd661ad4ce03d4f23cbf825507d68881a8a52e9df823ff7349937c5a0ad00"
+      },
+      "task": {
+        "path": "documents/task-issue-27-live-bad-ac-c5-shape.json",
+        "sha256": "7fc14f05f9d931ac3e510730fb24c670f1115e217283be64d8e2dc9af4221915"
+      },
+      "review_attestation": {
+        "path": "documents/review-issue-27-live.json",
+        "sha256": "adf17f4df745dd6b67fd45d9efb9a7b02db03c54af74e4887d6957f826cc3a25"
+      },
+      "verifier_identity": {
+        "path": "documents/verifier-identity.json",
+        "sha256": "8aa983d6a80c0b1ab578cc8e14de2a9211ed00d0933a200de9b28f5e666c0662"
+      },
+      "invocation": {
+        "verification_id": "80000000-0000-4000-8000-000000000021",
+        "evaluated_at": "2026-07-15T12:00:00Z"
+      },
+      "expected": {
+        "status": "change_proposed",
+        "terminal_reason": "completed",
+        "check_run_conclusion": "failure"
+      }
+    },
+    {
+      "id": "reject-duplicate-overlap-results",
+      "signal": {
+        "path": "documents/signal-accept-live-required-evidence.json",
+        "sha256": "4a6bd661ad4ce03d4f23cbf825507d68881a8a52e9df823ff7349937c5a0ad00"
+      },
+      "task": {
+        "path": "documents/task-issue-27-live.json",
+        "sha256": "a8d91702bd7b931899370cc5b49479a82fa4be80ead53fba473f59b5ecc7a564"
+      },
+      "review_attestation": {
+        "path": "documents/review-issue-27-live-duplicate-overlap.json",
+        "sha256": "deeadfd81da7f11dc88ed0ad648ea508da49b25b0ba9f80867107bcbfb455fcd"
+      },
+      "verifier_identity": {
+        "path": "documents/verifier-identity.json",
+        "sha256": "8aa983d6a80c0b1ab578cc8e14de2a9211ed00d0933a200de9b28f5e666c0662"
+      },
+      "invocation": {
+        "verification_id": "80000000-0000-4000-8000-000000000022",
+        "evaluated_at": "2026-07-15T12:00:00Z"
+      },
+      "expected": {
+        "status": "change_proposed",
+        "terminal_reason": "completed",
+        "check_run_conclusion": "failure"
+      }
+    },
+    {
+      "id": "reject-non-rfc3339-started-at",
+      "signal": {
+        "path": "documents/signal-reject-non-rfc3339-started-at.json",
+        "sha256": "80afe5ec8fe759e5afc03ecfb0e9a2098a7e45273ec38df5f380efd3a91bb8f2"
+      },
+      "task": {
+        "path": "documents/task-issue-27-live.json",
+        "sha256": "a8d91702bd7b931899370cc5b49479a82fa4be80ead53fba473f59b5ecc7a564"
+      },
+      "review_attestation": {
+        "path": "documents/review-issue-27-live.json",
+        "sha256": "adf17f4df745dd6b67fd45d9efb9a7b02db03c54af74e4887d6957f826cc3a25"
+      },
+      "verifier_identity": {
+        "path": "documents/verifier-identity.json",
+        "sha256": "8aa983d6a80c0b1ab578cc8e14de2a9211ed00d0933a200de9b28f5e666c0662"
+      },
+      "invocation": {
+        "verification_id": "80000000-0000-4000-8000-000000000023",
+        "evaluated_at": "2026-07-15T12:00:00Z"
+      },
+      "expected": {
+        "status": "failed",
+        "check_run_conclusion": "failure"
       }
     }
   ]

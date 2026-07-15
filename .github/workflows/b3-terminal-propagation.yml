@@ -153,6 +153,65 @@ name: B3 Terminal Failure Propagation
 #      independently-verified fact list); no workflow step above changes as
 #      a result -- the corrected evaluation is entirely internal to the
 #      existing `propagate_b3.py run` invocation already wired up below.
+#
+# Corrective attempt 7 (Issue #27 v3 -- independent review of exact head
+# 06ac835 reproduced three real fail-open/false-positive paths: AC-C5 still
+# only checked "the supplied lists are non-empty", B3 and the unmodified B2
+# verifier both let a later, contradicting `overlap_results` entry for the
+# same field silently win over an earlier one, and this job's own
+# `adapter_started_at` epoch-seconds string was published, unconverted, as
+# `result.started_at`/provider-signal `started_at`, which passed schema
+# validation only because no RFC 3339 format-checker dependency was ever
+# pinned):
+#   1. `B3_CONTROL_TASK_COMMIT` / `B3_CONTROL_TASK_PATH` below now pin the
+#      replacement immutable v3 task contract
+#      (`.ai/tasks/27/b3-correction-task.v3.json` at commit
+#      `15bb125fa77c432084791aa5615515e136b7c9af`), whose AC-C5 declares
+#      `parameter_shape_policy: "exact"` -- `tools/propagate_b3.py`'s
+#      `_evaluate_ac_c5` now requires the task's own `parameters` object to
+#      equal that exact pinned object before any evidence is evaluated at
+#      all, closing the false-positive class where deleting/replacing a
+#      required field still passed. The v1/v2 task commits and the
+#      externally reviewed a7e4572/06ac835 commits remain unmodified
+#      historical evidence; this workflow no longer fetches v1 or v2 at all.
+#      The independent review-attestation control ref/path
+#      (`control/issue-27-b3-review-attestation` /
+#      `.ai/reviews/27/review-attestation.v1.json`) is unchanged and
+#      deliberately kept separate from the task control commit: this run
+#      still fails closed until a new attestation for this exact head SHA is
+#      published against that ref;
+#   2. the live provider signal's `executor.adapter_version` now reports
+#      `claude-code-2.1.197-b3-correction-v3`, matching the v3 task
+#      contract's own `executor.version` exactly, so a run under this
+#      workflow can never be mistaken for one executed under a superseded
+#      task;
+#   3. `adapter_started_at` is no longer published as `started_at` verbatim.
+#      The collect-signal step now converts the epoch-seconds value captured
+#      by "Record adapter start time" into an RFC 3339 UTC string before it
+#      is ever placed in the provider signal, while the raw epoch value is
+#      still preserved separately (`adapter_started_at`/
+#      `adapter_finished_at` remain epoch seconds, used only for
+#      `adapter_elapsed_seconds` arithmetic). `requirements-b0.txt` now pins
+#      `rfc3339-validator==0.1.4` so jsonschema's `format: date-time`
+#      assertion is actually enforced (previously silently skipped with no
+#      RFC 3339 checker implementation importable), and
+#      `tools/propagate_b3.py:load_provider_signal` additionally performs
+#      its own explicit, mandatory RFC 3339 parse of `started_at`/
+#      `finished_at` so correctness never depends solely on that optional
+#      format-checker registration;
+#   4. `tools/verify_b2.py` (now in this task's own allowed scope) and
+#      `tools/propagate_b3.py` both independently reject any
+#      `overlap_results` array containing more than one entry for the same
+#      `field` before building any per-field dict from it, and require each
+#      forbidden field's entry to carry `author_values`/`reviewer_value`
+#      exactly equal to the real, independently observed executor/reviewer
+#      identity data -- not only an `overlap` boolean that happens to agree
+#      with the recomputation;
+#   5. the primary evidence artifact now also uploads
+#      `b3-output/pipeline/evidence/**`, so the two declared result
+#      artifacts (`adapter-transcript`, `required-check-log`) are present
+#      inside the same evidence root as `result.json`, not only in the
+#      separate raw adapter-output artifact.
 
 
 
@@ -200,12 +259,12 @@ env:
   # commit or fails outright, so there is no separate "did the branch move"
   # check to get wrong.
   #
-  # Corrective attempt 5 (Issue #27 v2 -- independent review of a7e4572
-  # returned REQUEST_CHANGES on AC-C5): superseded from the v1 task commit
-  # to the v2 task commit/path below. v1 remains historical evidence; it is
-  # never fetched by this workflow again.
-  B3_CONTROL_TASK_COMMIT: "6f9ed9f849896936de482504c01d6447a6394d6d"
-  B3_CONTROL_TASK_PATH: ".ai/tasks/27/b3-correction-task.v2.json"
+  # Corrective attempt 7 (Issue #27 v3 -- independent review of 06ac835
+  # reproduced a real AC-C5 false-positive class): superseded from the v2
+  # task commit to the v3 task commit/path below. v1 and v2 remain
+  # historical evidence; neither is ever fetched by this workflow again.
+  B3_CONTROL_TASK_COMMIT: "15bb125fa77c432084791aa5615515e136b7c9af"
+  B3_CONTROL_TASK_PATH: ".ai/tasks/27/b3-correction-task.v3.json"
   # The independent review-attestation control ref/path -- a *separate*
   # control ref/path from Issue #19's own
   # (`control/issue-19-b3-review-attestation`), because a review published
@@ -580,6 +639,11 @@ jobs:
               except (json.JSONDecodeError, UnicodeDecodeError):
                   adapter_manifest = {}
           adapter_attempted = bool(adapter_manifest)
+          # Raw epoch-seconds strings from "Record adapter start/completion
+          # time" -- preserved unchanged and used only for
+          # elapsed-vs-budget arithmetic below, never published directly as
+          # a `result.v1`/provider-signal timestamp field (that RFC 3339
+          # conversion happens separately, just below).
           adapter_started_at = adapter_manifest.get("adapter_started_at")
           adapter_finished_at = adapter_manifest.get("adapter_finished_at")
           adapter_elapsed_seconds = None
@@ -588,6 +652,25 @@ jobs:
                   adapter_elapsed_seconds = int(adapter_finished_at) - int(adapter_started_at)
               except ValueError:
                   adapter_elapsed_seconds = None
+
+          # Issue #27 v3 correction: the real live defect -- the raw epoch
+          # value above (e.g. `"1784120958"`) was previously placed directly
+          # into the provider signal's `started_at` field, which
+          # `result.v1.schema.json` requires to be an RFC 3339 `date-time`
+          # string; it passed schema validation only because no RFC 3339
+          # format-checker dependency was ever pinned. Converted here, once,
+          # to the same RFC 3339 UTC string shape `finished_at` already
+          # uses; a malformed or missing epoch value yields `None`, never a
+          # fabricated timestamp -- `started_at` then falls back to
+          # `finished_at` exactly as before this correction.
+          adapter_started_at_rfc3339 = None
+          if adapter_started_at:
+              try:
+                  adapter_started_at_rfc3339 = datetime.datetime.fromtimestamp(
+                      int(adapter_started_at), tz=datetime.timezone.utc
+                  ).strftime("%Y-%m-%dT%H:%M:%SZ")
+              except (ValueError, OSError, OverflowError):
+                  adapter_started_at_rfc3339 = None
 
           execution_file_path = Path("b3-adapter-output/execution-file.txt")
           execution_file_content = None
@@ -674,14 +757,13 @@ jobs:
               "attempt": attempt,
               "executor": {
                   "adapter": "human-supervised-claude-code",
-                  # Must match the immutable Issue #27 v2 task contract's
+                  # Must match the immutable Issue #27 v3 task contract's
                   # own `executor.version`
-                  # (`claude-code-2.1.197-b3-correction-v2`) -- this live
-                  # signal is produced under that exact v2 correction task,
-                  # not Issue #19's original bootstrap task nor the v1
-                  # correction task (superseded after REQUEST_CHANGES on
-                  # AC-C5).
-                  "adapter_version": "claude-code-2.1.197-b3-correction-v2",
+                  # (`claude-code-2.1.197-b3-correction-v3`) -- this live
+                  # signal is produced under that exact v3 correction task,
+                  # not Issue #19's original bootstrap task nor the v1/v2
+                  # correction tasks (both superseded after REQUEST_CHANGES).
+                  "adapter_version": "claude-code-2.1.197-b3-correction-v3",
                   "identity": {
                       "operator_principal": "github:yurikuchumov-ux",
                       "agent_runtime_id": "claude-code:b3-session",
@@ -693,7 +775,7 @@ jobs:
                       "role": "author",
                   },
               },
-              "started_at": adapter_started_at or finished_at,
+              "started_at": adapter_started_at_rfc3339 or finished_at,
               "finished_at": finished_at,
               "workflow_run_id": str(workflow_run_id),
               "workflow_run_attempt": str(workflow_run_attempt),
@@ -775,6 +857,18 @@ jobs:
 
       - name: Upload result, verification, and workflow-run-metadata artifacts
         if: always()
+        # Issue #27 v3 correction: `result.json` declares its two result
+        # artifacts (`adapter-transcript`, `required-check-log`) at paths
+        # relative to this same evidence root
+        # (`b3-output/pipeline/evidence/*.txt`, written by
+        # `tools/propagate_b3.py:_write_evidence_file`), but this primary
+        # evidence artifact previously uploaded only the top-level pipeline
+        # outputs -- an independent B2 re-verification of the downloaded
+        # bundle alone could not resolve those declared artifact paths.
+        # `b3-output/pipeline/evidence/**` is now included so the bundle is
+        # self-contained; the separate raw `b3-adapter-output` artifact
+        # (uploaded by the `execute` job above) remains additional evidence,
+        # not a replacement for this one.
         uses: actions/upload-artifact@v4
         with:
           name: b3-run-${{ github.run_id }}-evidence
@@ -782,6 +876,7 @@ jobs:
             b3-output/pipeline/result.json
             b3-output/pipeline/verification.json
             b3-output/pipeline/workflow-run-metadata.json
+            b3-output/pipeline/evidence/**
             b3-output/propagate-report.json
             b3-output/test-log.txt
           if-no-files-found: error

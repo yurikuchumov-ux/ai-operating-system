@@ -72,6 +72,23 @@ except ModuleNotFoundError as exc:  # pragma: no cover - exercised by CLI setup
         "missing dependency: install requirements-b0.txt before running the B3 propagator"
     ) from exc
 
+# Issue #27 v3 correction: jsonschema's `date-time` format assertion is only
+# ever enforced when a real RFC 3339 checker implementation is importable
+# (`rfc3339_validator` or `strict_rfc3339`) -- if neither is installed, the
+# `format: date-time` keyword is silently never checked at all, and a bare
+# digit string such as an unconverted `date -u +%s` epoch value passes
+# schema validation cleanly. `requirements-b0.txt` pins `rfc3339-validator`
+# so that `FormatChecker()` above validates it, but this import and the
+# explicit `_require_rfc3339_utc` check below are the second, load-bearing
+# enforcement: correctness must not depend solely on that optional
+# jsonschema format-checker registration succeeding.
+try:
+    from rfc3339_validator import validate_rfc3339 as _validate_rfc3339
+except ModuleNotFoundError as exc:  # pragma: no cover - exercised by CLI setup
+    raise SystemExit(
+        "missing dependency: install requirements-b0.txt (rfc3339-validator) before running the B3 propagator"
+    ) from exc
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if __name__ == "__main__" and str(REPO_ROOT) not in sys.path:
     # `python3 tools/propagate_b3.py ...` (direct script invocation, matching
@@ -577,6 +594,24 @@ def _load_bounded_json(path: Path, label: str) -> Any:
         raise B3PropagatorError("{} is not valid JSON: {}".format(label, exc)) from exc
 
 
+_RFC3339_TIMESTAMP_FIELDS = ("started_at", "finished_at")
+
+
+def _require_rfc3339_utc(value: Any, field: str) -> None:
+    """Mandatory, explicit RFC 3339 parse/check -- fails closed on anything
+    that is not a genuine RFC 3339 timestamp string, independent of whether
+    jsonschema's own `format: date-time` FormatChecker happened to enforce
+    it. This is the fix for the live defect where an unconverted Unix epoch
+    string (e.g. `"1784120958"`, from an un-converted `date -u +%s` value)
+    was published as `started_at`: that value is not RFC 3339 and must be
+    rejected here even if the optional format-checker registration were
+    ever silently absent or bypassed."""
+    if not isinstance(value, str) or not _validate_rfc3339(value):
+        raise B3PropagatorError(
+            "provider signal field {} is not a valid RFC 3339 UTC timestamp: {!r}".format(field, value)
+        )
+
+
 def load_provider_signal(path: Path) -> Mapping[str, Any]:
     """Load and validate the trusted provider signal. Fatal on any defect."""
     document = _load_bounded_json(path, "provider signal")
@@ -587,6 +622,8 @@ def load_provider_signal(path: Path) -> Mapping[str, Any]:
                 "; ".join(error.message for error in errors)
             )
         )
+    for field in _RFC3339_TIMESTAMP_FIELDS:
+        _require_rfc3339_utc(document.get(field), field)
     return document
 
 
@@ -804,6 +841,45 @@ def _identity_lineage_passes(
     return not any(_recompute_field_overlap(field, signal, review) for field in forbidden)
 
 
+def _expected_author_values(field: str, signal: Mapping[str, Any]) -> Optional[List[str]]:
+    """The exact `author_values` a genuine `overlap_results` entry for
+    `field` must carry, bound to real, directly observed executor data --
+    never trusted from the entry's own self-assertion. A scalar identity
+    field's expected value is the single-element list of the executor's own
+    real identity field value; `authored_commits`' expected value is the
+    exact, sorted set of commits this run's own Git observation actually
+    recorded. Returns `None` (never matches) when the underlying real value
+    is itself missing or malformed."""
+    if field == "authored_commits":
+        commits = signal.get("git_observation", {}).get("authored_commits")
+        if not isinstance(commits, list) or not all(isinstance(c, str) for c in commits):
+            return None
+        return sorted(set(commits))
+    value = signal.get("executor", {}).get("identity", {}).get(field)
+    if not isinstance(value, str) or not value:
+        return None
+    return [value]
+
+
+def _expected_reviewer_value(field: str, review: Mapping[str, Any]) -> Optional[str]:
+    """The exact `reviewer_value` a genuine `overlap_results` entry for
+    `field` must carry, bound to the reviewer's own real identity -- never
+    trusted from the entry's own self-assertion. `authored_commits` uses the
+    canonical string `"none"` for an empty reviewer authored-commit set, or
+    else a deterministic comma-joined, sorted SHA list."""
+    reviewer_identity = review.get("reviewer_identity", {})
+    if field == "authored_commits":
+        commits = reviewer_identity.get("authored_commits")
+        if not isinstance(commits, list) or not all(isinstance(c, str) for c in commits):
+            return None
+        sorted_commits = sorted(set(commits))
+        return ",".join(sorted_commits) if sorted_commits else "none"
+    value = reviewer_identity.get(field)
+    if not isinstance(value, str) or not value:
+        return None
+    return value
+
+
 def _self_reported_overlap_results_consistent(
     review: Mapping[str, Any], signal: Mapping[str, Any], forbidden: Sequence[str]
 ) -> bool:
@@ -812,32 +888,91 @@ def _self_reported_overlap_results_consistent(
     forbidden lineage field -- a reviewer document claiming `overlap: false`
     for a field this tool recomputes as actually overlapping (or vice
     versa) fails closed rather than being trusted at face value. A missing,
-    malformed, or incomplete `overlap_results` array also fails closed."""
+    malformed, or incomplete `overlap_results` array also fails closed.
+
+    Issue #27 v3 correction: a schema-valid `overlap_results` array may
+    still carry more than one entry for the same `field` (the schema does
+    not forbid it); a naive `{item["field"]: item["overlap"] for item in
+    ...}` dict comprehension then lets whichever entry appears last silently
+    win, so a contradicting first entry is discarded unseen. Every `field`
+    value across the whole array -- not only the ones this task forbids --
+    is therefore checked for duplication *before* any dict is built from it;
+    any duplicate fails the whole criterion closed instead of picking a
+    winner. Each forbidden field's entry must also carry `author_values`
+    exactly equal to `_expected_author_values` and `reviewer_value` exactly
+    equal to `_expected_reviewer_value` -- not just an `overlap` boolean
+    that happens to agree with the recomputation -- so a self-report cannot
+    assert a correct boolean while attaching fabricated identity values."""
     entries = review.get("eligibility", {}).get("overlap_results")
     if not isinstance(entries, list):
         return False
-    self_reported: Dict[str, Any] = {}
+    fields: List[Any] = []
     for entry in entries:
-        if not isinstance(entry, dict) or "field" not in entry or "overlap" not in entry:
+        if (
+            not isinstance(entry, dict)
+            or "field" not in entry
+            or "overlap" not in entry
+            or "author_values" not in entry
+            or "reviewer_value" not in entry
+        ):
             return False
-        self_reported[entry["field"]] = entry["overlap"]
+        fields.append(entry["field"])
+    if len(fields) != len(set(fields)):
+        return False
+    self_reported: Dict[str, Mapping[str, Any]] = {entry["field"]: entry for entry in entries}
     for field in forbidden:
-        if field not in self_reported:
+        entry = self_reported.get(field)
+        if entry is None:
             return False
-        if bool(self_reported[field]) != _recompute_field_overlap(field, signal, review):
+        if bool(entry["overlap"]) != _recompute_field_overlap(field, signal, review):
+            return False
+        if entry.get("author_values") != _expected_author_values(field, signal):
+            return False
+        if entry.get("reviewer_value") != _expected_reviewer_value(field, review):
             return False
     return True
 
 
 _AC_C5_RECOGNIZED_CONTROL_INPUTS = {"task-artifact", "review-attestation"}
 
-# Issue #27 v2 correction: the exact, pinned immutable v2 task control
+# Issue #27 v3 correction: the exact, pinned immutable v3 task control
 # commit AC-C5 independently checks `signal["task_commit"]` against --
 # never merely "is task_commit present" (the reviewed false-positive), but
 # "is it the one specific commit the workflow's fetch step is pinned to".
 # A compromised or buggy signal claiming any other commit value is
 # rejected here, independent of the workflow's own fetch-step self-report.
-_EXPECTED_V2_TASK_COMMIT = "6f9ed9f849896936de482504c01d6447a6394d6d"
+_EXPECTED_V3_TASK_COMMIT = "15bb125fa77c432084791aa5615515e136b7c9af"
+
+# Issue #27 v3 correction: independent review of commit 06ac835 reproduced a
+# real false-positive class in AC-C5 -- deleting `review_attestation_commit`
+# from `required_provenance`, deleting `adapter-transcript` from
+# `required_result_artifact_ids`, replacing/deleting `post_publication_gate`,
+# or shrinking `not_asserted_until_post_publication` all still let the
+# criterion pass, because only "the supplied lists are non-empty" was ever
+# checked, never that the supplied `parameters` object is the *exact*
+# immutable object the v3 task contract declares. This constant is that
+# exact object (`parameter_shape_policy: "exact"`); `_evaluate_ac_c5` now
+# requires byte-for-byte structural equality against it -- every key, every
+# list's exact membership and order -- before any evidence is evaluated at
+# all. A parameters object that differs in any way (missing, added,
+# duplicated, reordered, wrong-type, or wrong-value field) fails closed here,
+# never partially credited.
+_EXPECTED_AC_C5_PARAMETERS_V3: Dict[str, Any] = {
+    "parameter_shape_policy": "exact",
+    "evaluation_phase": "result_finalization",
+    "required_result_artifact_ids": ["adapter-transcript", "required-check-log"],
+    "required_control_inputs": ["task-artifact", "review-attestation"],
+    "required_provenance": [
+        "workflow_run_id",
+        "workflow_run_attempt",
+        "execution_id",
+        "subject_sha",
+        "task_commit",
+        "review_attestation_commit",
+    ],
+    "not_asserted_until_post_publication": ["verification-report", "workflow-run-metadata"],
+    "post_publication_gate": "verification.passed_and_check_run_conclusion",
+}
 
 
 def _artifact_matches_declared(artifact: Mapping[str, Any], output_dir: Path) -> bool:
@@ -883,13 +1018,26 @@ def _evaluate_ac_c5(
     and bound to this run's own task ID / base SHA / subject SHA, and every
     required provenance field genuinely non-null -- including that
     `task_commit` is exactly the one pinned v2 control commit
-    (`_EXPECTED_V2_TASK_COMMIT`). Never asserts `verification-report` or
+    (`_EXPECTED_V3_TASK_COMMIT`). Never asserts `verification-report` or
     `workflow-run-metadata` existence: both are post-publication outputs
     that do not exist yet at this point in the pipeline (they are gated
     later by `verification.passed` and the Check Run conclusion), and any
     parameter shape that tries to claim one of those as already-required
     here is rejected outright, not silently ignored. Any other
-    missing/malformed/unrecognized parameter shape also fails closed."""
+    missing/malformed/unrecognized parameter shape also fails closed.
+
+    Issue #27 v3 correction: before any of the above, `params` must equal
+    `_EXPECTED_AC_C5_PARAMETERS_V3` exactly -- not merely "have the right
+    keys with non-empty lists" (the reviewed false-positive class: deleting
+    `review_attestation_commit` from `required_provenance`, deleting
+    `adapter-transcript` from `required_result_artifact_ids`, or
+    replacing/deleting `post_publication_gate` all previously still passed).
+    Any deviation -- missing, added, duplicated, reordered, wrong-type, or
+    wrong-value field, anywhere in the object -- fails closed here, before
+    any artifact/provenance/binding evidence is examined at all."""
+    if params != _EXPECTED_AC_C5_PARAMETERS_V3:
+        return False, {"error": "ac_c5_parameter_shape_mismatch"}
+
     observed: Dict[str, Any] = {}
 
     if params.get("evaluation_phase") != "result_finalization":
@@ -947,7 +1095,7 @@ def _evaluate_ac_c5(
         observed["provenance_present:{}".format(field)] = present
         provenance_ok = provenance_ok and present
 
-    task_commit_ok = signal.get("task_commit") == _EXPECTED_V2_TASK_COMMIT
+    task_commit_ok = signal.get("task_commit") == _EXPECTED_V3_TASK_COMMIT
     observed["task_commit_matches_pinned_v2_commit"] = task_commit_ok
 
     go = signal.get("git_observation", {})
@@ -1001,6 +1149,14 @@ def _evaluate_ac_c6(
         or params.get("require_eligible") is not True
         or params.get("require_reason_codes_empty") is not True
         or params.get("required_distinct_from_executor") is not True
+        # Issue #27 v3 correction: the task contract now declares these
+        # three booleans explicitly; a parameter shape that omits or
+        # disables any of them must not silently fall back to the v2
+        # behavior -- it fails closed exactly like any other malformed
+        # parameter shape.
+        or params.get("reject_duplicate_overlap_fields") is not True
+        or params.get("require_author_values_match_observed") is not True
+        or params.get("require_reviewer_value_match_identity") is not True
     ):
         return False, {"error": "malformed_ac_c6_parameters"}
 
@@ -1481,15 +1637,45 @@ def run_fixture(fixture: Mapping[str, Any], manifest_dir: Path, workdir: Path) -
     invocation = fixture["invocation"]
 
     output_dir = workdir / fixture["id"]
-    outputs = run_pipeline(
-        signal_path,
-        task_path,
-        review_path,
-        verifier_identity_path,
-        invocation["verification_id"],
-        invocation["evaluated_at"],
-        output_dir,
-    )
+    try:
+        outputs = run_pipeline(
+            signal_path,
+            task_path,
+            review_path,
+            verifier_identity_path,
+            invocation["verification_id"],
+            invocation["evaluated_at"],
+            output_dir,
+        )
+    except B3PropagatorError as exc:
+        # Issue #27 v3 correction: a trusted input that fails closed before
+        # a result can even be finalized -- e.g. a provider signal whose
+        # `started_at` is not RFC 3339 (`load_provider_signal`'s own
+        # mandatory `_require_rfc3339_utc` check) -- must still surface as
+        # one failed fixture-oracle scenario with `check_run_conclusion:
+        # "failure"`, not an uncaught exception that aborts the entire
+        # suite. This is deliberately narrow: only `B3PropagatorError`
+        # (this tool's own fail-closed input/policy exception) is caught
+        # here; a real programming defect still raises and fails loudly.
+        actual = {
+            "status": "failed",
+            "terminal_reason": None,
+            "check_run_conclusion": "failure",
+            "timeout_origin": None,
+            "missing_artifact_type": None,
+            "source_run_id": None,
+            "raw_provider_terminal_reason": None,
+            "artifacts_count": None,
+            "new_commit": None,
+            "adapter_self_reported_status": None,
+            "actions_job_conclusion": None,
+            "execution_id_source": None,
+            "adapter_session_id": None,
+            "pipeline_error": str(exc),
+        }
+        expected = fixture["expected"]
+        expectation_met = all(actual.get(key) == value for key, value in expected.items())
+        return {"id": fixture["id"], "actual": actual, "expected": expected, "expectation_met": expectation_met}
 
     actual: Dict[str, Any] = {
         "status": outputs.result["status"],

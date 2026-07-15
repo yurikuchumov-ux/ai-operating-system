@@ -269,8 +269,10 @@ real GitHub Actions workflow around them:
   artifact presence from a directly, deterministically executed run of the
   B3 test command (never derived from Git commit existence), the real task
   fetched read-only from the immutable control commit
-  `9b6db4412eb5ef032d4333ff8023c1527383de87` at
-  `.ai/tasks/27/b3-correction-task.v1.json`, the real independent review
+  `15bb125fa77c432084791aa5615515e136b7c9af` at
+  `.ai/tasks/27/b3-correction-task.v3.json` (superseding the v1 and v2
+  control commits, both of which remain unmodified historical evidence and
+  are never fetched by this workflow again), the real independent review
   attestation fetched read-only from the separate control ref
   `control/issue-27-b3-review-attestation` at
   `.ai/reviews/27/review-attestation.v1.json` (a dedicated Issue #27 ref/path,

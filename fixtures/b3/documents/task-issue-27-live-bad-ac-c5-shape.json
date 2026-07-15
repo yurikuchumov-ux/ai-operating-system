@@ -193,8 +193,7 @@
           "workflow_run_attempt",
           "execution_id",
           "subject_sha",
-          "task_commit",
-          "review_attestation_commit"
+          "task_commit"
         ],
         "not_asserted_until_post_publication": [
           "verification-report",

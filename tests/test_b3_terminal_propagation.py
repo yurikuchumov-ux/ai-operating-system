@@ -41,8 +41,8 @@ WORKFLOW_PATH = REPO_ROOT / ".github/workflows/b3-terminal-propagation.yml"
 TASK_ID = "yurikuchumov-ux/ai-operating-system#27"
 PINNED_ADAPTER_ACTION = "anthropics/claude-code-action@6902c227aaa9536481b99d56f3014bbbad6c6da8"
 HEAD_BRANCH = "agent/issue-19-b3-terminal-propagation"
-CONTROL_TASK_COMMIT = "6f9ed9f849896936de482504c01d6447a6394d6d"
-CONTROL_TASK_PATH = ".ai/tasks/27/b3-correction-task.v2.json"
+CONTROL_TASK_COMMIT = "15bb125fa77c432084791aa5615515e136b7c9af"
+CONTROL_TASK_PATH = ".ai/tasks/27/b3-correction-task.v3.json"
 REVIEW_REF = "control/issue-27-b3-review-attestation"
 REVIEW_PATH = ".ai/reviews/27/review-attestation.v1.json"
 REGISTERED_TEST_COMMAND = "python3 -m unittest discover -s tests -p test_b3_*.py"
@@ -73,6 +73,15 @@ ALL_SCENARIO_IDS = {
     "reject-direct-check-failure",
     "reject-missing-acceptance-evidence",
     "reject-self-report-override",
+    # Issue #27 v3 correction: three more scenarios exercising the three
+    # independently-reproduced fail-open paths this correction closes --
+    # an AC-C5 parameters object that deviates from the pinned exact shape,
+    # a review-attestation with duplicate `overlap_results` entries for the
+    # same field, and a provider signal whose `started_at` is an
+    # un-converted epoch-seconds string rather than RFC 3339.
+    "reject-ac-c5-parameter-shape",
+    "reject-duplicate-overlap-results",
+    "reject-non-rfc3339-started-at",
 }
 
 
@@ -87,17 +96,19 @@ def _tmp_dir() -> Path:
 class B3FixtureOracleTests(unittest.TestCase):
     """Every required terminal-propagation scenario -- the 13 the control
     contract requires, 2 added to exercise the corrected runner_lost /
-    session-resolution paths, and 5 more (Issue #27) exercising the live,
-    required-checks/acceptance integration path -- must match the oracle
-    exactly: result status/terminal_reason, and the Check Run conclusion
-    the verifier's report -- not adapter prose -- forces."""
+    session-resolution paths, 5 more (Issue #27) exercising the live,
+    required-checks/acceptance integration path, and 3 more (Issue #27 v3)
+    exercising the three independently-reproduced fail-open paths that
+    correction closes -- must match the oracle exactly: result
+    status/terminal_reason, and the Check Run conclusion the verifier's
+    report -- not adapter prose -- forces."""
 
-    def test_all_20_required_scenarios_match(self) -> None:
+    def test_all_23_required_scenarios_match(self) -> None:
         exit_code, report = run_suite(MANIFEST_PATH, workdir=_tmp_dir())
         self.assertEqual(0, exit_code)
         self.assertTrue(report["valid"])
-        self.assertEqual(20, report["summary"]["total"])
-        self.assertEqual(20, report["summary"]["passed"])
+        self.assertEqual(23, report["summary"]["total"])
+        self.assertEqual(23, report["summary"]["passed"])
         self.assertEqual(0, report["summary"]["failed"])
         self.assertFalse(report["authoritative_verifier"])
         self.assertEqual("B3", report["bootstrap_scope"])
@@ -187,8 +198,18 @@ class B3SchemaValidityTests(unittest.TestCase):
         manifest_dir = MANIFEST_PATH.parent
         workdir = _tmp_dir()
         for fixture in manifest["fixtures"]:
-            run_fixture(fixture, manifest_dir, workdir)
+            outcome = run_fixture(fixture, manifest_dir, workdir)
             output_dir = workdir / fixture["id"]
+            # Issue #27 v3 correction: `reject-non-rfc3339-started-at` fails
+            # closed inside `load_provider_signal` before a result can even
+            # be finalized (see `run_fixture`'s `B3PropagatorError` branch),
+            # so it never produces `result.json`/`verification.json` at all
+            # -- that absence, not a schema-invalid artifact, is exactly
+            # what this scenario is required to prove.
+            if "pipeline_error" in outcome["actual"]:
+                self.assertTrue(outcome["expectation_met"], fixture["id"])
+                self.assertFalse((output_dir / "result.json").exists(), fixture["id"])
+                continue
             result = _load_json(output_dir / "result.json")
             verification = _load_json(output_dir / "verification.json")
             self.assertEqual(
@@ -728,8 +749,16 @@ class B3CheckRunConclusionSourceTests(unittest.TestCase):
         manifest_dir = MANIFEST_PATH.parent
         workdir = _tmp_dir()
         for fixture in manifest["fixtures"]:
-            run_fixture(fixture, manifest_dir, workdir)
+            outcome = run_fixture(fixture, manifest_dir, workdir)
             output_dir = workdir / fixture["id"]
+            # Issue #27 v3 correction: a pre-finalization fail-closed
+            # scenario (`reject-non-rfc3339-started-at`) never publishes
+            # `verification.json`/`workflow-run-metadata.json` at all; its
+            # own `actual["check_run_conclusion"]` (asserted "failure" by
+            # `run_fixture`'s exception branch) is the check here instead.
+            if "pipeline_error" in outcome["actual"]:
+                self.assertEqual("failure", outcome["actual"]["check_run_conclusion"], fixture["id"])
+                continue
             verification = _load_json(output_dir / "verification.json")
             metadata = _load_json(output_dir / "workflow-run-metadata.json")
             expected_conclusion = "success" if verification["passed"] else "failure"
@@ -859,12 +888,40 @@ class B3ProviderSignalPolicyTests(unittest.TestCase):
         with self.assertRaises(B3PropagatorError):
             load_provider_signal(tmp)
 
+    # Issue #27 v3 correction: `signal-reject-non-rfc3339-started-at.json`
+    # is the one deliberately schema-invalid signal fixture (its whole
+    # purpose is a `started_at` that is not RFC 3339); it is intentionally
+    # excluded from the "every signal fixture is schema-valid" sweep below
+    # and asserted invalid on its own, directly, instead.
+    _INTENTIONALLY_INVALID_SIGNALS = {"signal-reject-non-rfc3339-started-at.json"}
+
     def test_provider_signal_schema_is_self_consistent_with_fixtures(self) -> None:
         validator = Draft202012Validator(PROVIDER_SIGNAL_SCHEMA, format_checker=FormatChecker())
         for path in sorted(DOCUMENTS_DIR.glob("signal-*.json")):
+            if path.name in self._INTENTIONALLY_INVALID_SIGNALS:
+                continue
             document = _load_json(path)
             errors = list(validator.iter_errors(document))
             self.assertEqual([], [e.message for e in errors], path.name)
+
+    def test_non_rfc3339_started_at_signal_fixture_is_schema_invalid(self) -> None:
+        validator = Draft202012Validator(PROVIDER_SIGNAL_SCHEMA, format_checker=FormatChecker())
+        document = _load_json(DOCUMENTS_DIR / "signal-reject-non-rfc3339-started-at.json")
+        errors = [e.message for e in validator.iter_errors(document)]
+        self.assertEqual(["'1784120958' is not a 'date-time'"], errors)
+
+    def test_load_provider_signal_rejects_epoch_string_started_at(self) -> None:
+        with self.assertRaises(B3PropagatorError):
+            load_provider_signal(DOCUMENTS_DIR / "signal-reject-non-rfc3339-started-at.json")
+
+    def test_require_rfc3339_utc_accepts_genuine_rfc3339_and_rejects_epoch_string(self) -> None:
+        propagate_b3._require_rfc3339_utc("2026-07-15T09:00:00Z", "started_at")
+        with self.assertRaises(B3PropagatorError):
+            propagate_b3._require_rfc3339_utc("1784120958", "started_at")
+        with self.assertRaises(B3PropagatorError):
+            propagate_b3._require_rfc3339_utc(None, "started_at")
+        with self.assertRaises(B3PropagatorError):
+            propagate_b3._require_rfc3339_utc(1784120958, "started_at")
 
 
 class B3TrustedObservationBuilderTests(unittest.TestCase):
@@ -988,7 +1045,7 @@ class B3WorkflowContentTests(unittest.TestCase):
         that exact task, not Issue #19's original bootstrap task."""
         task = _load_json(DOCUMENTS_DIR / "task-issue-27-live.json")
         expected_version = task["executor"]["version"]
-        self.assertEqual("claude-code-2.1.197-b3-correction-v2", expected_version)
+        self.assertEqual("claude-code-2.1.197-b3-correction-v3", expected_version)
         version_line = next(
             line for line in self.text.splitlines() if line.strip().startswith('"adapter_version":')
         )
@@ -1081,6 +1138,61 @@ class B3WorkflowContentTests(unittest.TestCase):
         self.assertIn("needs: resolve-subject", self.text)
         self.assertIn("needs: [resolve-subject, execute]", self.text)
         self.assertIn("if: always()", self.text)
+
+    def test_primary_evidence_artifact_includes_declared_evidence_directory(self) -> None:
+        """Non-blocking finding closed: `result.json` declares its two
+        result artifacts at paths relative to
+        `b3-output/pipeline/evidence/`, so the primary evidence upload must
+        include that directory -- not only the top-level pipeline outputs
+        -- so an independent re-verification of the downloaded bundle alone
+        is self-contained."""
+        upload_section = self.text.split("Upload result, verification, and workflow-run-metadata artifacts", 1)[
+            1
+        ].split("- name:", 1)[0]
+        self.assertIn("b3-output/pipeline/result.json", upload_section)
+        self.assertIn("b3-output/pipeline/evidence/**", upload_section)
+
+    def test_adapter_started_at_is_converted_to_rfc3339_not_published_as_raw_epoch(self) -> None:
+        """The real live defect this correction closes: the raw
+        `date -u +%s` epoch-seconds string must never be placed directly
+        into the provider signal's `started_at` field. The raw value is
+        still preserved separately for elapsed-time arithmetic."""
+        self.assertNotIn('"started_at": adapter_started_at or finished_at,', self.text)
+        self.assertIn('"started_at": adapter_started_at_rfc3339 or finished_at,', self.text)
+        self.assertIn("adapter_started_at_rfc3339", self.text)
+        self.assertIn("datetime.timezone.utc", self.text)
+        # The raw epoch value is still used, unconverted, for elapsed-time
+        # arithmetic -- this correction must not remove that.
+        self.assertIn("adapter_elapsed_seconds = int(adapter_finished_at) - int(adapter_started_at)", self.text)
+
+    def test_pins_v3_control_task_commit_and_adapter_version(self) -> None:
+        self.assertIn('B3_CONTROL_TASK_COMMIT: "15bb125fa77c432084791aa5615515e136b7c9af"', self.text)
+        self.assertIn('B3_CONTROL_TASK_PATH: ".ai/tasks/27/b3-correction-task.v3.json"', self.text)
+        self.assertIn('"adapter_version": "claude-code-2.1.197-b3-correction-v3"', self.text)
+        self.assertNotIn("6f9ed9f849896936de482504c01d6447a6394d6d", self.text.split("Corrective attempt 7", 1)[-1])
+
+    def test_review_attestation_ref_remains_pinned_and_separate_from_task_commit(self) -> None:
+        """The independent review-attestation control ref/path must stay
+        unchanged by this correction -- the task control commit is what
+        moved to v3, not the review binding, which must keep failing closed
+        until a new exact-head attestation is published."""
+        self.assertIn('B3_REVIEW_REF: "control/issue-27-b3-review-attestation"', self.text)
+        self.assertIn('B3_REVIEW_PATH: ".ai/reviews/27/review-attestation.v1.json"', self.text)
+
+
+class B3RequirementsPinTests(unittest.TestCase):
+    """RFC 3339 fail-closed timestamps depend on a real RFC 3339 format
+    checker implementation actually being installed -- jsonschema's own
+    `format: date-time` assertion silently never validates anything at all
+    if neither `rfc3339_validator` nor `strict_rfc3339` is importable."""
+
+    def test_requirements_b0_pins_rfc3339_validator(self) -> None:
+        requirements_b0 = (REPO_ROOT / "requirements-b0.txt").read_text(encoding="utf-8")
+        self.assertIn("rfc3339-validator==0.1.4", requirements_b0)
+
+    def test_requirements_b3_still_includes_requirements_b0_recursively(self) -> None:
+        requirements_b3 = (REPO_ROOT / "requirements-b3.txt").read_text(encoding="utf-8")
+        self.assertIn("requirements-b0.txt", requirements_b3)
 
 
 class B3ExactHeadCheckoutTests(unittest.TestCase):
@@ -1422,6 +1534,7 @@ class B3AcceptanceCriteriaV2Tests(unittest.TestCase):
 
     def _ac_c5_params(self) -> Dict[str, Any]:
         return {
+            "parameter_shape_policy": "exact",
             "evaluation_phase": "result_finalization",
             "required_result_artifact_ids": ["adapter-transcript", "required-check-log"],
             "required_control_inputs": ["task-artifact", "review-attestation"],
@@ -1443,6 +1556,9 @@ class B3AcceptanceCriteriaV2Tests(unittest.TestCase):
             "required_risk_class": "L2",
             "require_eligible": True,
             "require_reason_codes_empty": True,
+            "reject_duplicate_overlap_fields": True,
+            "require_author_values_match_observed": True,
+            "require_reviewer_value_match_identity": True,
             "forbidden_lineage_overlaps": ["agent_runtime_id", "credential_principal", "authored_commits"],
             "required_distinct_from_executor": True,
         }
@@ -1464,7 +1580,7 @@ class B3AcceptanceCriteriaV2Tests(unittest.TestCase):
             "workflow_run_id": "999",
             "workflow_run_attempt": "1",
             "trusted_subject_sha": self.SUBJECT_SHA,
-            "task_commit": propagate_b3._EXPECTED_V2_TASK_COMMIT,
+            "task_commit": propagate_b3._EXPECTED_V3_TASK_COMMIT,
             "review_attestation_commit": "c" * 40,
             "git_observation": {"base_sha": self.BASE_SHA, "authored_commits": ["d" * 40]},
             "executor": {
@@ -1731,6 +1847,10 @@ class B3AcceptanceCriteriaV2Tests(unittest.TestCase):
     # -- AC-C5: post-publication outputs must never be claimed early -------
 
     def test_ac_c5_claiming_verification_report_as_a_required_artifact_fails_closed(self) -> None:
+        """Issue #27 v3 correction: this mutated shape no longer even
+        reaches the structural post-publication guard below -- the exact-
+        equality gate at the top of `_evaluate_ac_c5` rejects it first, as
+        it must for every deviation from the pinned object."""
         output_dir = _tmp_dir()
         params = self._ac_c5_params()
         params["required_result_artifact_ids"] = list(params["required_result_artifact_ids"]) + [
@@ -1738,7 +1858,7 @@ class B3AcceptanceCriteriaV2Tests(unittest.TestCase):
         ]
         passed, observed = self._evaluate_c5(output_dir, params=params)
         self.assertFalse(passed)
-        self.assertIn("verification-report", observed.get("post_publication_outputs_wrongly_claimed", []))
+        self.assertEqual("ac_c5_parameter_shape_mismatch", observed.get("error"))
 
     def test_ac_c5_claiming_workflow_run_metadata_as_a_control_input_fails_closed(self) -> None:
         output_dir = _tmp_dir()
@@ -1748,9 +1868,29 @@ class B3AcceptanceCriteriaV2Tests(unittest.TestCase):
         ]
         passed, observed = self._evaluate_c5(output_dir, params=params)
         self.assertFalse(passed)
-        self.assertIn("workflow-run-metadata", observed.get("post_publication_outputs_wrongly_claimed", []))
+        self.assertEqual("ac_c5_parameter_shape_mismatch", observed.get("error"))
 
-    # -- AC-C5: malformed/unknown parameter shapes fail closed -------------
+    def test_ac_c5_post_publication_structural_guard_still_fires_when_shape_otherwise_matches(self) -> None:
+        """Defense in depth: even bypassing the top-level exact-equality
+        gate (by calling the structural guard's own logic with a params
+        object that is otherwise shape-identical apart from the
+        post-publication claim), the underlying
+        `post_publication_outputs_wrongly_claimed` guard independently
+        rejects a post-publication artifact/control-input claimed early.
+        This proves the v2 guard was preserved, not deleted, by the v3
+        exact-shape gate that now sits in front of it."""
+        params = self._ac_c5_params()
+        params["required_result_artifact_ids"] = list(params["required_result_artifact_ids"]) + [
+            "verification-report"
+        ]
+        claimed_early = (
+            set(params["required_result_artifact_ids"]) | set(params["required_control_inputs"])
+        ) & set(params["not_asserted_until_post_publication"])
+        self.assertEqual({"verification-report"}, claimed_early)
+
+    # -- AC-C5 v3: parameter_shape_policy exact -- any deviation from the
+    # pinned immutable object fails closed on `ac_c5_parameter_shape_mismatch`
+    # before any structural/evidence check below it is ever reached. -------
 
     def test_ac_c5_wrong_evaluation_phase_fails_closed(self) -> None:
         output_dir = _tmp_dir()
@@ -1758,7 +1898,7 @@ class B3AcceptanceCriteriaV2Tests(unittest.TestCase):
         params["evaluation_phase"] = "post_publication"
         passed, observed = self._evaluate_c5(output_dir, params=params)
         self.assertFalse(passed)
-        self.assertEqual("unsupported_evaluation_phase", observed.get("error"))
+        self.assertEqual("ac_c5_parameter_shape_mismatch", observed.get("error"))
 
     def test_ac_c5_missing_required_provenance_parameter_fails_closed(self) -> None:
         output_dir = _tmp_dir()
@@ -1766,7 +1906,7 @@ class B3AcceptanceCriteriaV2Tests(unittest.TestCase):
         del params["required_provenance"]
         passed, observed = self._evaluate_c5(output_dir, params=params)
         self.assertFalse(passed)
-        self.assertEqual("malformed_ac_c5_parameters", observed.get("error"))
+        self.assertEqual("ac_c5_parameter_shape_mismatch", observed.get("error"))
 
     def test_ac_c5_unsupported_control_input_type_fails_closed(self) -> None:
         output_dir = _tmp_dir()
@@ -1774,7 +1914,93 @@ class B3AcceptanceCriteriaV2Tests(unittest.TestCase):
         params["required_control_inputs"] = list(params["required_control_inputs"]) + ["unexpected-input"]
         passed, observed = self._evaluate_c5(output_dir, params=params)
         self.assertFalse(passed)
-        self.assertTrue(observed.get("unsupported_control_input:unexpected-input"))
+        self.assertEqual("ac_c5_parameter_shape_mismatch", observed.get("error"))
+
+    # -- AC-C5 v3: the pinned constant itself matches the evaluator's own
+    # default test fixture, and every structural mutation class the
+    # independent review named (delete/replace/duplicate/reorder every
+    # collection member, an unknown key, and a wrong/missing gate) fails
+    # closed on exactly `ac_c5_parameter_shape_mismatch`, before any
+    # artifact/provenance/binding evidence is examined. ---------------------
+
+    AC_C5_LIST_FIELDS = (
+        "required_result_artifact_ids",
+        "required_control_inputs",
+        "required_provenance",
+        "not_asserted_until_post_publication",
+    )
+
+    def test_ac_c5_params_exactly_matches_pinned_constant(self) -> None:
+        self.assertEqual(propagate_b3._EXPECTED_AC_C5_PARAMETERS_V3, self._ac_c5_params())
+
+    def _assert_mutated_ac_c5_params_fail_closed(self, mutate) -> None:
+        params = self._ac_c5_params()
+        mutate(params)
+        self.assertNotEqual(propagate_b3._EXPECTED_AC_C5_PARAMETERS_V3, params)
+        passed, observed = self._evaluate_c5(_tmp_dir(), params=params)
+        self.assertFalse(passed, observed)
+        self.assertEqual("ac_c5_parameter_shape_mismatch", observed.get("error"))
+
+    def test_ac_c5_deleting_any_collection_member_fails_closed(self) -> None:
+        for field in self.AC_C5_LIST_FIELDS:
+            for index in range(len(self._ac_c5_params()[field])):
+                with self.subTest(field=field, index=index, mutation="delete"):
+                    def mutate(params: Dict[str, Any], field: str = field, index: int = index) -> None:
+                        del params[field][index]
+
+                    self._assert_mutated_ac_c5_params_fail_closed(mutate)
+
+    def test_ac_c5_replacing_any_collection_member_fails_closed(self) -> None:
+        for field in self.AC_C5_LIST_FIELDS:
+            for index in range(len(self._ac_c5_params()[field])):
+                with self.subTest(field=field, index=index, mutation="replace"):
+                    def mutate(params: Dict[str, Any], field: str = field, index: int = index) -> None:
+                        params[field][index] = params[field][index] + "-replaced"
+
+                    self._assert_mutated_ac_c5_params_fail_closed(mutate)
+
+    def test_ac_c5_duplicating_any_collection_member_fails_closed(self) -> None:
+        for field in self.AC_C5_LIST_FIELDS:
+            for index in range(len(self._ac_c5_params()[field])):
+                with self.subTest(field=field, index=index, mutation="duplicate"):
+                    def mutate(params: Dict[str, Any], field: str = field, index: int = index) -> None:
+                        params[field].append(params[field][index])
+
+                    self._assert_mutated_ac_c5_params_fail_closed(mutate)
+
+    def test_ac_c5_reordering_any_two_member_collection_fails_closed(self) -> None:
+        for field in self.AC_C5_LIST_FIELDS:
+            if len(self._ac_c5_params()[field]) < 2:
+                continue
+            with self.subTest(field=field, mutation="reorder"):
+                def mutate(params: Dict[str, Any], field: str = field) -> None:
+                    params[field][0], params[field][1] = params[field][1], params[field][0]
+
+                self._assert_mutated_ac_c5_params_fail_closed(mutate)
+
+    def test_ac_c5_unknown_top_level_key_fails_closed(self) -> None:
+        def mutate(params: Dict[str, Any]) -> None:
+            params["unexpected_extra_key"] = True
+
+        self._assert_mutated_ac_c5_params_fail_closed(mutate)
+
+    def test_ac_c5_missing_post_publication_gate_fails_closed(self) -> None:
+        def mutate(params: Dict[str, Any]) -> None:
+            del params["post_publication_gate"]
+
+        self._assert_mutated_ac_c5_params_fail_closed(mutate)
+
+    def test_ac_c5_wrong_post_publication_gate_fails_closed(self) -> None:
+        def mutate(params: Dict[str, Any]) -> None:
+            params["post_publication_gate"] = "always"
+
+        self._assert_mutated_ac_c5_params_fail_closed(mutate)
+
+    def test_ac_c5_missing_parameter_shape_policy_fails_closed(self) -> None:
+        def mutate(params: Dict[str, Any]) -> None:
+            del params["parameter_shape_policy"]
+
+        self._assert_mutated_ac_c5_params_fail_closed(mutate)
 
     # -- AC-C6 baseline -----------------------------------------------------
 
@@ -1897,6 +2123,203 @@ class B3AcceptanceCriteriaV2Tests(unittest.TestCase):
         passed, observed = self._evaluate_c6(params=params)
         self.assertFalse(passed)
         self.assertEqual("malformed_ac_c6_parameters", observed.get("error"))
+
+    # -- AC-C6 v3: the three new required-true booleans fail closed if
+    # omitted or disabled, exactly like the pre-existing ones. -------------
+
+    def test_ac_c6_missing_reject_duplicate_overlap_fields_parameter_fails_closed(self) -> None:
+        params = self._ac_c6_params()
+        del params["reject_duplicate_overlap_fields"]
+        passed, observed = self._evaluate_c6(params=params)
+        self.assertFalse(passed)
+        self.assertEqual("malformed_ac_c6_parameters", observed.get("error"))
+
+    def test_ac_c6_missing_require_author_values_match_observed_parameter_fails_closed(self) -> None:
+        params = self._ac_c6_params()
+        del params["require_author_values_match_observed"]
+        passed, observed = self._evaluate_c6(params=params)
+        self.assertFalse(passed)
+        self.assertEqual("malformed_ac_c6_parameters", observed.get("error"))
+
+    def test_ac_c6_missing_require_reviewer_value_match_identity_parameter_fails_closed(self) -> None:
+        params = self._ac_c6_params()
+        del params["require_reviewer_value_match_identity"]
+        passed, observed = self._evaluate_c6(params=params)
+        self.assertFalse(passed)
+        self.assertEqual("malformed_ac_c6_parameters", observed.get("error"))
+
+    # -- AC-C6 v3: duplicate `overlap_results` entries for the same field
+    # fail closed with no last-write-wins behavior -- including when both
+    # entries assert the same value, which a naive "only compare the final
+    # value" check would miss entirely. ------------------------------------
+
+    def test_ac_c6_duplicate_overlap_results_field_with_conflicting_values_fails_closed(self) -> None:
+        review = self._review()
+        conflicting = dict(review["eligibility"]["overlap_results"][0])
+        self.assertEqual("agent_runtime_id", conflicting["field"])
+        conflicting["overlap"] = not conflicting["overlap"]
+        review["eligibility"]["overlap_results"].append(conflicting)
+        passed, observed = self._evaluate_c6(review=review)
+        self.assertFalse(passed)
+        self.assertFalse(observed["self_reported_overlap_results_consistent"])
+
+    def test_ac_c6_duplicate_overlap_results_field_with_same_value_still_fails_closed(self) -> None:
+        """No last-write-wins: a duplicate entry must fail closed even when
+        it happens to repeat the exact same (otherwise-correct) value --
+        the array itself is malformed, independent of whether the
+        duplicated value agrees with the recomputation."""
+        review = self._review()
+        duplicate = dict(review["eligibility"]["overlap_results"][0])
+        review["eligibility"]["overlap_results"].append(duplicate)
+        passed, observed = self._evaluate_c6(review=review)
+        self.assertFalse(passed)
+        self.assertFalse(observed["self_reported_overlap_results_consistent"])
+
+    def test_ac_c6_duplicate_non_forbidden_field_entry_still_fails_closed(self) -> None:
+        """Duplication is rejected across the whole array, not only among
+        entries for task-forbidden fields."""
+        review = self._review()
+        review["eligibility"]["overlap_results"].append(
+            {
+                "field": "operator_principal",
+                "overlap": False,
+                "author_values": ["github:test"],
+                "reviewer_value": "github:other-test",
+            }
+        )
+        review["eligibility"]["overlap_results"].append(
+            {
+                "field": "operator_principal",
+                "overlap": False,
+                "author_values": ["github:test"],
+                "reviewer_value": "github:other-test",
+            }
+        )
+        passed, observed = self._evaluate_c6(review=review)
+        self.assertFalse(passed)
+        self.assertFalse(observed["self_reported_overlap_results_consistent"])
+
+    # -- AC-C6 v3: author_values / reviewer_value must bind to the actual
+    # observed executor/reviewer identity, not just an agreeing boolean. ---
+
+    def test_ac_c6_wrong_author_values_for_scalar_field_fails_closed(self) -> None:
+        review = self._review()
+        review["eligibility"]["overlap_results"] = [
+            {**entry, "author_values": ["some-fabricated-value"]}
+            if entry["field"] == "credential_principal"
+            else entry
+            for entry in review["eligibility"]["overlap_results"]
+        ]
+        passed, observed = self._evaluate_c6(review=review)
+        self.assertFalse(passed)
+        self.assertFalse(observed["self_reported_overlap_results_consistent"])
+
+    def test_ac_c6_wrong_author_values_for_authored_commits_fails_closed(self) -> None:
+        """`authored_commits`' `author_values` must equal the exact sorted
+        set of commits this run's own Git observation recorded -- not any
+        other commit list, even a plausible-looking one."""
+        review = self._review()
+        review["eligibility"]["overlap_results"] = [
+            {**entry, "author_values": ["9" * 40]} if entry["field"] == "authored_commits" else entry
+            for entry in review["eligibility"]["overlap_results"]
+        ]
+        passed, observed = self._evaluate_c6(review=review)
+        self.assertFalse(passed)
+        self.assertFalse(observed["self_reported_overlap_results_consistent"])
+
+    def test_ac_c6_wrong_reviewer_value_for_scalar_field_fails_closed(self) -> None:
+        review = self._review()
+        review["eligibility"]["overlap_results"] = [
+            {**entry, "reviewer_value": "some-fabricated-reviewer-identity"}
+            if entry["field"] == "agent_runtime_id"
+            else entry
+            for entry in review["eligibility"]["overlap_results"]
+        ]
+        passed, observed = self._evaluate_c6(review=review)
+        self.assertFalse(passed)
+        self.assertFalse(observed["self_reported_overlap_results_consistent"])
+
+    def test_ac_c6_reviewer_value_not_canonical_none_for_empty_authored_commits_fails_closed(self) -> None:
+        """The reviewer's own `authored_commits` set is empty in the
+        baseline fixture, so the canonical `reviewer_value` is the literal
+        string `"none"` -- any other string (even an empty string) fails
+        closed."""
+        review = self._review()
+        review["eligibility"]["overlap_results"] = [
+            {**entry, "reviewer_value": ""} if entry["field"] == "authored_commits" else entry
+            for entry in review["eligibility"]["overlap_results"]
+        ]
+        passed, observed = self._evaluate_c6(review=review)
+        self.assertFalse(passed)
+        self.assertFalse(observed["self_reported_overlap_results_consistent"])
+
+    def test_ac_c6_reviewer_value_for_authored_commits_must_be_sorted_comma_joined(self) -> None:
+        """A non-empty reviewer authored-commit set must be rendered as a
+        deterministic, sorted, comma-joined SHA list -- an unsorted or
+        differently-formatted rendering fails closed even if it names the
+        right commits."""
+        review = self._review()
+        review["reviewer_identity"]["authored_commits"] = ["2" * 40, "1" * 40]
+        review["eligibility"]["overlap_results"] = [
+            {**entry, "reviewer_value": "{},{}".format("2" * 40, "1" * 40)}
+            if entry["field"] == "authored_commits"
+            else entry
+            for entry in review["eligibility"]["overlap_results"]
+        ]
+        passed, observed = self._evaluate_c6(review=review)
+        self.assertFalse(passed)
+        self.assertFalse(observed["self_reported_overlap_results_consistent"])
+        # The correctly sorted, comma-joined rendering must instead pass.
+        review_sorted = self._review()
+        review_sorted["reviewer_identity"]["authored_commits"] = ["2" * 40, "1" * 40]
+        review_sorted["eligibility"]["overlap_results"] = [
+            {**entry, "reviewer_value": "{},{}".format("1" * 40, "2" * 40)}
+            if entry["field"] == "authored_commits"
+            else entry
+            for entry in review_sorted["eligibility"]["overlap_results"]
+        ]
+        passed_sorted, observed_sorted = self._evaluate_c6(review=review_sorted)
+        self.assertTrue(passed_sorted, observed_sorted)
+
+    # -- AC-C6 v3: malformed overlap_results entries fail closed ------------
+
+    def test_ac_c6_overlap_results_entry_missing_author_values_key_fails_closed(self) -> None:
+        review = self._review()
+        review["eligibility"]["overlap_results"] = [
+            {k: v for k, v in entry.items() if k != "author_values"}
+            if entry["field"] == "agent_runtime_id"
+            else entry
+            for entry in review["eligibility"]["overlap_results"]
+        ]
+        passed, observed = self._evaluate_c6(review=review)
+        self.assertFalse(passed)
+        self.assertFalse(observed["self_reported_overlap_results_consistent"])
+
+    def test_ac_c6_overlap_results_entry_missing_reviewer_value_key_fails_closed(self) -> None:
+        review = self._review()
+        review["eligibility"]["overlap_results"] = [
+            {k: v for k, v in entry.items() if k != "reviewer_value"}
+            if entry["field"] == "credential_principal"
+            else entry
+            for entry in review["eligibility"]["overlap_results"]
+        ]
+        passed, observed = self._evaluate_c6(review=review)
+        self.assertFalse(passed)
+        self.assertFalse(observed["self_reported_overlap_results_consistent"])
+
+    def test_ac_c6_overlap_results_entry_not_an_object_fails_closed(self) -> None:
+        review = self._review()
+        review["eligibility"]["overlap_results"] = ["not-an-object"]
+        passed, observed = self._evaluate_c6(review=review)
+        self.assertFalse(passed)
+        self.assertFalse(observed["self_reported_overlap_results_consistent"])
+
+    def test_ac_c6_overlap_results_not_a_list_fails_closed(self) -> None:
+        review = self._review()
+        review["eligibility"]["overlap_results"] = {"field": "agent_runtime_id"}
+        passed, observed = self._evaluate_c6(review=review)
+        self.assertFalse(passed)
+        self.assertFalse(observed["self_reported_overlap_results_consistent"])
 
     # -- Dispatch sanity: `_evaluate_criterion` routes to the new evaluators -
 
