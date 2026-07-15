@@ -1,0 +1,946 @@
+name: B3 Terminal Failure Propagation
+
+# Issue #19 B3: a real Actions workflow that invokes the executor adapter,
+# captures its run/execution ID, finalizes result.v1 via the existing,
+# unmodified B1 finalizer (tools/finalize_b1.py), verifies it via the
+# existing, unmodified B2 verifier (tools/verify_b2.py), and publishes the
+# Check Run conclusion from the verifier's report -- never from the
+# adapter's own self-report and never from this job's own conclusion.
+#
+# Owner-approved side effects are scoped to Issue #19 Actions runs,
+# artifacts, and Check Runs only: this workflow never deploys, merges,
+# touches secrets/settings, or has any other product side effect.
+#
+# Corrective attempt 2 (architect-blocking gaps closed):
+#   1. the executor adapter is the real, pinned Claude Code Action used
+#      successfully on origin/design/issue-12-executor-orchestrator
+#      (anthropics/claude-code-action@6902c227aaa9536481b99d56f3014bbbad6c6da8),
+#      invoked here in a bounded, read-only diagnostic mode: it may only
+#      read the repository and run the registered B3 test command, and is
+#      never granted push/commit/merge/deploy tools;
+#   2. a `pull_request` trigger (opened/synchronize/reopened), guarded to
+#      this exact head branch, lets opening/updating the Draft PR produce a
+#      real pre-merge run; `workflow_dispatch` remains supplemental only;
+#   3. `execution_id` is never `uuid.uuid4()` randomness. It is the
+#      adapter's own real `session_id`, parsed by a bounded, fail-closed
+#      parser (`tools/propagate_b3.py:resolve_execution_identity`) from the
+#      pinned action's actual `execution_file`/`structured_output`, or --
+#      only when the adapter never attempted to run -- a UUID5
+#      deterministically derived from real Actions run facts;
+#   4. `result_artifact_present` / `required_evidence_artifact_present` are
+#      derived from real, independently checked files on disk (the
+#      downloaded adapter execution-file artifact and this job's own
+#      directly executed B3 test log), never from Git commit existence;
+#   5. `timeout` is classified only from explicit elapsed-time-versus-budget
+#      evidence -- the execute job's real start/completion timestamps,
+#      fetched from the Actions API itself (not the possibly-dead job's own
+#      self-report) -- never a blanket "the job failed" mapping. Absent
+#      that evidence, an abnormal execute-job outcome is `runner_lost` (the
+#      adapter never attempted) or `adapter_error` (it attempted but its
+#      session is unresolvable, or it reported a real error);
+#   6. the Check Run conclusion published below is still, and only ever,
+#      `success` iff `verification.v1.passed`; the final job step still
+#      gates this job's own exit code on that same value.
+#
+# Corrective attempt 3 (two remaining truthful-live blockers closed):
+#   1. `actions/checkout` on `pull_request` defaults to the synthetic merge
+#      ref/commit, and a Check Run keyed off `context.sha` on that same
+#      event is *also* the merge commit, not the PR head. A dedicated
+#      `resolve-subject` job now resolves exactly one trusted subject SHA
+#      -- `github.event.pull_request.head.sha` on `pull_request` events,
+#      `github.sha` only on `workflow_dispatch` -- and every downstream use
+#      (both jobs' `checkout` `ref:`, the Git observation, the B2
+#      verifier's `expected_subject_sha` binding, the published
+#      `workflow-run-metadata`, and the Check Run's `head_sha`) is bound to
+#      that one value, never `context.sha` directly;
+#   2. the live pipeline no longer verifies against the repository-owned
+#      `fixtures/b3/documents/task-baseline.json` /
+#      `review-baseline.json` fixture identities (those remain correct and
+#      necessary for the offline fixture suite only). It instead fetches
+#      the real task read-only from the immutable control commit
+#      `86e2826c85ce444127cc95a8551b8570002ec6cf` at
+#      `.ai/tasks/19/b3-task.v1.json`, and the independent review
+#      attestation read-only from the separate control ref
+#      `control/issue-19-b3-review-attestation` at
+#      `.ai/reviews/19/review-attestation.v1.json`. Neither fetch step ever
+#      synthesizes, fabricates, or falls back to fixture content on
+#      failure: a missing ref, missing path, or unreadable file simply
+#      leaves the corresponding local file absent, and the existing,
+#      unmodified B2 verifier's own fail-closed handling of an unreadable
+#      input document (`schema.instance.valid: false`) does the rest --
+#      exactly the same mechanism already proven for every other missing
+#      required document. `review.subject_sha.equals` and
+#      `review.eligibility.passed` (both existing, unmodified B2
+#      predicates) then reject a review of the wrong SHA or an ineligible
+#      review with no new logic required. The first Draft PR run is
+#      therefore expected, and required, to fail closed until an
+#      independent review attestation for this exact head SHA exists on
+#      that ref; re-running the same exact-head workflow after publication
+#      can then pass.
+#
+# Bootstrap limitation (tracked as a known limitation, not silently papered
+# over): the `--verifier-identity` argument still points at the
+# repository-owned `fixtures/b3/documents/verifier-identity.json`. That
+# document declares the automated verifier component's own service
+# identity (`service:b3-verifier`), not a claim about the task, the
+# executor, or the reviewer -- it is analogous to B2's own
+# `fixtures/b2/documents/verifier-identity.json` and is legitimately
+# repository-fixed, unlike the task and review-attestation documents this
+# attempt moves off fixture paths. The elapsed-time-versus-budget timeout
+# evidence relies on the Actions REST API's per-job timing; if that call
+# itself fails (permissions, rate limit), the signal fails closed to no
+# timeout evidence rather than fabricating a number, and the run is
+# classified `runner_lost`/`adapter_error` instead.
+#
+# Corrective attempt 4 (Issue #27 -- closes the real run 29397325438
+# attempt-2 gaps: a valid independent review still produced an
+# unverifiable result with empty checks/acceptance_results):
+#   1. the `execute` job now installs `requirements-b3.txt` *before* the
+#      pinned adapter action runs, so its exact registered B3 command can
+#      actually import `jsonschema` and execute -- attempt 2's real failure
+#      (`ModuleNotFoundError: jsonschema`) was that dependencies were only
+#      ever installed in the always-run finalize job, never where the
+#      adapter itself ran;
+#   2. `tools/propagate_b3.py:build_checks_and_acceptance` now populates
+#      `result.checks` / `result.acceptance_results` from trusted, directly
+#      observed evidence -- the adapter's own transcript (parsed by
+#      `resolve_adapter_registered_command_result`, never its self-report)
+#      and this job's own directly executed required-check exit code --
+#      never from `adapter_self_report`, `actions_job_conclusion`, or
+#      `raw_provider_terminal_reason`. The existing, unmodified B1
+#      finalizer is still the only thing that writes the base result
+#      (under a nested `b1-raw/` path); this correction only adds real
+#      evidence on top of that unmodified output, it does not edit
+#      `tools/finalize_b1.py`;
+#   3. all prior terminal failure classifications and the fail-closed
+#      Check Run gating are unchanged; the one narrow addition is that the
+#      adapter's own real, transcript-observed command failure (not its
+#      self-report) can now also independently produce `check_failed`,
+#      just like this job's own directly executed copy of the same check
+#      already could;
+#   4. the control task commit/path and review-attestation ref/path below
+#      are now Issue #27's own (a *separate* control ref from Issue #19's
+#      review attestation -- never reused for this new task/SHA), and this
+#      job now also captures the exact fetched review-attestation commit
+#      (`git rev-parse FETCH_HEAD`) and threads both commits through to
+#      `workflow-run-metadata.json` as `task_commit` /
+#      `review_attestation_commit`.
+#
+# Corrective attempt 5 (Issue #27 v2 -- independent review of commit
+# a7e4572 on this same Draft PR returned REQUEST_CHANGES: AC-C5 became
+# `passed=true` from only the presence of `task_commit` and
+# `review_attestation_commit`, without verifying the artifact/provenance
+# claims the v1 criterion actually declared, some of which -- the
+# verification report and workflow-run metadata -- do not exist yet at
+# result-finalization time and so can never truthfully be asserted there):
+#   1. `B3_CONTROL_TASK_COMMIT` / `B3_CONTROL_TASK_PATH` below now pin the
+#      replacement immutable v2 task contract
+#      (`.ai/tasks/27/b3-correction-task.v2.json` at commit
+#      `6f9ed9f849896936de482504c01d6447a6394d6d`), which narrows AC-C5 to
+#      only artifacts/provenance actually observable at result-finalization
+#      time and tightens AC-C6 to require the full review-eligibility
+#      shape, not just lineage-overlap freedom. The v1 task commit and the
+#      externally reviewed a7e4572 commit remain unmodified historical
+#      evidence; this workflow no longer fetches v1 at all;
+#   2. the live provider signal's `executor.adapter_version` now reports
+#      `claude-code-2.1.197-b3-correction-v2`, matching the v2 task
+#      contract's own `executor.version` exactly, so a run under this
+#      workflow can never be mistaken for one executed under the
+#      superseded v1 task;
+#   3. `tools/propagate_b3.py`'s AC-C5/AC-C6 evaluators were rewritten to
+#      match the v2 contract's narrowed parameter shapes (see that file's
+#      own `_evaluate_ac_c5` / `_evaluate_ac_c6` docstrings for the full,
+#      independently-verified fact list); no workflow step above changes as
+#      a result -- the corrected evaluation is entirely internal to the
+#      existing `propagate_b3.py run` invocation already wired up below.
+#
+# Corrective attempt 7 (Issue #27 v3 -- independent review of exact head
+# 06ac835 reproduced three real fail-open/false-positive paths: AC-C5 still
+# only checked "the supplied lists are non-empty", B3 and the unmodified B2
+# verifier both let a later, contradicting `overlap_results` entry for the
+# same field silently win over an earlier one, and this job's own
+# `adapter_started_at` epoch-seconds string was published, unconverted, as
+# `result.started_at`/provider-signal `started_at`, which passed schema
+# validation only because no RFC 3339 format-checker dependency was ever
+# pinned):
+#   1. `B3_CONTROL_TASK_COMMIT` / `B3_CONTROL_TASK_PATH` below now pin the
+#      replacement immutable v3 task contract
+#      (`.ai/tasks/27/b3-correction-task.v3.json` at commit
+#      `15bb125fa77c432084791aa5615515e136b7c9af`), whose AC-C5 declares
+#      `parameter_shape_policy: "exact"` -- `tools/propagate_b3.py`'s
+#      `_evaluate_ac_c5` now requires the task's own `parameters` object to
+#      equal that exact pinned object before any evidence is evaluated at
+#      all, closing the false-positive class where deleting/replacing a
+#      required field still passed. The v1/v2 task commits and the
+#      externally reviewed a7e4572/06ac835 commits remain unmodified
+#      historical evidence; this workflow no longer fetches v1 or v2 at all.
+#      The independent review-attestation control ref/path
+#      (`control/issue-27-b3-review-attestation` /
+#      `.ai/reviews/27/review-attestation.v1.json`) is unchanged and
+#      deliberately kept separate from the task control commit: this run
+#      still fails closed until a new attestation for this exact head SHA is
+#      published against that ref;
+#   2. the live provider signal's `executor.adapter_version` now reports
+#      `claude-code-2.1.197-b3-correction-v3`, matching the v3 task
+#      contract's own `executor.version` exactly, so a run under this
+#      workflow can never be mistaken for one executed under a superseded
+#      task;
+#   3. `adapter_started_at` is no longer published as `started_at` verbatim.
+#      The collect-signal step now converts the epoch-seconds value captured
+#      by "Record adapter start time" into an RFC 3339 UTC string before it
+#      is ever placed in the provider signal, while the raw epoch value is
+#      still preserved separately (`adapter_started_at`/
+#      `adapter_finished_at` remain epoch seconds, used only for
+#      `adapter_elapsed_seconds` arithmetic). `requirements-b0.txt` now pins
+#      `rfc3339-validator==0.1.4` so jsonschema's `format: date-time`
+#      assertion is actually enforced (previously silently skipped with no
+#      RFC 3339 checker implementation importable), and
+#      `tools/propagate_b3.py:load_provider_signal` additionally performs
+#      its own explicit, mandatory RFC 3339 parse of `started_at`/
+#      `finished_at` so correctness never depends solely on that optional
+#      format-checker registration;
+#   4. `tools/verify_b2.py` (now in this task's own allowed scope) and
+#      `tools/propagate_b3.py` both independently reject any
+#      `overlap_results` array containing more than one entry for the same
+#      `field` before building any per-field dict from it, and require each
+#      forbidden field's entry to carry `author_values`/`reviewer_value`
+#      exactly equal to the real, independently observed executor/reviewer
+#      identity data -- not only an `overlap` boolean that happens to agree
+#      with the recomputation;
+#   5. the primary evidence artifact now also uploads
+#      `b3-output/pipeline/evidence/**`, so the two declared result
+#      artifacts (`adapter-transcript`, `required-check-log`) are present
+#      inside the same evidence root as `result.json`, not only in the
+#      separate raw adapter-output artifact.
+
+
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+    inputs:
+      attempt:
+        description: "Execution attempt number (1-3)"
+        required: false
+        default: "1"
+      source_run_id:
+        description: "Optional: replay a specific historical run ID as the trusted source_run_id (used for canonical false-success fixtures such as 29190170902)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+  checks: write
+  actions: read
+  pull-requests: read
+
+concurrency:
+  group: b3-terminal-propagation-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  # Issue #27's own exact task, not Issue #19's bootstrap task: this
+  # workflow now verifies the live pipeline against the correction task's
+  # own required check and AC-C1..AC-C6 acceptance criteria.
+  B3_TASK_ID: "yurikuchumov-ux/ai-operating-system#27"
+  B3_HEAD_BRANCH: "agent/issue-19-b3-terminal-propagation"
+  # The exact, real registered-check command both the adapter (in its
+  # bounded diagnostic prompt below) and this job's own direct-execution
+  # step run. Kept as one literal string used in both places -- and
+  # supplied verbatim to the collect-signal step -- so
+  # `resolve_adapter_registered_command_result` can find the adapter's own
+  # real transcript record of running this exact command, never a
+  # normalized or guessed variant of it.
+  B3_REGISTERED_TEST_COMMAND: "python3 -m unittest discover -s tests -p test_b3_*.py"
+  # The immutable control commit this workflow trusts for the real Issue
+  # #27 B3 correction task contract. Pinned by exact SHA, not a movable
+  # branch tip: `git fetch origin <sha>` either resolves to exactly this
+  # commit or fails outright, so there is no separate "did the branch move"
+  # check to get wrong.
+  #
+  # Corrective attempt 7 (Issue #27 v3 -- independent review of 06ac835
+  # reproduced a real AC-C5 false-positive class): superseded from the v2
+  # task commit to the v3 task commit/path below. v1 and v2 remain
+  # historical evidence; neither is ever fetched by this workflow again.
+  B3_CONTROL_TASK_COMMIT: "15bb125fa77c432084791aa5615515e136b7c9af"
+  B3_CONTROL_TASK_PATH: ".ai/tasks/27/b3-correction-task.v3.json"
+  # The independent review-attestation control ref/path -- a *separate*
+  # control ref/path from Issue #19's own
+  # (`control/issue-19-b3-review-attestation`), because a review published
+  # for Issue #19's task/SHA must never be reused to attest this different
+  # task and (eventually) different head SHA. Unlike the task commit above,
+  # this ref is expected to be updated over time as new reviews are
+  # published for new head SHAs, so it is fetched by branch name; the B2
+  # verifier's own `review.subject_sha.equals` predicate (not this
+  # workflow) is what rejects a review of the wrong commit.
+  B3_REVIEW_REF: "control/issue-27-b3-review-attestation"
+  B3_REVIEW_PATH: ".ai/reviews/27/review-attestation.v1.json"
+  # Single source of truth for the job-level timeout, duplicated into the
+  # `execute` job's own `timeout-minutes` below; the finalize job re-derives
+  # the same number in seconds when computing real elapsed-vs-budget
+  # timeout evidence from the Actions API, rather than trusting the execute
+  # job's own (possibly-dead) self-report of having timed out.
+  B3_EXECUTE_JOB_TIMEOUT_MINUTES: "20"
+  # The adapter runs in bounded read-only diagnostic mode, not full
+  # autonomous coding, so its own budget is intentionally much smaller than
+  # the task contract's 7200s executor.timeout_seconds.
+  B3_ADAPTER_TIMEOUT_BUDGET_SECONDS: "600"
+
+jobs:
+  resolve-subject:
+    name: Resolve trusted subject SHA
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.ref == 'agent/issue-19-b3-terminal-propagation'
+    runs-on: ubuntu-latest
+    outputs:
+      subject_sha: ${{ steps.resolve.outputs.subject_sha }}
+    steps:
+      - name: Resolve the one trusted subject SHA
+        id: resolve
+        # On `pull_request`, `actions/checkout`'s default ref and
+        # `context.sha`/`github.sha` both resolve to the synthetic merge
+        # commit (`refs/pull/<n>/merge`), not the PR head. The explicit PR
+        # head SHA is the only trustworthy subject on that event; on
+        # `workflow_dispatch` there is no PR context at all, so `github.sha`
+        # (the ref that triggered the dispatch) is used instead.
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "subject_sha=${{ github.event.pull_request.head.sha }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "subject_sha=${{ github.sha }}" >> "$GITHUB_OUTPUT"
+          fi
+
+  execute:
+    name: Execute adapter (owner-scoped, read-only diagnostic, timeout-bounded)
+    needs: resolve-subject
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.ref == 'agent/issue-19-b3-terminal-propagation'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact trusted subject SHA
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve-subject.outputs.subject_sha }}
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies (before the adapter runs)
+        id: install_deps
+        # Issue #27 correction: attempt 2's real failure was
+        # `ModuleNotFoundError: jsonschema` inside the adapter's own
+        # transcript, because dependencies were only ever installed in the
+        # always-run finalize job below, never in this job where the
+        # adapter's registered command actually executes. Declared in
+        # `requirements-b3.txt` (this job's own declared dependency set) and
+        # installed here, strictly before the adapter step, so its exact
+        # registered B3 command can actually import `jsonschema` and run.
+        run: python3 -m pip install --disable-pip-version-check --no-input -r requirements-b3.txt
+
+      - name: Record adapter start time
+        id: before_adapter
+        run: echo "ts=$(date -u +%s)" >> "$GITHUB_OUTPUT"
+
+      - name: Run executor adapter (real pinned action, read-only diagnostic mode)
+        id: adapter
+        # Pinned to the exact commit proven to work on
+        # origin/design/issue-12-executor-orchestrator. `continue-on-error`
+        # keeps this job alive through an adapter failure so the always-run
+        # finalize job below can still observe and classify the actual
+        # terminal state from real evidence, never this step's own claim.
+        continue-on-error: true
+        uses: anthropics/claude-code-action@6902c227aaa9536481b99d56f3014bbbad6c6da8
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ github.token }}
+          prompt: |
+            You are running in bounded, read-only diagnostic mode for Issue #27 B3.
+            Do not edit, write, commit, push, merge, or deploy anything.
+            Run exactly the registered B3 test command and report its outcome:
+              ${{ env.B3_REGISTERED_TEST_COMMAND }}
+            Summarize the result. Do not take any other action.
+          claude_args: |
+            --max-turns 8
+            --allowedTools "Read,Glob,Grep,Bash(python3 -m unittest discover -s tests -p test_b3_*.py:*)"
+            --disallowedTools "Edit,Write,NotebookEditCell,Bash(git push:*),Bash(git commit:*),Bash(git add:*),Bash(gh pr merge:*),Bash(gh pr create:*)"
+
+      - name: Record adapter completion time
+        id: after_adapter
+        if: always()
+        run: echo "ts=$(date -u +%s)" >> "$GITHUB_OUTPUT"
+
+      - name: Capture real adapter execution output
+        id: capture_adapter_output
+        if: always()
+        env:
+          ADAPTER_OUTCOME: ${{ steps.adapter.outcome }}
+          ADAPTER_EXECUTION_FILE: ${{ steps.adapter.outputs.execution_file }}
+          ADAPTER_STRUCTURED_OUTPUT: ${{ steps.adapter.outputs.structured_output }}
+          ADAPTER_BRANCH_NAME: ${{ steps.adapter.outputs.branch_name }}
+          ADAPTER_STARTED_AT: ${{ steps.before_adapter.outputs.ts }}
+          ADAPTER_FINISHED_AT: ${{ steps.after_adapter.outputs.ts }}
+          INSTALL_DEPS_OUTCOME: ${{ steps.install_deps.outcome }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          out_dir = Path("b3-adapter-output")
+          out_dir.mkdir(parents=True, exist_ok=True)
+
+          # Copy the pinned action's real `execution_file` output verbatim,
+          # bounded to 1 MiB, if the action produced one. Never fabricated:
+          # a missing or oversized file simply means no execution-file
+          # evidence is available, which the finalize job's parser must
+          # then fail closed on rather than invent a session id.
+          execution_file_path = os.environ.get("ADAPTER_EXECUTION_FILE") or ""
+          execution_file_copied = False
+          if execution_file_path:
+              candidate = Path(execution_file_path)
+              if candidate.is_file() and candidate.stat().st_size <= 1024 * 1024:
+                  (out_dir / "execution-file.txt").write_bytes(candidate.read_bytes())
+                  execution_file_copied = True
+
+          manifest = {
+              "adapter_outcome": os.environ.get("ADAPTER_OUTCOME") or None,
+              "adapter_execution_file_copied": execution_file_copied,
+              "adapter_structured_output": os.environ.get("ADAPTER_STRUCTURED_OUTPUT") or None,
+              "adapter_branch_name": os.environ.get("ADAPTER_BRANCH_NAME") or None,
+              "adapter_started_at": os.environ.get("ADAPTER_STARTED_AT") or None,
+              "adapter_finished_at": os.environ.get("ADAPTER_FINISHED_AT") or None,
+              # Real step outcome of "Install dependencies (before the
+              # adapter runs)" above -- not the adapter's own self-report --
+              # used only to attest whether this job's declared dependencies
+              # were genuinely installed before the adapter step ran.
+              "dependencies_installed_before_adapter": os.environ.get("INSTALL_DEPS_OUTCOME") == "success",
+          }
+          (out_dir / "manifest.json").write_text(json.dumps(manifest, sort_keys=True), encoding="utf-8")
+          PY
+
+      - name: Upload real adapter execution output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: b3-adapter-output
+          path: b3-adapter-output/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  finalize-and-verify:
+    name: Finalize, verify, and publish Check Run (always runs)
+    needs: [resolve-subject, execute]
+    if: always() && needs.resolve-subject.result != 'skipped'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout exact trusted subject SHA
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve-subject.outputs.subject_sha }}
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: python3 -m pip install --disable-pip-version-check --no-input -r requirements-b3.txt
+
+      - name: Download real adapter execution output
+        if: always()
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: b3-adapter-output
+          path: b3-adapter-output
+
+      - name: Fetch real B3 task from the immutable control commit (read-only)
+        id: fetch_task
+        if: always()
+        # Never synthesizes or falls back: any failure here (the pinned
+        # commit is unreachable, or the path does not exist at that exact
+        # commit) simply leaves `b3-output/task.json` absent. The existing,
+        # unmodified B2 verifier fails closed on an unreadable task
+        # document exactly as it already does for a missing result or
+        # review-attestation document -- no new fallback logic is added.
+        run: |
+          mkdir -p b3-output
+          set +e
+          git fetch --depth=1 origin "$B3_CONTROL_TASK_COMMIT" >/dev/null 2>&1
+          if [ "$(git rev-parse --verify -q "$B3_CONTROL_TASK_COMMIT^{commit}" 2>/dev/null)" = "$B3_CONTROL_TASK_COMMIT" ]; then
+            git show "$B3_CONTROL_TASK_COMMIT:$B3_CONTROL_TASK_PATH" > b3-output/task.json 2>/dev/null
+            if [ ! -s b3-output/task.json ]; then
+              rm -f b3-output/task.json
+            fi
+          fi
+          set -e
+          if [ -f b3-output/task.json ]; then
+            echo "task_fetched=true" >> "$GITHUB_OUTPUT"
+            # The commit is pinned by exact SHA above, so the "exact fetched
+            # commit" is simply that same constant -- recorded here (rather
+            # than re-derived downstream) only once the fetch+read of that
+            # exact commit has actually succeeded.
+            echo "task_commit=$B3_CONTROL_TASK_COMMIT" >> "$GITHUB_OUTPUT"
+          else
+            echo "task_fetched=false" >> "$GITHUB_OUTPUT"
+            echo "task_commit=" >> "$GITHUB_OUTPUT"
+            echo "::warning::could not fetch the real B3 task from immutable commit $B3_CONTROL_TASK_COMMIT at $B3_CONTROL_TASK_PATH; the run will fail closed"
+          fi
+
+      - name: Validate fetched task with the B0 offline validator (evidence only)
+        id: validate_task
+        if: always()
+        continue-on-error: true
+        run: |
+          mkdir -p b3-output
+          if [ -f b3-output/task.json ]; then
+            python3 tools/validate_b0.py validate --type task --document b3-output/task.json > b3-output/task-validation.json || true
+          else
+            echo '{"valid": false, "error_codes": ["task_document_unavailable"]}' > b3-output/task-validation.json
+          fi
+
+      - name: Fetch independent review attestation (read-only)
+        id: fetch_review
+        if: always()
+        # Read-only fetch of a ref this workflow never writes to. A missing
+        # ref, missing path, or unreadable file leaves
+        # `b3-output/review-attestation.json` absent -- never synthesized,
+        # never a fixture fallback. It is expected and required that this
+        # step finds nothing until an independent reviewer has published a
+        # real attestation for this exact head SHA on
+        # `control/issue-27-b3-review-attestation`.
+        run: |
+          mkdir -p b3-output
+          set +e
+          git fetch --depth=1 origin "$B3_REVIEW_REF" >/dev/null 2>&1
+          fetch_ok=$?
+          review_commit=""
+          if [ $fetch_ok -eq 0 ]; then
+            review_commit="$(git rev-parse FETCH_HEAD 2>/dev/null)"
+            git show "FETCH_HEAD:$B3_REVIEW_PATH" > b3-output/review-attestation.json 2>/dev/null
+            if [ ! -s b3-output/review-attestation.json ]; then
+              rm -f b3-output/review-attestation.json
+              review_commit=""
+            fi
+          fi
+          set -e
+          if [ -f b3-output/review-attestation.json ]; then
+            echo "review_fetched=true" >> "$GITHUB_OUTPUT"
+            # The exact commit the review-attestation ref actually resolved
+            # to at fetch time -- real, not the (movable) ref name itself --
+            # only recorded once the fetch+read of that commit succeeded.
+            echo "review_attestation_commit=$review_commit" >> "$GITHUB_OUTPUT"
+          else
+            echo "review_fetched=false" >> "$GITHUB_OUTPUT"
+            echo "review_attestation_commit=" >> "$GITHUB_OUTPUT"
+            echo "::warning::no independent review attestation found on $B3_REVIEW_REF at $B3_REVIEW_PATH; the run will fail closed until one is published for this exact head SHA"
+          fi
+
+      - name: Fetch real execute-job timing from the Actions API
+        id: job_timing
+        if: always()
+        continue-on-error: true
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let startedAt = null;
+            let completedAt = null;
+            try {
+              const jobs = await github.rest.actions.listJobsForWorkflowRun({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                run_id: context.runId,
+              });
+              const executeJob = jobs.data.jobs.find((job) => job.name.startsWith('Execute adapter'));
+              if (executeJob) {
+                startedAt = executeJob.started_at || null;
+                completedAt = executeJob.completed_at || null;
+              }
+            } catch (error) {
+              core.warning(`could not fetch execute job timing: ${error}`);
+            }
+            fs.writeFileSync(
+              'b3-output-job-timing.json',
+              JSON.stringify({ started_at: startedAt, completed_at: completedAt })
+            );
+
+      - name: Run the registered B3 test command directly (real, deterministic evidence)
+        id: run_b3_tests
+        if: always()
+        continue-on-error: true
+        run: |
+          mkdir -p b3-output
+          python3 -m unittest discover -s tests -p 'test_b3_*.py' > b3-output/test-log.txt 2>&1
+          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+
+      - name: Collect trusted provider signal
+        id: collect_signal
+        if: always()
+        continue-on-error: true
+        env:
+          EXECUTE_JOB_RESULT: ${{ needs.execute.result }}
+          WORKFLOW_RUN_ID: ${{ github.run_id }}
+          WORKFLOW_RUN_ATTEMPT: ${{ github.run_attempt }}
+          SOURCE_RUN_ID: ${{ github.event.inputs.source_run_id }}
+          ATTEMPT: ${{ github.event.inputs.attempt }}
+          TRUSTED_SUBJECT_SHA: ${{ needs.resolve-subject.outputs.subject_sha }}
+          B3_JOB_TIMEOUT_MINUTES: ${{ env.B3_EXECUTE_JOB_TIMEOUT_MINUTES }}
+          B3_ADAPTER_TIMEOUT_BUDGET: ${{ env.B3_ADAPTER_TIMEOUT_BUDGET_SECONDS }}
+          B3_TEST_EXIT_CODE: ${{ steps.run_b3_tests.outputs.exit_code }}
+          B3_REGISTERED_TEST_COMMAND: ${{ env.B3_REGISTERED_TEST_COMMAND }}
+          B3_TASK_COMMIT: ${{ steps.fetch_task.outputs.task_commit }}
+          B3_REVIEW_ATTESTATION_COMMIT: ${{ steps.fetch_review.outputs.review_attestation_commit }}
+        run: |
+          python3 - <<'PY'
+          import datetime
+          import json
+          import os
+          import subprocess
+          from pathlib import Path
+
+          execute_result = os.environ.get("EXECUTE_JOB_RESULT", "failure")
+          workflow_run_id = os.environ["WORKFLOW_RUN_ID"]
+          workflow_run_attempt = os.environ.get("WORKFLOW_RUN_ATTEMPT") or "1"
+          source_run_id = os.environ.get("SOURCE_RUN_ID") or None
+          attempt = int(os.environ.get("ATTEMPT") or "1")
+          finished_at = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+          # The one explicit trusted subject SHA, resolved once by the
+          # `resolve-subject` job -- never `context.sha`/`github.sha`
+          # directly, and never re-derived from `git rev-parse HEAD` alone.
+          # It is cross-checked against the actual checkout below and the
+          # run fails closed (via a deliberately invalid signal) if they
+          # ever disagree, rather than silently trusting whichever one.
+          trusted_subject_sha = os.environ["TRUSTED_SUBJECT_SHA"]
+          actual_checked_out_sha = subprocess.run(
+              ["git", "rev-parse", "HEAD"], capture_output=True, text=True
+          ).stdout.strip()
+          if actual_checked_out_sha != trusted_subject_sha:
+              raise SystemExit(
+                  "checkout drift detected: HEAD is {} but the trusted subject SHA is {}; "
+                  "refusing to propagate".format(actual_checked_out_sha, trusted_subject_sha)
+              )
+
+          # Real adapter output, downloaded from the execute job's own
+          # artifact -- never synthesized here. Its absence (the download
+          # step above found nothing) is itself real evidence that the
+          # adapter action never attempted to run.
+          manifest_path = Path("b3-adapter-output/manifest.json")
+          adapter_manifest = {}
+          if manifest_path.is_file():
+              try:
+                  adapter_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+              except (json.JSONDecodeError, UnicodeDecodeError):
+                  adapter_manifest = {}
+          adapter_attempted = bool(adapter_manifest)
+          # Raw epoch-seconds strings from "Record adapter start/completion
+          # time" -- preserved unchanged and used only for
+          # elapsed-vs-budget arithmetic below, never published directly as
+          # a `result.v1`/provider-signal timestamp field (that RFC 3339
+          # conversion happens separately, just below).
+          adapter_started_at = adapter_manifest.get("adapter_started_at")
+          adapter_finished_at = adapter_manifest.get("adapter_finished_at")
+          adapter_elapsed_seconds = None
+          if adapter_started_at and adapter_finished_at:
+              try:
+                  adapter_elapsed_seconds = int(adapter_finished_at) - int(adapter_started_at)
+              except ValueError:
+                  adapter_elapsed_seconds = None
+
+          # Issue #27 v3 correction: the real live defect -- the raw epoch
+          # value above (e.g. `"1784120958"`) was previously placed directly
+          # into the provider signal's `started_at` field, which
+          # `result.v1.schema.json` requires to be an RFC 3339 `date-time`
+          # string; it passed schema validation only because no RFC 3339
+          # format-checker dependency was ever pinned. Converted here, once,
+          # to the same RFC 3339 UTC string shape `finished_at` already
+          # uses; a malformed or missing epoch value yields `None`, never a
+          # fabricated timestamp -- `started_at` then falls back to
+          # `finished_at` exactly as before this correction.
+          adapter_started_at_rfc3339 = None
+          if adapter_started_at:
+              try:
+                  adapter_started_at_rfc3339 = datetime.datetime.fromtimestamp(
+                      int(adapter_started_at), tz=datetime.timezone.utc
+                  ).strftime("%Y-%m-%dT%H:%M:%SZ")
+              except (ValueError, OSError, OverflowError):
+                  adapter_started_at_rfc3339 = None
+
+          execution_file_path = Path("b3-adapter-output/execution-file.txt")
+          execution_file_content = None
+          if adapter_manifest.get("adapter_execution_file_copied") and execution_file_path.is_file():
+              execution_file_content = execution_file_path.read_text(encoding="utf-8", errors="replace")
+          structured_output_raw = adapter_manifest.get("adapter_structured_output")
+
+          # Real, independently-fetched Actions API timing for the execute
+          # job -- not the (possibly-dead) execute job's own self-report --
+          # is the only source of job-level elapsed-vs-budget evidence.
+          job_timing_path = Path("b3-output-job-timing.json")
+          job_started_at = None
+          job_completed_at = None
+          if job_timing_path.is_file():
+              try:
+                  job_timing = json.loads(job_timing_path.read_text(encoding="utf-8"))
+                  job_started_at = job_timing.get("started_at")
+                  job_completed_at = job_timing.get("completed_at")
+              except (json.JSONDecodeError, UnicodeDecodeError):
+                  pass
+          job_elapsed_seconds = None
+          if job_started_at and job_completed_at:
+              try:
+                  fmt = "%Y-%m-%dT%H:%M:%SZ"
+                  started = datetime.datetime.strptime(job_started_at, fmt)
+                  completed = datetime.datetime.strptime(job_completed_at, fmt)
+                  job_elapsed_seconds = int((completed - started).total_seconds())
+              except ValueError:
+                  job_elapsed_seconds = None
+          job_timeout_budget_seconds = int(os.environ["B3_JOB_TIMEOUT_MINUTES"]) * 60
+          adapter_timeout_budget_seconds = int(os.environ["B3_ADAPTER_TIMEOUT_BUDGET"])
+
+          # `execute_result` (needs.execute.result) and the adapter's own
+          # outcome are recorded below purely as untrusted, informational
+          # fields -- they are never read by classify_terminal() to decide
+          # cancelled_by_owner, timeout, runner_lost, or success. Those are
+          # derived only from the real evidence assembled above (Git state,
+          # real elapsed-vs-budget timing, real file presence, the directly
+          # executed required check's own exit code).
+          cancelled_by_owner = execute_result == "cancelled" and job_elapsed_seconds is not None and job_elapsed_seconds < job_timeout_budget_seconds
+
+          base_sha = subprocess.run(
+              ["git", "merge-base", "HEAD", "origin/main"], capture_output=True, text=True
+          ).stdout.strip() or "0" * 40
+          authored_commits_raw = subprocess.run(
+              ["git", "rev-list", "{}..HEAD".format(base_sha)], capture_output=True, text=True
+          ).stdout.split()
+          changed_files = subprocess.run(
+              ["git", "diff", "--name-only", base_sha, "HEAD"], capture_output=True, text=True
+          ).stdout.split()
+
+          # Real, directly-observed file presence -- never derived from
+          # whether a commit exists.
+          result_artifact_present = execution_file_path.is_file() or bool(structured_output_raw)
+          test_log_path = Path("b3-output/test-log.txt")
+          required_evidence_artifact_present = test_log_path.is_file() and test_log_path.stat().st_size > 0
+          required_check_exit_code = int(os.environ.get("B3_TEST_EXIT_CODE") or "1")
+
+          # Real, bounded content of this job's own directly executed
+          # required-check log -- never the adapter's transcript, never a
+          # summary of it -- carried through as evidence for
+          # `result.checks` / `result.acceptance_results`.
+          required_check_log = None
+          if required_evidence_artifact_present:
+              raw_log = test_log_path.read_bytes()
+              if len(raw_log) <= 1024 * 1024:
+                  required_check_log = raw_log.decode("utf-8", errors="replace")
+
+          task_commit = os.environ.get("B3_TASK_COMMIT") or None
+          review_attestation_commit = os.environ.get("B3_REVIEW_ATTESTATION_COMMIT") or None
+
+          # Best-effort, real-evidence-derived max-turns detection: the
+          # adapter's own transcript/structured output is scanned for the
+          # pinned action's known max-turns marker. Absence of any evidence
+          # means False, never a default True.
+          max_turns_exhausted = False
+          for blob in (execution_file_content, structured_output_raw):
+              if blob and ("max_turns" in blob or "error_max_turns" in blob):
+                  max_turns_exhausted = True
+
+          signal = {
+              "schema_version": "1.0.0",
+              "task_id": os.environ.get("B3_TASK_ID", "yurikuchumov-ux/ai-operating-system#27"),
+              "attempt": attempt,
+              "executor": {
+                  "adapter": "human-supervised-claude-code",
+                  # Must match the immutable Issue #27 v3 task contract's
+                  # own `executor.version`
+                  # (`claude-code-2.1.197-b3-correction-v3`) -- this live
+                  # signal is produced under that exact v3 correction task,
+                  # not Issue #19's original bootstrap task nor the v1/v2
+                  # correction tasks (both superseded after REQUEST_CHANGES).
+                  "adapter_version": "claude-code-2.1.197-b3-correction-v3",
+                  "identity": {
+                      "operator_principal": "github:yurikuchumov-ux",
+                      "agent_runtime_id": "claude-code:b3-session",
+                      "credential_principal": "github:actions:b3-executor",
+                      # Truthfully Issue #27: this run is delegated from the
+                      # owner's Issue #27 correction decision, not Issue
+                      # #19's original one.
+                      "delegation_parent": "issue-27-owner-decision",
+                      "role": "author",
+                  },
+              },
+              "started_at": adapter_started_at_rfc3339 or finished_at,
+              "finished_at": finished_at,
+              "workflow_run_id": str(workflow_run_id),
+              "workflow_run_attempt": str(workflow_run_attempt),
+              "source_run_id": source_run_id,
+              "trusted_subject_sha": trusted_subject_sha,
+              "cancelled_by_owner": cancelled_by_owner,
+              "adapter_attempted": adapter_attempted,
+              "adapter_step_outcome": adapter_manifest.get("adapter_outcome"),
+              "job_elapsed_seconds": job_elapsed_seconds,
+              "job_timeout_budget_seconds": job_timeout_budget_seconds,
+              "adapter_elapsed_seconds": adapter_elapsed_seconds,
+              "adapter_timeout_budget_seconds": adapter_timeout_budget_seconds,
+              "max_turns_exhausted": max_turns_exhausted,
+              "adapter_error": None,
+              "raw_provider_terminal_reason": None,
+              "adapter_self_report": (
+                  {
+                      "status": "success" if adapter_manifest.get("adapter_outcome") == "success" else "failed",
+                      "claimed_status": "change_proposed" if adapter_manifest.get("adapter_outcome") == "success" else "failed",
+                      "claimed_terminal_reason": "completed" if adapter_manifest.get("adapter_outcome") == "success" else "adapter_error",
+                  }
+                  if adapter_attempted
+                  else None
+              ),
+              "actions_job_conclusion": execute_result,
+              "untrusted_candidate": None,
+              "execution_file_content": execution_file_content,
+              "structured_output_raw": structured_output_raw,
+              "git_observation": {
+                  "base_sha": base_sha,
+                  "head_sha": trusted_subject_sha if authored_commits_raw else None,
+                  "authored_commits": authored_commits_raw,
+                  "changed_files": changed_files,
+              },
+              "result_artifact_present": result_artifact_present,
+              "required_evidence_artifact_present": required_evidence_artifact_present,
+              "required_check_exit_code": required_check_exit_code,
+              "finalized_by": {
+                  "component_id": "b3-terminal-propagator.v1",
+                  "credential_principal": "github:actions:b3-finalizer",
+              },
+              # Issue #27 correction: real, directly observed facts needed
+              # to populate `result.checks` / `result.acceptance_results`
+              # truthfully (see `tools/propagate_b3.py:build_checks_and_acceptance`).
+              "dependencies_installed_before_adapter": bool(
+                  adapter_manifest.get("dependencies_installed_before_adapter")
+              ),
+              "adapter_registered_command": os.environ.get("B3_REGISTERED_TEST_COMMAND") or None,
+              "required_check_log": required_check_log,
+              "task_commit": task_commit,
+              "review_attestation_commit": review_attestation_commit,
+          }
+          os.makedirs("b3-output", exist_ok=True)
+          with open("b3-output/provider-signal.json", "w", encoding="utf-8") as handle:
+              json.dump(signal, handle, sort_keys=True)
+          PY
+
+      - name: Run B3 terminal propagation pipeline
+        id: propagate
+        if: always()
+        continue-on-error: true
+        # `--task` and `--review-attestation` point only at the paths the
+        # two fetch steps above may have populated -- never at
+        # fixtures/b3/documents/task-baseline.json or review-baseline.json.
+        # When either fetch failed, the corresponding path is absent and
+        # the existing, unmodified B2 verifier fails this run closed on
+        # `schema.instance.valid` exactly as it already does for any other
+        # missing required document; nothing here works around that.
+        run: |
+          python3 tools/propagate_b3.py run \
+            --signal b3-output/provider-signal.json \
+            --task b3-output/task.json \
+            --review-attestation b3-output/review-attestation.json \
+            --verifier-identity fixtures/b3/documents/verifier-identity.json \
+            --verification-id "$(python3 -c 'import uuid; print(uuid.uuid4())')" \
+            --evaluated-at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --output-dir b3-output/pipeline \
+            | tee b3-output/propagate-report.json
+
+      - name: Upload result, verification, and workflow-run-metadata artifacts
+        if: always()
+        # Issue #27 v3 correction: `result.json` declares its two result
+        # artifacts (`adapter-transcript`, `required-check-log`) at paths
+        # relative to this same evidence root
+        # (`b3-output/pipeline/evidence/*.txt`, written by
+        # `tools/propagate_b3.py:_write_evidence_file`), but this primary
+        # evidence artifact previously uploaded only the top-level pipeline
+        # outputs -- an independent B2 re-verification of the downloaded
+        # bundle alone could not resolve those declared artifact paths.
+        # `b3-output/pipeline/evidence/**` is now included so the bundle is
+        # self-contained; the separate raw `b3-adapter-output` artifact
+        # (uploaded by the `execute` job above) remains additional evidence,
+        # not a replacement for this one.
+        uses: actions/upload-artifact@v4
+        with:
+          name: b3-run-${{ github.run_id }}-evidence
+          path: |
+            b3-output/pipeline/result.json
+            b3-output/pipeline/verification.json
+            b3-output/pipeline/workflow-run-metadata.json
+            b3-output/pipeline/evidence/**
+            b3-output/propagate-report.json
+            b3-output/test-log.txt
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Upload fetched task/review evidence (absence is meaningful evidence)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: b3-run-${{ github.run_id }}-control-evidence
+          path: |
+            b3-output/task.json
+            b3-output/task-validation.json
+            b3-output/review-attestation.json
+          if-no-files-found: ignore
+          retention-days: 90
+
+      - name: Publish Check Run conclusion from verifier output
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const metadata = JSON.parse(
+              fs.readFileSync('b3-output/pipeline/workflow-run-metadata.json', 'utf8')
+            );
+            // The one and only source of the Check Run conclusion is the
+            // verifier's own `passed` field, carried through as
+            // `check_run_conclusion` by tools/propagate_b3.py. Adapter
+            // self-report and this job's own conclusion are never read
+            // here. `head_sha` is the same one trusted subject SHA
+            // threaded through the whole run -- never `context.sha`, which
+            // on `pull_request` is the synthetic merge commit, not the PR
+            // head this Check Run must attach to.
+            const conclusion = metadata.check_run_conclusion === 'success' ? 'success' : 'failure';
+            await github.rest.checks.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              name: 'b3-terminal-propagation',
+              head_sha: metadata.subject_sha,
+              status: 'completed',
+              conclusion: conclusion,
+              output: {
+                title: `B3 terminal propagation: ${conclusion}`,
+                summary: [
+                  `subject_sha: ${metadata.subject_sha}`,
+                  `workflow_run_id: ${metadata.workflow_run_id}`,
+                  `execution_id: ${metadata.execution_id}`,
+                  `execution_id_source: ${metadata.execution_id_source}`,
+                  `verification_id: ${metadata.verification_id}`,
+                  `verification_passed: ${metadata.verification_passed}`,
+                  `raw_provider_terminal_reason: ${metadata.raw_provider_terminal_reason}`,
+                ].join('\n'),
+              },
+            });
+
+      - name: Gate job result on the verifier's conclusion
+        if: always()
+        run: |
+          python3 -c "
+          import json, sys
+          with open('b3-output/pipeline/workflow-run-metadata.json') as handle:
+              metadata = json.load(handle)
+          conclusion = metadata['check_run_conclusion']
+          print('check_run_conclusion={}'.format(conclusion))
+          sys.exit(0 if conclusion == 'success' else 1)
+          "

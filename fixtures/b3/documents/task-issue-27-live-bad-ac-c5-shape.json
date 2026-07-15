@@ -1,0 +1,262 @@
+{
+  "schema_version": "1.0.0",
+  "task_id": "yurikuchumov-ux/ai-operating-system#27",
+  "repository": "yurikuchumov-ux/ai-operating-system",
+  "issue_number": 27,
+  "objective": "Supersede Issue #27 task v2 after independent review of head 06ac83545a596c30c46143b9744f9b0aa0c4410b found three reproduced fail-open paths. Continue Draft PR #26 without rewriting history. Require AC-C5 parameters to equal the immutable contract exactly. Make AC-C6 and B2 reject duplicate overlap fields and bind author_values/reviewer_value to actual identities. Emit and explicitly validate RFC 3339 timestamps with a pinned checker dependency and epoch-string negative test. Include declared evidence paths in the primary artifact and update stale v1 documentation. Preserve terminal behavior, provenance and actor separation. Forbid product, deployment, merge, secrets, settings, schemas, predicates and B0/B1 implementation changes.",
+  "change_policy": {
+    "change_required": true,
+    "policy_exception_id": null,
+    "no_change": {
+      "allowed": false,
+      "reason_codes": [],
+      "required_evidence_types": []
+    }
+  },
+  "base_ref": "main",
+  "base_sha": "ae8bfab665e9a6777affaa448e872d24b87ea36c",
+  "branch": "agent/issue-19-b3-terminal-propagation",
+  "allowed_paths": [
+    "CHANGELOG.md",
+    "contracts/README.md",
+    "contracts/registries/commands.v1.json",
+    ".github/workflows/b3-*.yml",
+    "fixtures/b3/**",
+    "tests/test_b2_verifier.py",
+    "tests/test_b3_*.py",
+    "tools/verify_b2.py",
+    "tools/*_b3.py",
+    "requirements-b0.txt",
+    "requirements-b3.txt"
+  ],
+  "denied_paths": [
+    ".ai/tasks/**",
+    "AI_OS.md",
+    "README.md",
+    ".github/PULL_REQUEST_TEMPLATE.md",
+    "contracts/schemas/**",
+    "contracts/registries/predicates.v1.json",
+    "contracts/registries/fixture-coverage.v1.json",
+    "docs/**",
+    "fixtures/b0/**",
+    "fixtures/b1/**",
+    "fixtures/b2/**",
+    "standards/**",
+    "templates/**",
+    "tests/test_b0_contracts.py",
+    "tests/test_b1_finalizer.py",
+    "tools/finalize_b1.py",
+    "tools/validate_b0.py"
+  ],
+  "risk_class": "L2",
+  "executor": {
+    "adapter": "human-supervised-claude-code",
+    "version": "claude-code-2.1.197-b3-correction-v3",
+    "max_attempts": 3,
+    "timeout_seconds": 7200
+  },
+  "acceptance_criteria": [
+    {
+      "id": "AC-C1",
+      "predicate_id": "process.exit_code.equals",
+      "parameters": {
+        "component": "claude-adapter-registered-command",
+        "value": 0,
+        "declared_dependencies_installed_before_adapter": true,
+        "trusted_evidence_source": "adapter_execution_transcript",
+        "forbidden_sources": [
+          "adapter_self_report",
+          "actions_job_conclusion"
+        ]
+      },
+      "required": true,
+      "linked_checks": [
+        "b3-terminal-propagation-tests"
+      ]
+    },
+    {
+      "id": "AC-C2",
+      "predicate_id": "process.exit_code.equals",
+      "parameters": {
+        "component": "finalize-direct-required-check",
+        "value": 0,
+        "trusted_evidence_source": "workflow_controlled_process_exit_code",
+        "forbidden_sources": [
+          "adapter_self_report",
+          "actions_job_conclusion",
+          "raw_provider_terminal_reason"
+        ]
+      },
+      "required": true,
+      "linked_checks": [
+        "b3-terminal-propagation-tests"
+      ]
+    },
+    {
+      "id": "AC-C3",
+      "predicate_id": "schema.instance.valid",
+      "parameters": {
+        "schema": "contracts/schemas/result.v1.schema.json",
+        "required_non_empty_fields": [
+          "checks",
+          "acceptance_results"
+        ],
+        "required_check_id": "b3-terminal-propagation-tests",
+        "required_acceptance_ids": [
+          "AC-C1",
+          "AC-C2",
+          "AC-C3",
+          "AC-C4",
+          "AC-C5",
+          "AC-C6"
+        ],
+        "required_rfc3339_fields": [
+          "started_at",
+          "finished_at"
+        ],
+        "required_format_checker_dependency": "rfc3339-validator==0.1.4",
+        "reject_epoch_string_timestamps": true
+      },
+      "required": true,
+      "linked_checks": [
+        "b3-terminal-propagation-tests"
+      ]
+    },
+    {
+      "id": "AC-C4",
+      "predicate_id": "fixture.pass_rate.equals",
+      "parameters": {
+        "manifest": "fixtures/b3/manifest.v1.json",
+        "expected": 1.0,
+        "oracle_owner": "control-plane-contract",
+        "required_scenarios": [
+          {
+            "id": "accept-live-required-evidence",
+            "status": "change_proposed",
+            "terminal_reason": "completed",
+            "check_run_conclusion": "success"
+          },
+          {
+            "id": "reject-adapter-command-failure",
+            "status": "failed",
+            "check_run_conclusion": "failure"
+          },
+          {
+            "id": "reject-direct-check-failure",
+            "status": "failed",
+            "terminal_reason": "check_failed",
+            "check_run_conclusion": "failure"
+          },
+          {
+            "id": "reject-missing-acceptance-evidence",
+            "check_run_conclusion": "failure"
+          },
+          {
+            "id": "reject-self-report-override",
+            "check_run_conclusion": "failure"
+          },
+          {
+            "id": "reject-ac-c5-parameter-shape",
+            "check_run_conclusion": "failure"
+          },
+          {
+            "id": "reject-duplicate-overlap-results",
+            "check_run_conclusion": "failure"
+          },
+          {
+            "id": "reject-non-rfc3339-started-at",
+            "check_run_conclusion": "failure"
+          }
+        ]
+      },
+      "required": true,
+      "linked_checks": [
+        "b3-terminal-propagation-tests"
+      ]
+    },
+    {
+      "id": "AC-C5",
+      "predicate_id": "artifact.exists",
+      "parameters": {
+        "parameter_shape_policy": "exact",
+        "evaluation_phase": "result_finalization",
+        "required_result_artifact_ids": [
+          "adapter-transcript",
+          "required-check-log"
+        ],
+        "required_control_inputs": [
+          "task-artifact",
+          "review-attestation"
+        ],
+        "required_provenance": [
+          "workflow_run_id",
+          "workflow_run_attempt",
+          "execution_id",
+          "subject_sha",
+          "task_commit"
+        ],
+        "not_asserted_until_post_publication": [
+          "verification-report",
+          "workflow-run-metadata"
+        ],
+        "post_publication_gate": "verification.passed_and_check_run_conclusion"
+      },
+      "required": true,
+      "linked_checks": [
+        "b3-terminal-propagation-tests"
+      ]
+    },
+    {
+      "id": "AC-C6",
+      "predicate_id": "identity.lineage.no_overlap",
+      "parameters": {
+        "required_policy_id": "review-independence.v1",
+        "required_risk_class": "L2",
+        "require_eligible": true,
+        "require_reason_codes_empty": true,
+        "reject_duplicate_overlap_fields": true,
+        "require_author_values_match_observed": true,
+        "require_reviewer_value_match_identity": true,
+        "forbidden_lineage_overlaps": [
+          "agent_runtime_id",
+          "credential_principal",
+          "authored_commits"
+        ],
+        "required_distinct_from_executor": true
+      },
+      "required": true,
+      "linked_checks": [
+        "b3-terminal-propagation-tests"
+      ]
+    }
+  ],
+  "required_checks": [
+    {
+      "id": "b3-terminal-propagation-tests",
+      "command_id": "repo.contracts.b3.tests",
+      "required": true,
+      "expected_postconditions": [
+        {
+          "predicate_id": "process.exit_code.equals",
+          "parameters": {
+            "value": 0,
+            "architect_invocation": "python3 -m unittest discover -s tests -p test_b3_*.py"
+          }
+        }
+      ]
+    }
+  ],
+  "review_policy": {
+    "reviewer_class": "independent-engineering",
+    "policy_id": "review-independence.v1",
+    "forbidden_lineage_overlaps": [
+      "agent_runtime_id",
+      "credential_principal",
+      "authored_commits"
+    ],
+    "minimum_distinct_human_operators": 1
+  },
+  "external_side_effects": "owner_approved",
+  "created_by": "github:yurikuchumov-ux/codex-control-plane",
+  "created_at": "2026-07-15T14:12:31Z"
+}

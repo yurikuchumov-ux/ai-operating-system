@@ -539,6 +539,203 @@ class B2FalseSuccessRegressionTests(unittest.TestCase):
         self.assertIn("review_ineligible", self._failure_codes(report))
 
 
+class B2LineageOverlapV3RegressionTests(unittest.TestCase):
+    """Issue #27 v3 correction: the review-attestation schema does not
+    forbid more than one `overlap_results` entry for the same `field`; the
+    previous `{item["field"]: item["overlap"] for item in ...}` dict
+    comprehension let a later entry silently override an earlier,
+    possibly-contradicting one (no last-write-wins is now guaranteed).
+    `author_values`/`reviewer_value` must also bind to the real,
+    independently observed executor/reviewer identity data -- not merely an
+    `overlap` boolean that happens to agree with the recomputation."""
+
+    def setUp(self) -> None:
+        self.workdir = _tmp_dir()
+        self.task = load_json(DOCUMENTS_DIR / "task-base.json")
+        self.result = load_json(DOCUMENTS_DIR / "result-base.json")
+        self.review = load_json(DOCUMENTS_DIR / "review-base.json")
+        self.git_observation = load_json(DOCUMENTS_DIR / "git-observation-base.json")
+        self.evidence_root = DOCUMENTS_DIR / "evidence/good"
+
+    def _run(self, review=None):
+        invocation = _baseline_invocation()
+        return run_verification(
+            invocation,
+            _write_json(self.workdir / "task.json", self.task),
+            _write_json(self.workdir / "result.json", self.result),
+            _write_json(self.workdir / "review.json", review if review is not None else self.review),
+            _write_json(self.workdir / "git-observation.json", self.git_observation),
+            self.evidence_root,
+        )
+
+    def _failure_codes(self, report) -> set:
+        return {row["failure_code"] for row in report["predicate_results"] if row["failure_code"]}
+
+    def _lineage_row(self, report):
+        return next(
+            row for row in report["predicate_results"] if row["predicate_id"] == "identity.lineage.no_overlap"
+        )
+
+    def test_baseline_review_passes_with_correct_bindings(self) -> None:
+        """Sanity baseline: `review-base.json`'s own `author_values`/
+        `reviewer_value` already bind to `result-base.json`'s real executor
+        identity and `authored_commits` -- the new checks must not break a
+        genuinely correct attestation."""
+        exit_code, report = self._run()
+        self.assertEqual(0, exit_code)
+        self.assertTrue(report["passed"])
+
+    def test_duplicate_overlap_results_field_with_conflicting_values_fails_closed(self) -> None:
+        review = json.loads(json.dumps(self.review))
+        conflicting = dict(review["eligibility"]["overlap_results"][0])
+        self.assertEqual("agent_runtime_id", conflicting["field"])
+        conflicting["overlap"] = not conflicting["overlap"]
+        review["eligibility"]["overlap_results"].append(conflicting)
+        exit_code, report = self._run(review=review)
+        self.assertEqual(1, exit_code)
+        self.assertFalse(report["passed"])
+        self.assertIn("identity_conflict", self._failure_codes(report))
+        self.assertIn("agent_runtime_id", self._lineage_row(report)["observed"]["duplicate_overlap_result_fields"])
+
+    def test_duplicate_overlap_results_field_with_same_value_still_fails_closed(self) -> None:
+        """No last-write-wins: a duplicate must fail closed even when it
+        repeats the exact same, otherwise-correct entry -- the array itself
+        is malformed, independent of whether the duplicated value agrees
+        with the recomputation."""
+        review = json.loads(json.dumps(self.review))
+        duplicate = dict(review["eligibility"]["overlap_results"][0])
+        review["eligibility"]["overlap_results"].append(duplicate)
+        exit_code, report = self._run(review=review)
+        self.assertEqual(1, exit_code)
+        self.assertFalse(report["passed"])
+        self.assertIn("identity_conflict", self._failure_codes(report))
+        self.assertIn("agent_runtime_id", self._lineage_row(report)["observed"]["duplicate_overlap_result_fields"])
+
+    def test_duplicate_non_forbidden_field_entry_still_fails_closed(self) -> None:
+        """Duplication is rejected across the whole array, not only among
+        entries for task-forbidden fields."""
+        review = json.loads(json.dumps(self.review))
+        extra_entry = {
+            "field": "operator_principal",
+            "overlap": False,
+            "author_values": ["github:yurikuchumov-ux"],
+            "reviewer_value": "human:independent-reviewer",
+        }
+        review["eligibility"]["overlap_results"].append(dict(extra_entry))
+        review["eligibility"]["overlap_results"].append(dict(extra_entry))
+        exit_code, report = self._run(review=review)
+        self.assertEqual(1, exit_code)
+        self.assertFalse(report["passed"])
+        self.assertIn(
+            "operator_principal", self._lineage_row(report)["observed"]["duplicate_overlap_result_fields"]
+        )
+
+    def test_wrong_author_values_for_scalar_field_fails_closed(self) -> None:
+        review = json.loads(json.dumps(self.review))
+        for item in review["eligibility"]["overlap_results"]:
+            if item["field"] == "credential_principal":
+                item["author_values"] = ["some-fabricated-value"]
+        exit_code, report = self._run(review=review)
+        self.assertEqual(1, exit_code)
+        self.assertFalse(report["passed"])
+        self.assertIn("identity_conflict", self._failure_codes(report))
+        self.assertIn("credential_principal", self._lineage_row(report)["observed"]["value_mismatched_fields"])
+
+    def test_wrong_author_values_for_authored_commits_fails_closed(self) -> None:
+        """`authored_commits`' `author_values` must equal the exact, sorted
+        set of commits `result.authored_commits` actually declares -- not
+        any other, even plausible-looking, commit list."""
+        review = json.loads(json.dumps(self.review))
+        for item in review["eligibility"]["overlap_results"]:
+            if item["field"] == "authored_commits":
+                item["author_values"] = ["9" * 40]
+        exit_code, report = self._run(review=review)
+        self.assertEqual(1, exit_code)
+        self.assertFalse(report["passed"])
+        self.assertIn("authored_commits", self._lineage_row(report)["observed"]["value_mismatched_fields"])
+
+    def test_wrong_reviewer_value_for_scalar_field_fails_closed(self) -> None:
+        review = json.loads(json.dumps(self.review))
+        for item in review["eligibility"]["overlap_results"]:
+            if item["field"] == "agent_runtime_id":
+                item["reviewer_value"] = "some-fabricated-reviewer-identity"
+        exit_code, report = self._run(review=review)
+        self.assertEqual(1, exit_code)
+        self.assertFalse(report["passed"])
+        self.assertIn("agent_runtime_id", self._lineage_row(report)["observed"]["value_mismatched_fields"])
+
+    def test_reviewer_value_not_canonical_none_for_empty_authored_commits_fails_closed(self) -> None:
+        """`reviewer_value` must be exactly the canonical string `"none"`
+        for an empty reviewer authored-commit set -- a non-empty but
+        otherwise plausible-looking placeholder still fails closed on the
+        value-binding check (an actually-empty string instead fails
+        earlier, at `schema.instance.valid`'s own `minLength: 1`)."""
+        review = json.loads(json.dumps(self.review))
+        for item in review["eligibility"]["overlap_results"]:
+            if item["field"] == "authored_commits":
+                item["reviewer_value"] = "unknown"
+        exit_code, report = self._run(review=review)
+        self.assertEqual(1, exit_code)
+        self.assertFalse(report["passed"])
+        self.assertIn("authored_commits", self._lineage_row(report)["observed"]["value_mismatched_fields"])
+
+    def test_reviewer_value_empty_string_fails_schema_validation(self) -> None:
+        review = json.loads(json.dumps(self.review))
+        for item in review["eligibility"]["overlap_results"]:
+            if item["field"] == "authored_commits":
+                item["reviewer_value"] = ""
+        exit_code, report = self._run(review=review)
+        self.assertEqual(1, exit_code)
+        self.assertFalse(report["passed"])
+        self.assertIn("schema_validation_failed", self._failure_codes(report))
+
+    def test_reviewer_value_for_nonempty_authored_commits_must_be_sorted_comma_joined(self) -> None:
+        """A non-empty reviewer authored-commit set must be rendered as a
+        deterministic, sorted, comma-joined SHA list -- an unsorted
+        rendering fails closed even though it names the right commits, and
+        the correctly sorted rendering passes."""
+        review = json.loads(json.dumps(self.review))
+        review["reviewer_identity"]["authored_commits"] = ["2" * 40, "1" * 40]
+        for item in review["eligibility"]["overlap_results"]:
+            if item["field"] == "authored_commits":
+                item["reviewer_value"] = "{},{}".format("2" * 40, "1" * 40)
+        exit_code, report = self._run(review=review)
+        self.assertEqual(1, exit_code)
+        self.assertFalse(report["passed"])
+        self.assertIn("authored_commits", self._lineage_row(report)["observed"]["value_mismatched_fields"])
+
+        review_sorted = json.loads(json.dumps(review))
+        for item in review_sorted["eligibility"]["overlap_results"]:
+            if item["field"] == "authored_commits":
+                item["reviewer_value"] = "{},{}".format("1" * 40, "2" * 40)
+        exit_code_sorted, report_sorted = self._run(review=review_sorted)
+        self.assertEqual(0, exit_code_sorted)
+        self.assertTrue(report_sorted["passed"])
+
+    def test_missing_forbidden_field_entry_fails_closed(self) -> None:
+        review = json.loads(json.dumps(self.review))
+        review["eligibility"]["overlap_results"] = [
+            item for item in review["eligibility"]["overlap_results"] if item["field"] != "authored_commits"
+        ]
+        exit_code, report = self._run(review=review)
+        self.assertEqual(1, exit_code)
+        self.assertFalse(report["passed"])
+        self.assertIn("identity_conflict", self._failure_codes(report))
+
+    def test_malformed_overlap_results_entry_missing_key_fails_schema_validation(self) -> None:
+        """A schema-required key (`author_values`) missing from an entry
+        fails at `schema.instance.valid`, before `identity.lineage.
+        no_overlap` is ever reached."""
+        review = json.loads(json.dumps(self.review))
+        for item in review["eligibility"]["overlap_results"]:
+            if item["field"] == "agent_runtime_id":
+                del item["author_values"]
+        exit_code, report = self._run(review=review)
+        self.assertEqual(1, exit_code)
+        self.assertFalse(report["passed"])
+        self.assertIn("schema_validation_failed", self._failure_codes(report))
+
+
 class B2ReportSchemaTests(unittest.TestCase):
     def test_build_report_is_schema_valid_for_a_failing_predicate(self) -> None:
         invocation = _baseline_invocation()

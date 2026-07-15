@@ -1,0 +1,54 @@
+{
+  "actions_job_conclusion": "failure",
+  "adapter_attempted": false,
+  "adapter_elapsed_seconds": null,
+  "adapter_error": null,
+  "adapter_self_report": null,
+  "adapter_step_outcome": "skipped",
+  "adapter_timeout_budget_seconds": null,
+  "attempt": 1,
+  "cancelled_by_owner": false,
+  "execution_file_content": null,
+  "executor": {
+    "adapter": "human-supervised-claude-code",
+    "adapter_version": "claude-code-2.1.197-b3-bootstrap",
+    "identity": {
+      "agent_runtime_id": "claude-code:b3-session",
+      "credential_principal": "github:actions:b3-executor",
+      "delegation_parent": "issue-19-owner-decision",
+      "operator_principal": "github:yurikuchumov-ux",
+      "role": "author"
+    }
+  },
+  "finalized_by": {
+    "component_id": "b3-terminal-propagator.v1",
+    "credential_principal": "github:actions:b3-finalizer"
+  },
+  "finished_at": "2026-07-14T08:45:00Z",
+  "git_observation": {
+    "authored_commits": [
+      "d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3"
+    ],
+    "base_sha": "b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3",
+    "changed_files": [
+      "src/app_b3.py"
+    ],
+    "head_sha": "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3"
+  },
+  "job_elapsed_seconds": 45,
+  "job_timeout_budget_seconds": 900,
+  "max_turns_exhausted": false,
+  "raw_provider_terminal_reason": null,
+  "required_check_exit_code": 0,
+  "required_evidence_artifact_present": true,
+  "result_artifact_present": true,
+  "schema_version": "1.0.0",
+  "source_run_id": null,
+  "started_at": "2026-07-14T08:00:00Z",
+  "structured_output_raw": null,
+  "task_id": "yurikuchumov-ux/ai-operating-system#19",
+  "trusted_subject_sha": "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3",
+  "untrusted_candidate": null,
+  "workflow_run_attempt": "1",
+  "workflow_run_id": "40000000014"
+}

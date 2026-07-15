@@ -767,6 +767,44 @@ class B2Verifier:
             None if ok else "review_ineligible",
         )
 
+    def _expected_author_values(self, field: str) -> Optional[List[str]]:
+        """The exact `author_values` a genuine `overlap_results` entry for
+        `field` must carry, bound to the result's own real executor data --
+        never trusted from the entry's own self-assertion. A scalar identity
+        field's expected value is the single-element list of the executor's
+        real identity field value; `authored_commits` is the exact, sorted
+        set of commits the result itself declares. Returns `None` (never
+        matches) when the underlying real value is itself missing or
+        malformed."""
+        if field == "authored_commits":
+            commits = self.result.get("authored_commits")
+            if not isinstance(commits, list) or not all(isinstance(c, str) for c in commits):
+                return None
+            return sorted(set(commits))
+        value = self.result["executor"]["identity"].get(field)
+        if not isinstance(value, str) or not value:
+            return None
+        return [value]
+
+    def _expected_reviewer_value(self, field: str) -> Optional[str]:
+        """The exact `reviewer_value` a genuine `overlap_results` entry for
+        `field` must carry, bound to the reviewer's own real identity --
+        never trusted from the entry's own self-assertion. `authored_commits`
+        uses the canonical string `"none"` for an empty reviewer
+        authored-commit set, or else a deterministic comma-joined, sorted
+        SHA list."""
+        reviewer_identity = self.review["reviewer_identity"]
+        if field == "authored_commits":
+            commits = reviewer_identity.get("authored_commits")
+            if not isinstance(commits, list) or not all(isinstance(c, str) for c in commits):
+                return None
+            sorted_commits = sorted(set(commits))
+            return ",".join(sorted_commits) if sorted_commits else "none"
+        value = reviewer_identity.get(field)
+        if not isinstance(value, str) or not value:
+            return None
+        return value
+
     def _actual_lineage_overlaps(self) -> Dict[str, bool]:
         """Recompute lineage overlap from actual identity/commit data.
 
@@ -791,27 +829,56 @@ class B2Verifier:
         return actual
 
     def _identity_lineage_no_overlap(self) -> PredicateResult:
+        """Issue #27 v3 correction: the review-attestation schema allows more
+        than one `overlap_results` entry for the same `field` (it has no
+        array-level uniqueness constraint on `field`); the previous
+        `{item["field"]: item["overlap"] for item in ...}` dict
+        comprehension let whichever entry appeared last silently win,
+        discarding a contradicting earlier entry unseen -- a schema-valid
+        attestation could carry both `{"field": "agent_runtime_id",
+        "overlap": true, ...}` and a later `{"field": "agent_runtime_id",
+        "overlap": false, ...}` and pass on the second. Every `field` value
+        is now checked for duplication across the whole array *before* any
+        dict is built from it; any duplicate fails this predicate closed
+        instead of picking a winner. Each forbidden field's entry must also
+        carry `author_values`/`reviewer_value` exactly equal to the real,
+        independently computed executor/reviewer identity data -- not only
+        an `overlap` boolean that happens to agree with the recomputation."""
         forbidden = self.task["review_policy"]["forbidden_lineage_overlaps"]
         actual = self._actual_lineage_overlaps()
-        asserted = {item["field"]: item["overlap"] for item in self.review["eligibility"]["overlap_results"]}
+        entries = self.review["eligibility"]["overlap_results"]
+        fields = [item["field"] for item in entries]
+        duplicate_fields = sorted({field for field in fields if fields.count(field) > 1})
+        asserted: Dict[str, Mapping[str, Any]] = {} if duplicate_fields else {
+            item["field"]: item for item in entries
+        }
 
         overlapping: List[str] = []
         inconsistent: List[str] = []
+        value_mismatched: List[str] = []
         for field in forbidden:
             actual_value = actual[field]
-            asserted_value = asserted.get(field)
+            entry = asserted.get(field)
+            asserted_value = entry["overlap"] if entry is not None else None
             if actual_value:
                 overlapping.append(field)
             if asserted_value is None or asserted_value != actual_value:
                 inconsistent.append(field)
+            if entry is not None:
+                if entry.get("author_values") != self._expected_author_values(field):
+                    value_mismatched.append(field)
+                if entry.get("reviewer_value") != self._expected_reviewer_value(field):
+                    value_mismatched.append(field)
 
-        ok = not overlapping and not inconsistent
+        ok = not overlapping and not inconsistent and not duplicate_fields and not value_mismatched
         return PredicateResult(
             "identity.lineage.no_overlap",
             ok,
             {
                 "overlapping_fields": sorted(overlapping),
                 "inconsistent_self_asserted_fields": sorted(inconsistent),
+                "duplicate_overlap_result_fields": duplicate_fields,
+                "value_mismatched_fields": sorted(set(value_mismatched)),
             },
             ("result-input", "review-attestation-input"),
             None if ok else "identity_conflict",

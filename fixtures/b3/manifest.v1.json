@@ -1,0 +1,665 @@
+{
+  "schema_version": "1.0.0",
+  "fixtures": [
+    {
+      "id": "canonical-run-29190170902-false-success",
+      "signal": {
+        "path": "documents/signal-canonical-run-29190170902.json",
+        "sha256": "c8dc0742dc8f3bc564ee5f652d32b53ffe8d9fc81968f676adbcf4b416a94222"
+      },
+      "task": {
+        "path": "documents/task-baseline.json",
+        "sha256": "e24be245c0f735d602a524204f4ede0a13a0e28d0c75fedc477be7817331bc76"
+      },
+      "review_attestation": {
+        "path": "documents/review-baseline.json",
+        "sha256": "b8cffff76cc1bdf1611a586de898523f49438d217f3667311a559e494771d7ab"
+      },
+      "verifier_identity": {
+        "path": "documents/verifier-identity.json",
+        "sha256": "8aa983d6a80c0b1ab578cc8e14de2a9211ed00d0933a200de9b28f5e666c0662"
+      },
+      "invocation": {
+        "verification_id": "80000000-0000-4000-8000-000000000001",
+        "evaluated_at": "2026-07-14T12:00:00Z"
+      },
+      "expected": {
+        "status": "failed",
+        "terminal_reason": "max_turns",
+        "check_run_conclusion": "failure",
+        "artifacts_count": 0,
+        "new_commit": false,
+        "source_run_id": "29190170902",
+        "raw_provider_terminal_reason": "error_max_turns",
+        "execution_id_source": "pipeline_derived"
+      }
+    },
+    {
+      "id": "reject-max-turns",
+      "signal": {
+        "path": "documents/signal-reject-max-turns.json",
+        "sha256": "5b868014e997ba11e2807a18c56df05571c7e662517a70e9dbd6b1b7e2fb1850"
+      },
+      "task": {
+        "path": "documents/task-baseline.json",
+        "sha256": "e24be245c0f735d602a524204f4ede0a13a0e28d0c75fedc477be7817331bc76"
+      },
+      "review_attestation": {
+        "path": "documents/review-baseline.json",
+        "sha256": "b8cffff76cc1bdf1611a586de898523f49438d217f3667311a559e494771d7ab"
+      },
+      "verifier_identity": {
+        "path": "documents/verifier-identity.json",
+        "sha256": "8aa983d6a80c0b1ab578cc8e14de2a9211ed00d0933a200de9b28f5e666c0662"
+      },
+      "invocation": {
+        "verification_id": "80000000-0000-4000-8000-000000000002",
+        "evaluated_at": "2026-07-14T12:00:00Z"
+      },
+      "expected": {
+        "status": "failed",
+        "terminal_reason": "max_turns",
+        "check_run_conclusion": "failure"
+      }
+    },
+    {
+      "id": "reject-adapter-timeout",
+      "signal": {
+        "path": "documents/signal-reject-adapter-timeout.json",
+        "sha256": "3ac4c666e492c2e18a7d99ef17709fe1a068783d544eb9f0b438c5582f263e0b"
+      },
+      "task": {
+        "path": "documents/task-baseline.json",
+        "sha256": "e24be245c0f735d602a524204f4ede0a13a0e28d0c75fedc477be7817331bc76"
+      },
+      "review_attestation": {
+        "path": "documents/review-baseline.json",
+        "sha256": "b8cffff76cc1bdf1611a586de898523f49438d217f3667311a559e494771d7ab"
+      },
+      "verifier_identity": {
+        "path": "documents/verifier-identity.json",
+        "sha256": "8aa983d6a80c0b1ab578cc8e14de2a9211ed00d0933a200de9b28f5e666c0662"
+      },
+      "invocation": {
+        "verification_id": "80000000-0000-4000-8000-000000000003",
+        "evaluated_at": "2026-07-14T12:00:00Z"
+      },
+      "expected": {
+        "status": "failed",
+        "terminal_reason": "timeout",
+        "check_run_conclusion": "failure",
+        "timeout_origin": "adapter"
+      }
+    },
+    {
+      "id": "reject-job-timeout",
+      "signal": {
+        "path": "documents/signal-reject-job-timeout.json",
+        "sha256": "50d133823fb176cd6d92b7f3b26ee99c13ab67f6954c7e86a7ec9ad00cc48efb"
+      },
+      "task": {
+        "path": "documents/task-baseline.json",
+        "sha256": "e24be245c0f735d602a524204f4ede0a13a0e28d0c75fedc477be7817331bc76"
+      },
+      "review_attestation": {
+        "path": "documents/review-baseline.json",
+        "sha256": "b8cffff76cc1bdf1611a586de898523f49438d217f3667311a559e494771d7ab"
+      },
+      "verifier_identity": {
+        "path": "documents/verifier-identity.json",
+        "sha256": "8aa983d6a80c0b1ab578cc8e14de2a9211ed00d0933a200de9b28f5e666c0662"
+      },
+      "invocation": {
+        "verification_id": "80000000-0000-4000-8000-000000000004",
+        "evaluated_at": "2026-07-14T12:00:00Z"
+      },
+      "expected": {
+        "status": "failed",
+        "terminal_reason": "timeout",
+        "check_run_conclusion": "failure",
+        "timeout_origin": "actions_job"
+      }
+    },
+    {
+      "id": "reject-missing-commit",
+      "signal": {
+        "path": "documents/signal-reject-missing-commit.json",
+        "sha256": "7965ebe82faf90917e318c3d765c95b9ca90b4278287c5da3fb139636ecc1617"
+      },
+      "task": {
+        "path": "documents/task-baseline.json",
+        "sha256": "e24be245c0f735d602a524204f4ede0a13a0e28d0c75fedc477be7817331bc76"
+      },
+      "review_attestation": {
+        "path": "documents/review-baseline.json",
+        "sha256": "b8cffff76cc1bdf1611a586de898523f49438d217f3667311a559e494771d7ab"
+      },
+      "verifier_identity": {
+        "path": "documents/verifier-identity.json",
+        "sha256": "8aa983d6a80c0b1ab578cc8e14de2a9211ed00d0933a200de9b28f5e666c0662"
+      },
+      "invocation": {
+        "verification_id": "80000000-0000-4000-8000-000000000005",
+        "evaluated_at": "2026-07-14T12:00:00Z"
+      },
+      "expected": {
+        "status": "failed",
+        "terminal_reason": "missing_commit",
+        "check_run_conclusion": "failure"
+      }
+    },
+    {
+      "id": "reject-missing-result-artifact",
+      "signal": {
+        "path": "documents/signal-reject-missing-result-artifact.json",
+        "sha256": "4783a5256bb239fa95d873dbff544e1ff38f7d8977a6af2ee6f5560a28ae9b9c"
+      },
+      "task": {
+        "path": "documents/task-baseline.json",
+        "sha256": "e24be245c0f735d602a524204f4ede0a13a0e28d0c75fedc477be7817331bc76"
+      },
+      "review_attestation": {
+        "path": "documents/review-baseline.json",
+        "sha256": "b8cffff76cc1bdf1611a586de898523f49438d217f3667311a559e494771d7ab"
+      },
+      "verifier_identity": {
+        "path": "documents/verifier-identity.json",
+        "sha256": "8aa983d6a80c0b1ab578cc8e14de2a9211ed00d0933a200de9b28f5e666c0662"
+      },
+      "invocation": {
+        "verification_id": "80000000-0000-4000-8000-000000000006",
+        "evaluated_at": "2026-07-14T12:00:00Z"
+      },
+      "expected": {
+        "status": "failed",
+        "terminal_reason": "missing_artifact",
+        "check_run_conclusion": "failure",
+        "missing_artifact_type": "result-artifact"
+      }
+    },
+    {
+      "id": "reject-missing-evidence-artifact",
+      "signal": {
+        "path": "documents/signal-reject-missing-evidence-artifact.json",
+        "sha256": "a5a87f1b8cfbafb7a1e15f14b71e9aebdb919192e120f24c34184ca92f79296c"
+      },
+      "task": {
+        "path": "documents/task-baseline.json",
+        "sha256": "e24be245c0f735d602a524204f4ede0a13a0e28d0c75fedc477be7817331bc76"
+      },
+      "review_attestation": {
+        "path": "documents/review-baseline.json",
+        "sha256": "b8cffff76cc1bdf1611a586de898523f49438d217f3667311a559e494771d7ab"
+      },
+      "verifier_identity": {
+        "path": "documents/verifier-identity.json",
+        "sha256": "8aa983d6a80c0b1ab578cc8e14de2a9211ed00d0933a200de9b28f5e666c0662"
+      },
+      "invocation": {
+        "verification_id": "80000000-0000-4000-8000-000000000007",
+        "evaluated_at": "2026-07-14T12:00:00Z"
+      },
+      "expected": {
+        "status": "failed",
+        "terminal_reason": "missing_artifact",
+        "check_run_conclusion": "failure",
+        "missing_artifact_type": "required-evidence-artifact"
+      }
+    },
+    {
+      "id": "reject-empty-diff",
+      "signal": {
+        "path": "documents/signal-reject-empty-diff.json",
+        "sha256": "c2bc5afe995b9c39141f0f4bdd4f2dc3993476550ac25066461037bbef48989f"
+      },
+      "task": {
+        "path": "documents/task-baseline.json",
+        "sha256": "e24be245c0f735d602a524204f4ede0a13a0e28d0c75fedc477be7817331bc76"
+      },
+      "review_attestation": {
+        "path": "documents/review-baseline.json",
+        "sha256": "b8cffff76cc1bdf1611a586de898523f49438d217f3667311a559e494771d7ab"
+      },
+      "verifier_identity": {
+        "path": "documents/verifier-identity.json",
+        "sha256": "8aa983d6a80c0b1ab578cc8e14de2a9211ed00d0933a200de9b28f5e666c0662"
+      },
+      "invocation": {
+        "verification_id": "80000000-0000-4000-8000-000000000008",
+        "evaluated_at": "2026-07-14T12:00:00Z"
+      },
+      "expected": {
+        "status": "failed",
+        "terminal_reason": "empty_diff",
+        "check_run_conclusion": "failure"
+      }
+    },
+    {
+      "id": "reject-check-failed",
+      "signal": {
+        "path": "documents/signal-reject-check-failed.json",
+        "sha256": "5fe26e8adfd7e63cc2659a57ef23cb6802ecd2a5407366c82628e60d062be46c"
+      },
+      "task": {
+        "path": "documents/task-baseline.json",
+        "sha256": "e24be245c0f735d602a524204f4ede0a13a0e28d0c75fedc477be7817331bc76"
+      },
+      "review_attestation": {
+        "path": "documents/review-baseline.json",
+        "sha256": "b8cffff76cc1bdf1611a586de898523f49438d217f3667311a559e494771d7ab"
+      },
+      "verifier_identity": {
+        "path": "documents/verifier-identity.json",
+        "sha256": "8aa983d6a80c0b1ab578cc8e14de2a9211ed00d0933a200de9b28f5e666c0662"
+      },
+      "invocation": {
+        "verification_id": "80000000-0000-4000-8000-000000000009",
+        "evaluated_at": "2026-07-14T12:00:00Z"
+      },
+      "expected": {
+        "status": "failed",
+        "terminal_reason": "check_failed",
+        "check_run_conclusion": "failure"
+      }
+    },
+    {
+      "id": "reject-adapter-error",
+      "signal": {
+        "path": "documents/signal-reject-adapter-error.json",
+        "sha256": "f78d352d3bc0fe4109c8370730f0a4430c3b1f836dc9495afda299cc1baddb60"
+      },
+      "task": {
+        "path": "documents/task-baseline.json",
+        "sha256": "e24be245c0f735d602a524204f4ede0a13a0e28d0c75fedc477be7817331bc76"
+      },
+      "review_attestation": {
+        "path": "documents/review-baseline.json",
+        "sha256": "b8cffff76cc1bdf1611a586de898523f49438d217f3667311a559e494771d7ab"
+      },
+      "verifier_identity": {
+        "path": "documents/verifier-identity.json",
+        "sha256": "8aa983d6a80c0b1ab578cc8e14de2a9211ed00d0933a200de9b28f5e666c0662"
+      },
+      "invocation": {
+        "verification_id": "80000000-0000-4000-8000-000000000010",
+        "evaluated_at": "2026-07-14T12:00:00Z"
+      },
+      "expected": {
+        "status": "failed",
+        "terminal_reason": "adapter_error",
+        "check_run_conclusion": "failure"
+      }
+    },
+    {
+      "id": "reject-cancelled",
+      "signal": {
+        "path": "documents/signal-reject-cancelled.json",
+        "sha256": "a9fffcad913085c5cf9b347772fde02792d739eb76ede26d2839ef4348da9100"
+      },
+      "task": {
+        "path": "documents/task-baseline.json",
+        "sha256": "e24be245c0f735d602a524204f4ede0a13a0e28d0c75fedc477be7817331bc76"
+      },
+      "review_attestation": {
+        "path": "documents/review-baseline.json",
+        "sha256": "b8cffff76cc1bdf1611a586de898523f49438d217f3667311a559e494771d7ab"
+      },
+      "verifier_identity": {
+        "path": "documents/verifier-identity.json",
+        "sha256": "8aa983d6a80c0b1ab578cc8e14de2a9211ed00d0933a200de9b28f5e666c0662"
+      },
+      "invocation": {
+        "verification_id": "80000000-0000-4000-8000-000000000011",
+        "evaluated_at": "2026-07-14T12:00:00Z"
+      },
+      "expected": {
+        "status": "cancelled",
+        "terminal_reason": "cancelled_by_owner",
+        "check_run_conclusion": "failure"
+      }
+    },
+    {
+      "id": "reject-verifier-overrides-adapter-self-report",
+      "signal": {
+        "path": "documents/signal-reject-verifier-overrides-adapter-self-report.json",
+        "sha256": "3fa664900eba07de96c0dcf85577c89f73f066a9dde68ee117e025cf52ec0b67"
+      },
+      "task": {
+        "path": "documents/task-baseline.json",
+        "sha256": "e24be245c0f735d602a524204f4ede0a13a0e28d0c75fedc477be7817331bc76"
+      },
+      "review_attestation": {
+        "path": "documents/review-baseline.json",
+        "sha256": "b8cffff76cc1bdf1611a586de898523f49438d217f3667311a559e494771d7ab"
+      },
+      "verifier_identity": {
+        "path": "documents/verifier-identity.json",
+        "sha256": "8aa983d6a80c0b1ab578cc8e14de2a9211ed00d0933a200de9b28f5e666c0662"
+      },
+      "invocation": {
+        "verification_id": "80000000-0000-4000-8000-000000000012",
+        "evaluated_at": "2026-07-14T12:00:00Z"
+      },
+      "expected": {
+        "status": "failed",
+        "terminal_reason": "check_failed",
+        "check_run_conclusion": "failure",
+        "adapter_self_reported_status": "success",
+        "actions_job_conclusion": "success"
+      }
+    },
+    {
+      "id": "accept-genuine-success",
+      "signal": {
+        "path": "documents/signal-accept-genuine-success.json",
+        "sha256": "f577946464e080a97872a2b4108a06e0999a0b54702f8af92f0bc2c1baec1fae"
+      },
+      "task": {
+        "path": "documents/task-baseline.json",
+        "sha256": "e24be245c0f735d602a524204f4ede0a13a0e28d0c75fedc477be7817331bc76"
+      },
+      "review_attestation": {
+        "path": "documents/review-baseline.json",
+        "sha256": "b8cffff76cc1bdf1611a586de898523f49438d217f3667311a559e494771d7ab"
+      },
+      "verifier_identity": {
+        "path": "documents/verifier-identity.json",
+        "sha256": "8aa983d6a80c0b1ab578cc8e14de2a9211ed00d0933a200de9b28f5e666c0662"
+      },
+      "invocation": {
+        "verification_id": "80000000-0000-4000-8000-000000000013",
+        "evaluated_at": "2026-07-14T12:00:00Z"
+      },
+      "expected": {
+        "status": "change_proposed",
+        "terminal_reason": "completed",
+        "check_run_conclusion": "success",
+        "execution_id_source": "adapter_session"
+      }
+    },
+    {
+      "id": "reject-runner-lost",
+      "signal": {
+        "path": "documents/signal-reject-runner-lost.json",
+        "sha256": "d6285fe404e7f6e1e8e4c953a507d75ad58508f61b3b9ac63aff27925784884c"
+      },
+      "task": {
+        "path": "documents/task-baseline.json",
+        "sha256": "e24be245c0f735d602a524204f4ede0a13a0e28d0c75fedc477be7817331bc76"
+      },
+      "review_attestation": {
+        "path": "documents/review-baseline.json",
+        "sha256": "b8cffff76cc1bdf1611a586de898523f49438d217f3667311a559e494771d7ab"
+      },
+      "verifier_identity": {
+        "path": "documents/verifier-identity.json",
+        "sha256": "8aa983d6a80c0b1ab578cc8e14de2a9211ed00d0933a200de9b28f5e666c0662"
+      },
+      "invocation": {
+        "verification_id": "80000000-0000-4000-8000-000000000014",
+        "evaluated_at": "2026-07-14T12:00:00Z"
+      },
+      "expected": {
+        "status": "failed",
+        "terminal_reason": "runner_lost",
+        "check_run_conclusion": "failure",
+        "execution_id_source": "pipeline_derived"
+      }
+    },
+    {
+      "id": "reject-adapter-session-unresolvable",
+      "signal": {
+        "path": "documents/signal-reject-adapter-session-unresolvable.json",
+        "sha256": "52cfb51bc4a92bea44f3085ac0e104dd3c90269d69817b874b70ec1392a64d6d"
+      },
+      "task": {
+        "path": "documents/task-baseline.json",
+        "sha256": "e24be245c0f735d602a524204f4ede0a13a0e28d0c75fedc477be7817331bc76"
+      },
+      "review_attestation": {
+        "path": "documents/review-baseline.json",
+        "sha256": "b8cffff76cc1bdf1611a586de898523f49438d217f3667311a559e494771d7ab"
+      },
+      "verifier_identity": {
+        "path": "documents/verifier-identity.json",
+        "sha256": "8aa983d6a80c0b1ab578cc8e14de2a9211ed00d0933a200de9b28f5e666c0662"
+      },
+      "invocation": {
+        "verification_id": "80000000-0000-4000-8000-000000000015",
+        "evaluated_at": "2026-07-14T12:00:00Z"
+      },
+      "expected": {
+        "status": "failed",
+        "terminal_reason": "adapter_error",
+        "check_run_conclusion": "failure",
+        "execution_id_source": "pipeline_derived"
+      }
+    },
+    {
+      "id": "accept-live-required-evidence",
+      "signal": {
+        "path": "documents/signal-accept-live-required-evidence.json",
+        "sha256": "4a6bd661ad4ce03d4f23cbf825507d68881a8a52e9df823ff7349937c5a0ad00"
+      },
+      "task": {
+        "path": "documents/task-issue-27-live.json",
+        "sha256": "a8d91702bd7b931899370cc5b49479a82fa4be80ead53fba473f59b5ecc7a564"
+      },
+      "review_attestation": {
+        "path": "documents/review-issue-27-live.json",
+        "sha256": "adf17f4df745dd6b67fd45d9efb9a7b02db03c54af74e4887d6957f826cc3a25"
+      },
+      "verifier_identity": {
+        "path": "documents/verifier-identity.json",
+        "sha256": "8aa983d6a80c0b1ab578cc8e14de2a9211ed00d0933a200de9b28f5e666c0662"
+      },
+      "invocation": {
+        "verification_id": "80000000-0000-4000-8000-000000000016",
+        "evaluated_at": "2026-07-15T12:00:00Z"
+      },
+      "expected": {
+        "status": "change_proposed",
+        "terminal_reason": "completed",
+        "check_run_conclusion": "success",
+        "execution_id_source": "adapter_session"
+      }
+    },
+    {
+      "id": "reject-adapter-command-failure",
+      "signal": {
+        "path": "documents/signal-reject-adapter-command-failure.json",
+        "sha256": "4202d6dd81d29b3ea9b4e2e5107d9183fa1eceaf4f4593db43d2ddaabdcd1534"
+      },
+      "task": {
+        "path": "documents/task-issue-27-live.json",
+        "sha256": "a8d91702bd7b931899370cc5b49479a82fa4be80ead53fba473f59b5ecc7a564"
+      },
+      "review_attestation": {
+        "path": "documents/review-issue-27-live.json",
+        "sha256": "adf17f4df745dd6b67fd45d9efb9a7b02db03c54af74e4887d6957f826cc3a25"
+      },
+      "verifier_identity": {
+        "path": "documents/verifier-identity.json",
+        "sha256": "8aa983d6a80c0b1ab578cc8e14de2a9211ed00d0933a200de9b28f5e666c0662"
+      },
+      "invocation": {
+        "verification_id": "80000000-0000-4000-8000-000000000017",
+        "evaluated_at": "2026-07-15T12:00:00Z"
+      },
+      "expected": {
+        "status": "failed",
+        "terminal_reason": "check_failed",
+        "check_run_conclusion": "failure"
+      }
+    },
+    {
+      "id": "reject-direct-check-failure",
+      "signal": {
+        "path": "documents/signal-reject-direct-check-failure.json",
+        "sha256": "8817876016014a4515dd77dc7f13b4a627be1422d7c8fe5f3a2dc3a36dce9fd0"
+      },
+      "task": {
+        "path": "documents/task-issue-27-live.json",
+        "sha256": "a8d91702bd7b931899370cc5b49479a82fa4be80ead53fba473f59b5ecc7a564"
+      },
+      "review_attestation": {
+        "path": "documents/review-issue-27-live.json",
+        "sha256": "adf17f4df745dd6b67fd45d9efb9a7b02db03c54af74e4887d6957f826cc3a25"
+      },
+      "verifier_identity": {
+        "path": "documents/verifier-identity.json",
+        "sha256": "8aa983d6a80c0b1ab578cc8e14de2a9211ed00d0933a200de9b28f5e666c0662"
+      },
+      "invocation": {
+        "verification_id": "80000000-0000-4000-8000-000000000018",
+        "evaluated_at": "2026-07-15T12:00:00Z"
+      },
+      "expected": {
+        "status": "failed",
+        "terminal_reason": "check_failed",
+        "check_run_conclusion": "failure"
+      }
+    },
+    {
+      "id": "reject-missing-acceptance-evidence",
+      "signal": {
+        "path": "documents/signal-reject-missing-acceptance-evidence.json",
+        "sha256": "e845151a428d00fa9133805645f07bef3b40287e80d414527c532f47505689ae"
+      },
+      "task": {
+        "path": "documents/task-issue-27-live.json",
+        "sha256": "a8d91702bd7b931899370cc5b49479a82fa4be80ead53fba473f59b5ecc7a564"
+      },
+      "review_attestation": {
+        "path": "documents/review-issue-27-live.json",
+        "sha256": "adf17f4df745dd6b67fd45d9efb9a7b02db03c54af74e4887d6957f826cc3a25"
+      },
+      "verifier_identity": {
+        "path": "documents/verifier-identity.json",
+        "sha256": "8aa983d6a80c0b1ab578cc8e14de2a9211ed00d0933a200de9b28f5e666c0662"
+      },
+      "invocation": {
+        "verification_id": "80000000-0000-4000-8000-000000000019",
+        "evaluated_at": "2026-07-15T12:00:00Z"
+      },
+      "expected": {
+        "status": "change_proposed",
+        "terminal_reason": "completed",
+        "check_run_conclusion": "failure"
+      }
+    },
+    {
+      "id": "reject-self-report-override",
+      "signal": {
+        "path": "documents/signal-reject-self-report-override.json",
+        "sha256": "4cbdcb6132a823aaab45391d4af9fc4d1faa2ed6d7054a3626675478dad5e0bc"
+      },
+      "task": {
+        "path": "documents/task-issue-27-live.json",
+        "sha256": "a8d91702bd7b931899370cc5b49479a82fa4be80ead53fba473f59b5ecc7a564"
+      },
+      "review_attestation": {
+        "path": "documents/review-issue-27-live.json",
+        "sha256": "adf17f4df745dd6b67fd45d9efb9a7b02db03c54af74e4887d6957f826cc3a25"
+      },
+      "verifier_identity": {
+        "path": "documents/verifier-identity.json",
+        "sha256": "8aa983d6a80c0b1ab578cc8e14de2a9211ed00d0933a200de9b28f5e666c0662"
+      },
+      "invocation": {
+        "verification_id": "80000000-0000-4000-8000-000000000020",
+        "evaluated_at": "2026-07-15T12:00:00Z"
+      },
+      "expected": {
+        "status": "failed",
+        "terminal_reason": "check_failed",
+        "check_run_conclusion": "failure",
+        "adapter_self_reported_status": "success",
+        "actions_job_conclusion": "success"
+      }
+    },
+    {
+      "id": "reject-ac-c5-parameter-shape",
+      "signal": {
+        "path": "documents/signal-accept-live-required-evidence.json",
+        "sha256": "4a6bd661ad4ce03d4f23cbf825507d68881a8a52e9df823ff7349937c5a0ad00"
+      },
+      "task": {
+        "path": "documents/task-issue-27-live-bad-ac-c5-shape.json",
+        "sha256": "7fc14f05f9d931ac3e510730fb24c670f1115e217283be64d8e2dc9af4221915"
+      },
+      "review_attestation": {
+        "path": "documents/review-issue-27-live.json",
+        "sha256": "adf17f4df745dd6b67fd45d9efb9a7b02db03c54af74e4887d6957f826cc3a25"
+      },
+      "verifier_identity": {
+        "path": "documents/verifier-identity.json",
+        "sha256": "8aa983d6a80c0b1ab578cc8e14de2a9211ed00d0933a200de9b28f5e666c0662"
+      },
+      "invocation": {
+        "verification_id": "80000000-0000-4000-8000-000000000021",
+        "evaluated_at": "2026-07-15T12:00:00Z"
+      },
+      "expected": {
+        "status": "change_proposed",
+        "terminal_reason": "completed",
+        "check_run_conclusion": "failure"
+      }
+    },
+    {
+      "id": "reject-duplicate-overlap-results",
+      "signal": {
+        "path": "documents/signal-accept-live-required-evidence.json",
+        "sha256": "4a6bd661ad4ce03d4f23cbf825507d68881a8a52e9df823ff7349937c5a0ad00"
+      },
+      "task": {
+        "path": "documents/task-issue-27-live.json",
+        "sha256": "a8d91702bd7b931899370cc5b49479a82fa4be80ead53fba473f59b5ecc7a564"
+      },
+      "review_attestation": {
+        "path": "documents/review-issue-27-live-duplicate-overlap.json",
+        "sha256": "deeadfd81da7f11dc88ed0ad648ea508da49b25b0ba9f80867107bcbfb455fcd"
+      },
+      "verifier_identity": {
+        "path": "documents/verifier-identity.json",
+        "sha256": "8aa983d6a80c0b1ab578cc8e14de2a9211ed00d0933a200de9b28f5e666c0662"
+      },
+      "invocation": {
+        "verification_id": "80000000-0000-4000-8000-000000000022",
+        "evaluated_at": "2026-07-15T12:00:00Z"
+      },
+      "expected": {
+        "status": "change_proposed",
+        "terminal_reason": "completed",
+        "check_run_conclusion": "failure"
+      }
+    },
+    {
+      "id": "reject-non-rfc3339-started-at",
+      "signal": {
+        "path": "documents/signal-reject-non-rfc3339-started-at.json",
+        "sha256": "80afe5ec8fe759e5afc03ecfb0e9a2098a7e45273ec38df5f380efd3a91bb8f2"
+      },
+      "task": {
+        "path": "documents/task-issue-27-live.json",
+        "sha256": "a8d91702bd7b931899370cc5b49479a82fa4be80ead53fba473f59b5ecc7a564"
+      },
+      "review_attestation": {
+        "path": "documents/review-issue-27-live.json",
+        "sha256": "adf17f4df745dd6b67fd45d9efb9a7b02db03c54af74e4887d6957f826cc3a25"
+      },
+      "verifier_identity": {
+        "path": "documents/verifier-identity.json",
+        "sha256": "8aa983d6a80c0b1ab578cc8e14de2a9211ed00d0933a200de9b28f5e666c0662"
+      },
+      "invocation": {
+        "verification_id": "80000000-0000-4000-8000-000000000023",
+        "evaluated_at": "2026-07-15T12:00:00Z"
+      },
+      "expected": {
+        "status": "failed",
+        "check_run_conclusion": "failure"
+      }
+    }
+  ]
+}

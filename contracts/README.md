@@ -1,15 +1,18 @@
-# B0/B1/B2 contract bootstrap
+# B0/B1/B2/B3 contract bootstrap
 
 This directory (together with `../tools`, `../tests`, and `../fixtures`)
-implements only the owner-approved `B0`, `B1`, and `B2` scope of Issue #18.
-`B0` provides versioned data contracts, versioned registries, deterministic
-offline validation, and hash-pinned fixtures. `B1` adds a deterministic,
-human-supervised harness and a trusted always-run result finalizer that
-consumes those `B0` contracts. `B2` adds a bounded, deterministic offline
-verifier that evaluates a fixed set of registered predicates over `B0`
-contract documents and a `B1`-shaped result. None of these steps implements
-a GitHub Actions adapter, Check Run publisher, or automated merge/
-delegation pipeline.
+implements the owner-approved `B0`, `B1`, `B2` scope of Issue #18 and the
+`B3` scope of Issue #19. `B0` provides versioned data contracts, versioned
+registries, deterministic offline validation, and hash-pinned fixtures. `B1`
+adds a deterministic, human-supervised harness and a trusted always-run
+result finalizer that consumes those `B0` contracts. `B2` adds a bounded,
+deterministic offline verifier that evaluates a fixed set of registered
+predicates over `B0` contract documents and a `B1`-shaped result. `B3` adds
+a deterministic terminal-reason propagator that composes the existing,
+unmodified `B1` finalizer and `B2` verifier, plus the first real GitHub
+Actions workflow (`../.github/workflows/b3-terminal-propagation.yml`), whose
+Check Run conclusion is published only from the `B2` verifier's own
+`verification.v1.passed` field.
 
 ## Canonical B0 boundary
 
@@ -174,6 +177,205 @@ pipeline.
   evidence mutation/rebinding, output collision, and staging
   write/fsync/link failure.
 
+## Canonical B3 boundary
+
+B3 is a bounded, deterministic terminal-reason propagator built entirely by
+composing the existing, unmodified `B1` finalizer and `B2` verifier, plus a
+real GitHub Actions workflow around them:
+
+- the propagator (`../tools/propagate_b3.py`) consumes a trusted,
+  schema-validated provider signal -- cancellation, real elapsed-time-versus-
+  budget timeout evidence, max-turns exhaustion, whether the adapter action
+  even attempted to run, adapter error, Git observation, real file-based
+  artifact presence, and required-check exit code -- and deterministically
+  classifies exactly one `result.v1` terminal status/reason from it, in a
+  fixed priority order (`cancelled_by_owner` > `job_timed_out` >
+  `adapter_timed_out` > `max_turns_exhausted` > `runner_lost` (adapter never
+  attempted) > `adapter_error` (session unresolvable or explicit error) >
+  `missing_commit` > `missing_artifact` (result-artifact, then
+  required-evidence-artifact) > `empty_diff` > `check_failed` (this job's
+  own directly executed check, or -- independently -- the adapter's own
+  real transcript, parsed structurally by
+  `resolve_adapter_registered_command_result`, showing it ran the exact
+  registered command and errored) > `completed`). `timeout` is classified
+  only from explicit elapsed-versus-
+  budget evidence computed by the propagator itself -- never a pre-set
+  boolean the caller could blanket-assert -- so an abnormal execute-job
+  outcome without that evidence falls through to `runner_lost` or
+  `adapter_error` instead. The adapter's own self-reported status and the
+  Actions job's own conclusion are never read by this classification --
+  they are carried through only as untrusted, informational fields on the
+  published `workflow-run-metadata` artifact;
+- `execution_id` is never caller-supplied and never `uuid.uuid4()`
+  randomness (`resolve_execution_identity`): it is the adapter's own real
+  `session_id`, extracted by a bounded, fail-closed parser
+  (`resolve_adapter_session_id`) from the pinned action's actual
+  `execution_file`/`structured_output` text, or -- only when the adapter
+  never attempted to run -- a UUID5 deterministically derived from real,
+  platform-verifiable Actions run facts (`derive_pipeline_execution_id`).
+  A present-but-malformed session id is treated as unresolvable and
+  classified `adapter_error`, never coerced or fabricated;
+- the trusted observation it derives is finalized into a schema-valid
+  `result.v1` by calling `../tools/finalize_b1.py`'s `finalize` function
+  directly, unmodified (written under a nested `b1-raw/` path so its own
+  candidate-evidence convention never collides with this correction's
+  additional evidence). B1's own `checks`/`acceptance_results` are always
+  empty (a known B1 bootstrap limitation this correction does not, and
+  cannot, fix by editing `tools/finalize_b1.py`); `build_checks_and_acceptance`
+  then builds the actual, published `result.json` by taking that same
+  unmodified B1 output and adding `checks`/`acceptance_results`/`artifacts`
+  entries computed only from trusted, directly observed evidence -- the
+  adapter's own real transcript and this job's own directly executed check
+  exit code, never `adapter_self_report`, `actions_job_conclusion`, or
+  `raw_provider_terminal_reason` -- with an empty result (no evidence to
+  attach) when neither is available, exactly as B1 alone would have
+  produced before this correction. That published result is then verified
+  against a task, a review-attestation, and a trusted Git observation by
+  calling `../tools/verify_b2.py`'s `run_verification` function directly,
+  unmodified, producing a schema-valid `verification.v1` report;
+- the Check Run conclusion this tool computes -- and the only conclusion the
+  workflow's `finalize-and-verify` job is permitted to publish -- is
+  `success` iff `verification.v1.passed` is `true`. It is never derived from
+  the adapter's self-report, the Actions job's own conclusion, or the raw
+  provider terminal reason;
+- `.github/workflows/b3-terminal-propagation.yml` is a real, three-job
+  Actions workflow, triggered by `pull_request`
+  (`opened`/`synchronize`/`reopened`, guarded to this exact head branch so
+  opening or updating the Draft PR produces a real pre-merge run) with
+  `workflow_dispatch` retained only as a supplemental trigger. A
+  `resolve-subject` job resolves exactly one trusted subject SHA --
+  `github.event.pull_request.head.sha` on `pull_request` (never the
+  synthetic merge ref/commit `actions/checkout` and `context.sha` default
+  to on that event), `github.sha` only on `workflow_dispatch` -- and every
+  downstream use (both jobs' `checkout` `ref:`, the Git observation, the B2
+  verifier's `expected_subject_sha` binding, and the published Check Run's
+  `head_sha`) is bound to that one value. The `execute` job, bounded by
+  `timeout-minutes` and checked out at that exact subject SHA, invokes the
+  real, pinned `anthropics/claude-code-action@6902c227aaa9536481b99d56f3014bbbad6c6da8`
+  -- the same adapter action previously exercised on
+  `origin/design/issue-12-executor-orchestrator` -- in a bounded, read-only
+  diagnostic mode that may only read the repository and run the registered
+  B3 test command, granted no push/commit/merge/deploy tools. Declared
+  dependencies (`requirements-b3.txt`) are installed in this job strictly
+  before the adapter step runs, so its exact registered command can
+  actually import them (Issue #27 correction: run 29397325438 attempt 2's
+  real failure was that they were only ever installed in the always-run
+  finalize job below). The always-run (`if: always()`) `finalize-and-verify`
+  job, also checked out at that exact subject SHA, collects the trusted
+  provider signal from directly observable facts only: the real, downloaded
+  `execution_file`/`structured_output` from the adapter action, real
+  execute-job start/completion timestamps fetched from the Actions REST API
+  itself (never the possibly-dead job's own self-report), real on-disk
+  artifact presence from a directly, deterministically executed run of the
+  B3 test command (never derived from Git commit existence), the real task
+  fetched read-only from the immutable control commit
+  `15bb125fa77c432084791aa5615515e136b7c9af` at
+  `.ai/tasks/27/b3-correction-task.v3.json` (superseding the v1 and v2
+  control commits, both of which remain unmodified historical evidence and
+  are never fetched by this workflow again), the real independent review
+  attestation fetched read-only from the separate control ref
+  `control/issue-27-b3-review-attestation` at
+  `.ai/reviews/27/review-attestation.v1.json` (a dedicated Issue #27 ref/path,
+  never Issue #19's own `control/issue-19-b3-review-attestation` /
+  `.ai/reviews/19/review-attestation.v1.json`, and never the repository-owned
+  `fixtures/b3/documents/task-baseline.json` / `review-baseline.json`
+  fixtures, which remain correct only for the offline suite), and real Git
+  state. Neither fetch step ever synthesizes or falls back to fixture
+  content: a missing ref, missing path, or unreadable file simply leaves
+  the corresponding file absent, and the existing, unmodified B2 verifier's
+  own fail-closed handling of an unreadable input document does the rest,
+  with `review.subject_sha.equals` and `review.eligibility.passed` (also
+  existing, unmodified) rejecting a review of the wrong SHA or an
+  ineligible review. It is therefore expected, and required, that the first
+  Draft PR run fails closed until an independent review attestation for
+  the exact head SHA is published; re-running the same exact-head workflow
+  afterward can then pass. The job then runs the propagator, uploads the
+  `result-artifact`, `verification-report`, and `workflow-run-metadata`
+  artifacts (plus the fetched task/review evidence, or its meaningful
+  absence), and publishes the Check Run -- keyed by the one trusted subject
+  SHA, never `context.sha` -- from the verifier's own report. Both the
+  Actions run ID (`github.run_id`) and the trusted `execution_id` are
+  required non-null on the published `workflow-run-metadata`, which also
+  carries the exact task control commit and the exact commit the
+  review-attestation ref resolved to at fetch time (`task_commit` /
+  `review_attestation_commit`, both null when the corresponding fetch did
+  not resolve one); the job's own final step still gates its exit code on
+  that same verifier-sourced conclusion;
+- the immutable, hash-pinned `fixtures/b3/manifest.v1.json` fixture suite
+  covers all terminal failure reasons the Issue #19 B3 control contract
+  requires (max-turns, adapter timeout, job timeout, missing commit, missing
+  result artifact, missing required-evidence artifact, empty diff, failed
+  required check, adapter error, cancellation, and the case where a green
+  adapter self-report and a green Actions job conclusion cannot mask a real
+  check failure), the immutable false-success replay of the historical run
+  `29190170902` (green, `error_max_turns`, zero artifacts, no commit), one
+  genuine-success scenario that passes cleanly, two scenarios added by a
+  corrective attempt to exercise `runner_lost` (the adapter action never
+  attempted) and an unresolvable adapter session (attempted, but its real
+  output carries no valid `session_id`), and five scenarios added by the
+  Issue #27 correction against a real, required-checks/acceptance task
+  fixture (`task-issue-27-live.json`) exercising the live-integration path:
+  genuine success with every AC-C1..AC-C6 acceptance result populated and
+  passing, the adapter's own real transcript failing while a separately
+  executed direct check passes (the exact run 29397325438 attempt-2 shape),
+  the direct check failing while the adapter succeeds, missing
+  review-attestation-commit provenance failing `AC-C5` alone, and a green
+  self-report/Actions-job-conclusion failing to mask a real direct-check
+  failure;
+- no component in B3 has independent verifier authority beyond composing
+  the existing `B1`/`B2` bootstrap tools unmodified; B3 adds exactly one
+  narrow command registry entry (`repo.contracts.b3.tests`), no new
+  predicate or schema, and derives `result.checks`/`result.acceptance_results`
+  only from evidence the existing, unmodified B2 verifier's own registered
+  predicates (`process.exit_code.equals`, `acceptance.required.passed`) then
+  independently re-evaluate -- B3 does not grant itself any authority the
+  B2 verifier does not already have to reject a false claim.
+
+These limits are normative. B3 evidence must not be represented as
+authoritative beyond what the composed, unmodified `B1` finalizer and `B2`
+verifier already establish, and the Check Run conclusion it publishes must
+never be attributable to adapter or Actions-job self-report.
+
+## Contents (B3)
+
+- `../tools/propagate_b3.py`: the bounded provider-signal loader, the
+  fail-closed adapter-session-id parser and deterministic execution-id
+  resolver, the fixed terminal-reason classifier (including the adapter's
+  own real transcript command result), the trusted-observation builder,
+  `build_checks_and_acceptance` (the real-evidence checks/acceptance
+  builder), the pipeline that calls the unmodified `B1` finalizer and `B2`
+  verifier in sequence, the `workflow-run-metadata` publisher, and a `suite`
+  subcommand that runs the immutable B3 fixture manifest;
+- `../fixtures/b3/manifest.v1.json`: immutable fixture definitions for the
+  13 contract-oracle scenarios required by Issue #19's `AC-B3-1`, 2
+  scenarios added by a corrective attempt, and 5 scenarios added by the
+  Issue #27 correction exercising the live-integration path, with SHA-256
+  hashes over every fixture document;
+- `../fixtures/b3/documents/`: the hash-pinned provider-signal, task,
+  review-attestation, and verifier-identity documents referenced by the
+  manifest, including `task-issue-27-live.json` /
+  `review-issue-27-live.json` (a real, required-checks/acceptance task
+  fixture used only by the five Issue #27 scenarios; every other scenario's
+  `task-baseline.json` marks its own check/criterion non-required and is
+  unaffected by whether `checks`/`acceptance_results` are populated);
+- `../tests/test_b3_terminal_propagation.py`: fixture-oracle regression
+  tests (status, terminal reason, and Check Run conclusion per scenario),
+  direct classification priority-order unit tests (including the
+  evidence-based timeout/runner_lost/session-resolution corrections and the
+  adapter-transcript command-result gate), execution-identity resolution
+  tests, override-detection, artifact-publication, identity-separation,
+  the real-evidence checks/acceptance builder and adapter-transcript-result
+  parser tests, and live-workflow-content assertions (pinned adapter
+  action, pre-merge trigger, real execution-output parsing, real artifact
+  observation, absence of blanket timeout mapping, dependency install
+  ordering, and the Issue #27 control commit/ref values);
+- `../requirements-b3.txt`: the B3 pipeline's own declared Python
+  dependencies (currently identical to `requirements-b0.txt`, included via
+  pip's recursive requirements-file support), installed in the `execute`
+  job before the adapter runs;
+- `../.github/workflows/b3-terminal-propagation.yml`: the real, three-job
+  Actions workflow described above.
+
 ## Local validation
 
 ```bash
@@ -182,9 +384,11 @@ python3 -m venv .venv
 .venv/bin/python tools/validate_b0.py suite --manifest fixtures/b0/manifest.v1.json
 .venv/bin/python tools/finalize_b1.py suite --manifest fixtures/b1/manifest.v1.json
 .venv/bin/python tools/verify_b2.py suite --manifest fixtures/b2/manifest.v1.json
+.venv/bin/python tools/propagate_b3.py suite --manifest fixtures/b3/manifest.v1.json
 .venv/bin/python -m unittest discover -s tests -p 'test_b0_contracts.py'
 .venv/bin/python -m unittest discover -s tests -p 'test_b1_finalizer.py'
 .venv/bin/python -m unittest discover -s tests -p 'test_b2_verifier.py'
+.venv/bin/python -m unittest discover -s tests -p 'test_b3_*.py'
 ```
 
 The B0 fixture suite succeeds only when all positive and negative cases match
@@ -210,6 +414,22 @@ failure-code set, and the `deterministic-repeat` scenario's two runs
 publish byte-identical `verification.v1` reports. A hash change in any
 source fixture document fails closed before any verification attempt runs.
 
+The B3 fixture suite succeeds only when every one of the 20 required
+scenarios matches its declared `result.v1` status/terminal_reason and the
+Check Run conclusion the composed, unmodified B1/B2 tools force -- including
+the immutable false-success replay of historical run `29190170902`, which
+must fail closed on `max_turns` despite a green adapter self-report and a
+green Actions job conclusion, the two corrective-attempt scenarios proving
+that an execute-job failure without explicit timeout evidence is never
+blanket-mapped to `timeout`, and the five Issue #27 scenarios proving that
+`result.checks`/`result.acceptance_results` are populated with every
+required AC-C1..AC-C6 acceptance result on genuine success and fail closed
+-- never derived from `adapter_self_report`, `actions_job_conclusion`, or
+`raw_provider_terminal_reason` -- on a real adapter-transcript command
+failure, a direct-check failure, missing review-attestation-commit
+provenance, or a self-report override attempt. A hash change in any source
+fixture document fails closed before any pipeline attempt runs.
+
 Every report contains:
 
 ```json
@@ -219,7 +439,10 @@ Every report contains:
 }
 ```
 
-(or `"bootstrap_scope": "B1"` / `"bootstrap_scope": "B2"` for the finalizer
-and verifier suites, respectively). These flags are normative: B0, B1, and
-B2 evidence must not be represented as a working truthful execution
-pipeline.
+(or `"bootstrap_scope": "B1"` / `"bootstrap_scope": "B2"` / `"bootstrap_scope":
+"B3"` for the finalizer, verifier, and propagator suites, respectively).
+These flags are normative: B0, B1, B2, and B3 evidence must not be
+represented as a working truthful execution pipeline beyond what each step
+actually establishes -- B3's real Actions workflow notwithstanding, its own
+Check Run conclusion is only ever as trustworthy as the composed B1/B2
+tools' own evaluation of the artifacts it collects.

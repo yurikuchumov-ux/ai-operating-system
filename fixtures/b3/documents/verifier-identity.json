@@ -1,0 +1,7 @@
+{
+  "operator_principal": "service:b3-verifier",
+  "agent_runtime_id": "deterministic:b3-verifier:1.0.0",
+  "credential_principal": "github:actions:b3-checkrun-publisher",
+  "delegation_parent": "fixture:b3-verifier",
+  "role": "verifier"
+}
