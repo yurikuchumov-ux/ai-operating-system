@@ -1,0 +1,63 @@
+{
+  "actions_job_conclusion": "success",
+  "adapter_attempted": true,
+  "adapter_elapsed_seconds": 240,
+  "adapter_error": null,
+  "adapter_registered_command": "python3 -m unittest discover -s tests -p test_b3_*.py",
+  "adapter_self_report": {
+    "claimed_status": "change_proposed",
+    "claimed_terminal_reason": "completed",
+    "status": "success"
+  },
+  "adapter_step_outcome": "success",
+  "adapter_timeout_budget_seconds": 600,
+  "attempt": 1,
+  "cancelled_by_owner": false,
+  "dependencies_installed_before_adapter": true,
+  "execution_file_content": "[{\"type\": \"system\", \"subtype\": \"init\", \"session_id\": \"a2a2a2a2-a2a2-4a2a-8a2a-a2a2a2a2a2a2\"}, {\"type\": \"assistant\", \"message\": {\"content\": [{\"type\": \"tool_use\", \"id\": \"toolu_live_1\", \"name\": \"Bash\", \"input\": {\"command\": \"python3 -m unittest discover -s tests -p test_b3_*.py\"}}]}}, {\"type\": \"user\", \"message\": {\"content\": [{\"type\": \"tool_result\", \"tool_use_id\": \"toolu_live_1\", \"content\": \"Exit code 1\\nModuleNotFoundError: No module named 'jsonschema'\", \"is_error\": true}]}}]",
+  "executor": {
+    "adapter": "human-supervised-claude-code",
+    "adapter_version": "claude-code-2.1.197-b3-correction",
+    "identity": {
+      "agent_runtime_id": "claude-code:b3-session-27",
+      "credential_principal": "github:actions:b3-executor-27",
+      "delegation_parent": "issue-27-owner-decision",
+      "operator_principal": "github:yurikuchumov-ux",
+      "role": "author"
+    }
+  },
+  "finalized_by": {
+    "component_id": "b3-terminal-propagator.v1",
+    "credential_principal": "github:actions:b3-finalizer"
+  },
+  "finished_at": "2026-07-15T09:10:00Z",
+  "git_observation": {
+    "authored_commits": [
+      "f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5"
+    ],
+    "base_sha": "ae8bfab665e9a6777affaa448e872d24b87ea36c",
+    "changed_files": [
+      ".github/workflows/b3-terminal-propagation.yml"
+    ],
+    "head_sha": "e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5"
+  },
+  "job_elapsed_seconds": 300,
+  "job_timeout_budget_seconds": 900,
+  "max_turns_exhausted": false,
+  "raw_provider_terminal_reason": null,
+  "required_check_exit_code": 0,
+  "required_check_log": "..........................................................................\n----------------------------------------------------------------------\nRan 74 tests in 0.512s\n\nOK\n",
+  "required_evidence_artifact_present": true,
+  "result_artifact_present": true,
+  "review_attestation_commit": "1111111111111111111111111111111111111111",
+  "schema_version": "1.0.0",
+  "source_run_id": null,
+  "started_at": "2026-07-15T09:00:00Z",
+  "structured_output_raw": null,
+  "task_commit": "9b6db4412eb5ef032d4333ff8023c1527383de87",
+  "task_id": "yurikuchumov-ux/ai-operating-system#27",
+  "trusted_subject_sha": "e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5",
+  "untrusted_candidate": null,
+  "workflow_run_attempt": "1",
+  "workflow_run_id": "50000000002"
+}

@@ -14,11 +14,13 @@ from tools.propagate_b3 import (
     B3PropagatorError,
     Classification,
     PROVIDER_SIGNAL_SCHEMA,
+    build_checks_and_acceptance,
     build_trusted_observation,
     build_workflow_run_metadata,
     classify_terminal,
     derive_pipeline_execution_id,
     load_provider_signal,
+    resolve_adapter_registered_command_result,
     resolve_adapter_session_id,
     resolve_execution_identity,
     run_fixture,
@@ -35,13 +37,14 @@ VERIFICATION_SCHEMA_PATH = REPO_ROOT / "contracts/schemas/verification.v1.schema
 COMMAND_REGISTRY_PATH = REPO_ROOT / "contracts/registries/commands.v1.json"
 WORKFLOW_PATH = REPO_ROOT / ".github/workflows/b3-terminal-propagation.yml"
 
-TASK_ID = "yurikuchumov-ux/ai-operating-system#19"
+TASK_ID = "yurikuchumov-ux/ai-operating-system#27"
 PINNED_ADAPTER_ACTION = "anthropics/claude-code-action@6902c227aaa9536481b99d56f3014bbbad6c6da8"
 HEAD_BRANCH = "agent/issue-19-b3-terminal-propagation"
-CONTROL_TASK_COMMIT = "86e2826c85ce444127cc95a8551b8570002ec6cf"
-CONTROL_TASK_PATH = ".ai/tasks/19/b3-task.v1.json"
-REVIEW_REF = "control/issue-19-b3-review-attestation"
-REVIEW_PATH = ".ai/reviews/19/review-attestation.v1.json"
+CONTROL_TASK_COMMIT = "9b6db4412eb5ef032d4333ff8023c1527383de87"
+CONTROL_TASK_PATH = ".ai/tasks/27/b3-correction-task.v1.json"
+REVIEW_REF = "control/issue-27-b3-review-attestation"
+REVIEW_PATH = ".ai/reviews/27/review-attestation.v1.json"
+REGISTERED_TEST_COMMAND = "python3 -m unittest discover -s tests -p test_b3_*.py"
 
 ALL_SCENARIO_IDS = {
     "canonical-run-29190170902-false-success",
@@ -59,6 +62,16 @@ ALL_SCENARIO_IDS = {
     "accept-genuine-success",
     "reject-runner-lost",
     "reject-adapter-session-unresolvable",
+    # Issue #27 correction: the live-integration path, exercised against
+    # the real Issue #27 task (required checks/acceptance criteria), not
+    # the offline `task-baseline.json` (which marks its own check/criterion
+    # non-required and is therefore unaffected by whether checks/
+    # acceptance_results are populated).
+    "accept-live-required-evidence",
+    "reject-adapter-command-failure",
+    "reject-direct-check-failure",
+    "reject-missing-acceptance-evidence",
+    "reject-self-report-override",
 }
 
 
@@ -72,17 +85,18 @@ def _tmp_dir() -> Path:
 
 class B3FixtureOracleTests(unittest.TestCase):
     """Every required terminal-propagation scenario -- the 13 the control
-    contract requires plus 2 added to exercise the corrected runner_lost /
-    session-resolution paths -- must match the oracle exactly: result
-    status/terminal_reason, and the Check Run conclusion the verifier's
-    report -- not adapter prose -- forces."""
+    contract requires, 2 added to exercise the corrected runner_lost /
+    session-resolution paths, and 5 more (Issue #27) exercising the live,
+    required-checks/acceptance integration path -- must match the oracle
+    exactly: result status/terminal_reason, and the Check Run conclusion
+    the verifier's report -- not adapter prose -- forces."""
 
-    def test_all_15_required_scenarios_match(self) -> None:
+    def test_all_20_required_scenarios_match(self) -> None:
         exit_code, report = run_suite(MANIFEST_PATH, workdir=_tmp_dir())
         self.assertEqual(0, exit_code)
         self.assertTrue(report["valid"])
-        self.assertEqual(15, report["summary"]["total"])
-        self.assertEqual(15, report["summary"]["passed"])
+        self.assertEqual(20, report["summary"]["total"])
+        self.assertEqual(20, report["summary"]["passed"])
         self.assertEqual(0, report["summary"]["failed"])
         self.assertFalse(report["authoritative_verifier"])
         self.assertEqual("B3", report["bootstrap_scope"])
@@ -352,6 +366,36 @@ class B3ClassificationPriorityTests(unittest.TestCase):
         self.assertEqual("change_proposed", c.status)
         self.assertEqual("completed", c.terminal_reason)
 
+    def test_adapter_transcript_command_failure_is_check_failed_even_when_direct_check_passes(self) -> None:
+        """Issue #27 correction: the actual run 29397325438 attempt-2 gap --
+        the adapter's own registered-command execution genuinely failed
+        (`ModuleNotFoundError: jsonschema`) while a *separately* installed
+        direct check happened to pass. `classify_terminal` must not call
+        that success: a real, transcript-observed adapter command failure
+        (`adapter_check_result=False`) fails closed independently of the
+        direct check's own exit code."""
+        signal = self._signal(required_check_exit_code=0)
+        classification = classify_terminal(signal, None, adapter_check_result=False)
+        self.assertEqual("failed", classification.status)
+        self.assertEqual("check_failed", classification.terminal_reason)
+
+    def test_adapter_transcript_result_true_does_not_itself_force_success(self) -> None:
+        signal = self._signal(required_check_exit_code=1)
+        classification = classify_terminal(signal, None, adapter_check_result=True)
+        self.assertEqual("failed", classification.status)
+        self.assertEqual("check_failed", classification.terminal_reason)
+
+    def test_adapter_check_result_none_never_changes_classification(self) -> None:
+        """Backward-compatible default: when a signal carries no evidence at
+        all about the adapter's own registered-command transcript result
+        (the default for every pre-Issue-#27 fixture), classification is
+        identical to omitting the argument entirely."""
+        signal = self._signal()
+        with_default = classify_terminal(signal, None)
+        with_none = classify_terminal(signal, None, adapter_check_result=None)
+        self.assertEqual(with_default, with_none)
+        self.assertEqual("change_proposed", with_none.status)
+
     def test_classification_never_reads_self_report_or_job_conclusion_fields(self) -> None:
         import inspect
 
@@ -483,6 +527,195 @@ class B3OverrideDetectionTests(unittest.TestCase):
         self.assertIn("candidate_field_override_ignored:terminal_reason", outputs.result["warnings"])
         self.assertFalse(outputs.verification["passed"])
         self.assertEqual("failure", outputs.check_run_conclusion)
+
+
+class B3AdapterTranscriptResultTests(unittest.TestCase):
+    """`resolve_adapter_registered_command_result` reads only structural
+    transcript fields the harness itself sets (`tool_use.input.command`,
+    `tool_result.tool_use_id`, `tool_result.is_error`) -- never the
+    adapter's own natural-language self-report."""
+
+    COMMAND = "python3 -m unittest discover -s tests -p test_b3_*.py"
+
+    def _transcript(self, command: str, is_error: bool) -> str:
+        events = [
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [
+                        {"type": "tool_use", "id": "toolu_x", "name": "Bash", "input": {"command": command}}
+                    ]
+                },
+            },
+            {
+                "type": "user",
+                "message": {
+                    "content": [
+                        {"type": "tool_result", "tool_use_id": "toolu_x", "content": "...", "is_error": is_error}
+                    ]
+                },
+            },
+        ]
+        return json.dumps(events)
+
+    def test_matching_command_with_no_error_is_true(self) -> None:
+        content = self._transcript(self.COMMAND, is_error=False)
+        self.assertTrue(resolve_adapter_registered_command_result(content, self.COMMAND))
+
+    def test_matching_command_with_error_is_false(self) -> None:
+        content = self._transcript(self.COMMAND, is_error=True)
+        self.assertFalse(resolve_adapter_registered_command_result(content, self.COMMAND))
+
+    def test_command_never_run_is_none_not_false(self) -> None:
+        content = self._transcript("echo something else", is_error=False)
+        self.assertIsNone(resolve_adapter_registered_command_result(content, self.COMMAND))
+
+    def test_missing_transcript_or_command_is_none(self) -> None:
+        self.assertIsNone(resolve_adapter_registered_command_result(None, self.COMMAND))
+        self.assertIsNone(resolve_adapter_registered_command_result("[]", None))
+        self.assertIsNone(resolve_adapter_registered_command_result("", self.COMMAND))
+
+    def test_malformed_transcript_never_raises(self) -> None:
+        self.assertIsNone(resolve_adapter_registered_command_result("{not json", self.COMMAND))
+        self.assertIsNone(resolve_adapter_registered_command_result(json.dumps({"not": "a list"}), self.COMMAND))
+
+    def test_oversized_transcript_is_rejected_never_scanned(self) -> None:
+        huge = self._transcript(self.COMMAND, is_error=False) + ("x" * (2 * 1024 * 1024))
+        self.assertIsNone(resolve_adapter_registered_command_result(huge, self.COMMAND))
+
+    def test_never_reads_natural_language_self_report_text(self) -> None:
+        """The adapter's own prose summary (e.g. '## B3 Test Result Summary
+        ... FAILED') must play no role: only the structural `is_error`
+        field on the matching `tool_result` does."""
+        events = [
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [
+                        {"type": "tool_use", "id": "toolu_y", "name": "Bash", "input": {"command": self.COMMAND}}
+                    ]
+                },
+            },
+            {
+                "type": "user",
+                "message": {"content": [{"type": "tool_result", "tool_use_id": "toolu_y", "content": "Exit code 1\nFAILED", "is_error": False}]},
+            },
+            {
+                "type": "assistant",
+                "message": {"content": [{"type": "text", "text": "## Status: FAILED (self-reported)"}]},
+            },
+        ]
+        # `is_error` (the harness's own structural fact) says this call did
+        # not error, even though its captured text happens to look like
+        # failure prose -- the parser must trust only `is_error`.
+        self.assertTrue(resolve_adapter_registered_command_result(json.dumps(events), self.COMMAND))
+
+
+class B3LiveChecksAndAcceptanceTests(unittest.TestCase):
+    """Issue #27 correction: `result.checks` / `result.acceptance_results`
+    must carry the required check and every required AC-C1..AC-C6
+    acceptance result from trusted, directly observed evidence when run
+    against the real, required-checks/acceptance Issue #27 task -- and the
+    pipeline must still fail closed (never derive success from
+    `adapter_self_report`, `actions_job_conclusion`, or
+    `raw_provider_terminal_reason`) when that evidence is genuinely bad or
+    missing."""
+
+    TASK_PATH = DOCUMENTS_DIR / "task-issue-27-live.json"
+    REVIEW_PATH = DOCUMENTS_DIR / "review-issue-27-live.json"
+    VERIFIER_IDENTITY_PATH = DOCUMENTS_DIR / "verifier-identity.json"
+    REQUIRED_AC_IDS = {"AC-C1", "AC-C2", "AC-C3", "AC-C4", "AC-C5", "AC-C6"}
+
+    def _run(self, signal_name: str, verification_id: str):
+        return run_pipeline(
+            DOCUMENTS_DIR / "signal-{}.json".format(signal_name),
+            self.TASK_PATH,
+            self.REVIEW_PATH,
+            self.VERIFIER_IDENTITY_PATH,
+            verification_id,
+            "2026-07-15T12:00:00Z",
+            _tmp_dir() / signal_name,
+        )
+
+    def test_genuine_success_populates_required_check_and_every_acceptance_id(self) -> None:
+        outputs = self._run("accept-live-required-evidence", "91000000-0000-4000-8000-000000000001")
+        self.assertEqual("change_proposed", outputs.result["status"])
+        self.assertTrue(outputs.verification["passed"])
+        self.assertEqual("success", outputs.check_run_conclusion)
+
+        check_ids = {check["id"] for check in outputs.result["checks"]}
+        self.assertIn("b3-terminal-propagation-tests", check_ids)
+        for check in outputs.result["checks"]:
+            self.assertEqual(0, check["exit_code"])
+            self.assertTrue(check["evidence_artifact_ids"])
+
+        acceptance_ids = {item["id"] for item in outputs.result["acceptance_results"]}
+        self.assertEqual(self.REQUIRED_AC_IDS, acceptance_ids)
+        for item in outputs.result["acceptance_results"]:
+            self.assertTrue(item["passed"], item["id"])
+
+    def test_adapter_command_failure_fails_closed_despite_passing_direct_check(self) -> None:
+        """The exact attempt-2 shape: the adapter's own real transcript
+        shows the registered command failed while this job's own direct
+        check still passed. Must still fail closed."""
+        outputs = self._run("reject-adapter-command-failure", "91000000-0000-4000-8000-000000000002")
+        self.assertFalse(outputs.verification["passed"])
+        self.assertEqual("failure", outputs.check_run_conclusion)
+        acceptance_by_id = {item["id"]: item for item in outputs.result["acceptance_results"]}
+        self.assertFalse(acceptance_by_id["AC-C1"]["passed"])
+
+    def test_direct_check_failure_fails_closed(self) -> None:
+        outputs = self._run("reject-direct-check-failure", "91000000-0000-4000-8000-000000000003")
+        self.assertFalse(outputs.verification["passed"])
+        self.assertEqual("failure", outputs.check_run_conclusion)
+        acceptance_by_id = {item["id"]: item for item in outputs.result["acceptance_results"]}
+        self.assertFalse(acceptance_by_id["AC-C2"]["passed"])
+
+    def test_missing_review_provenance_fails_acceptance_evidence_closed(self) -> None:
+        """Otherwise-genuine success, but the review-attestation commit was
+        never resolved (e.g. the fetch step found nothing): AC-C5 must fail,
+        and that alone must fail the whole Check Run closed."""
+        outputs = self._run("reject-missing-acceptance-evidence", "91000000-0000-4000-8000-000000000004")
+        self.assertFalse(outputs.verification["passed"])
+        self.assertEqual("failure", outputs.check_run_conclusion)
+        acceptance_by_id = {item["id"]: item for item in outputs.result["acceptance_results"]}
+        self.assertFalse(acceptance_by_id["AC-C5"]["passed"])
+
+    def test_self_report_override_still_fails_closed_under_required_acceptance_regime(self) -> None:
+        outputs = self._run("reject-self-report-override", "91000000-0000-4000-8000-000000000005")
+        self.assertFalse(outputs.verification["passed"])
+        self.assertEqual("failure", outputs.check_run_conclusion)
+
+    def test_no_real_evidence_yields_empty_checks_and_acceptance_not_fabricated(self) -> None:
+        """When there is no adapter transcript and no direct-check log at
+        all, `build_checks_and_acceptance` must return empty lists -- the
+        same behavior as before this correction -- rather than invent
+        anything."""
+        signal = json.loads((DOCUMENTS_DIR / "signal-accept-genuine-success.json").read_text())
+        signal["execution_file_content"] = None
+        signal.pop("required_check_log", None)
+        task = json.loads(self.TASK_PATH.read_text())
+        checks, acceptance_results, artifacts = build_checks_and_acceptance(
+            task, None, signal, None, _tmp_dir()
+        )
+        self.assertEqual([], checks)
+        self.assertEqual([], acceptance_results)
+        self.assertEqual([], artifacts)
+
+    def test_build_checks_and_acceptance_never_reads_untrusted_fields(self) -> None:
+        import inspect
+
+        from tools import propagate_b3
+
+        def body_only(func: Any) -> str:
+            return inspect.getsource(func).split('"""', 2)[-1]
+
+        source = body_only(propagate_b3.build_checks_and_acceptance) + body_only(
+            propagate_b3._evaluate_criterion
+        )
+        self.assertNotIn("adapter_self_report", source)
+        self.assertNotIn("actions_job_conclusion", source)
+        self.assertNotIn("raw_provider_terminal_reason", source)
 
 
 class B3CheckRunConclusionSourceTests(unittest.TestCase):
@@ -674,6 +907,32 @@ class B3WorkflowRunMetadataTests(unittest.TestCase):
         self.assertEqual("success", metadata["actions_job_conclusion"])
         self.assertEqual("pipeline_derived", metadata["execution_id_source"])
         self.assertEqual("some session error", metadata["session_resolution_error"])
+        # `task_commit`/`review_attestation_commit` are optional signal
+        # fields (absent here); metadata must default them to `None` rather
+        # than raise.
+        self.assertIsNone(metadata["task_commit"])
+        self.assertIsNone(metadata["review_attestation_commit"])
+
+    def test_metadata_carries_exact_task_and_review_attestation_commits_when_available(self) -> None:
+        result = {"execution_id": "x", "task_id": TASK_ID, "artifacts": [], "authored_commits": []}
+        verification = {"verification_id": "v", "passed": True}
+        signal = {
+            "workflow_run_id": "1",
+            "workflow_run_attempt": "1",
+            "source_run_id": None,
+            "trusted_subject_sha": "b" * 40,
+            "raw_provider_terminal_reason": None,
+            "adapter_self_report": None,
+            "actions_job_conclusion": "success",
+            "adapter_attempted": True,
+            "result_artifact_present": True,
+            "required_evidence_artifact_present": True,
+            "task_commit": "9b6db4412eb5ef032d4333ff8023c1527383de87",
+            "review_attestation_commit": "1" * 40,
+        }
+        metadata = build_workflow_run_metadata(signal, result, verification, "success", None, None)
+        self.assertEqual("9b6db4412eb5ef032d4333ff8023c1527383de87", metadata["task_commit"])
+        self.assertEqual("1" * 40, metadata["review_attestation_commit"])
 
 
 class B3WorkflowContentTests(unittest.TestCase):
@@ -691,6 +950,56 @@ class B3WorkflowContentTests(unittest.TestCase):
         self.assertIn(PINNED_ADAPTER_ACTION, self.text)
         self.assertIn("secrets.ANTHROPIC_API_KEY", self.text)
         self.assertIn("github.token", self.text)
+
+    def test_dependencies_are_installed_before_the_adapter_runs(self) -> None:
+        """Issue #27 correction: the real run 29397325438 attempt-2 failure
+        (`ModuleNotFoundError: jsonschema` inside the adapter's own
+        transcript) was that dependencies were only ever installed in the
+        always-run finalize job, never in the job that actually runs the
+        adapter's registered command. `requirements-b3.txt` must now be
+        installed in the `execute` job, strictly before the adapter step."""
+        execute_section = self.text.split("\n  execute:", 1)[1].split("\n  finalize-and-verify:", 1)[0]
+        install_index = execute_section.index("requirements-b3.txt")
+        adapter_index = execute_section.index("Run executor adapter")
+        self.assertLess(
+            install_index, adapter_index,
+            "requirements-b3.txt must be installed before the adapter step in the execute job",
+        )
+
+    def test_requirements_b3_declares_jsonschema_transitively(self) -> None:
+        requirements_path = REPO_ROOT / "requirements-b3.txt"
+        self.assertTrue(requirements_path.is_file())
+        self.assertIn("requirements-b0.txt", requirements_path.read_text(encoding="utf-8"))
+
+    def test_adapter_prompt_and_direct_check_run_the_identical_registered_command(self) -> None:
+        """AC-C1 depends on being able to find, in the adapter's own
+        transcript, a `Bash` tool call whose command string matches the
+        signal's `adapter_registered_command` verbatim -- so the prompt
+        given to the adapter and the command this job runs directly must be
+        the exact same literal string, not merely equivalent shell forms."""
+        self.assertIn("B3_REGISTERED_TEST_COMMAND", self.text)
+        self.assertIn(REGISTERED_TEST_COMMAND, self.text)
+
+    def test_live_signal_executor_adapter_version_matches_issue_27_task_fixture(self) -> None:
+        """Truthful-provenance requirement: the live provider signal's
+        `executor.adapter_version` must equal the immutable Issue #27 task
+        contract's own `executor.version` -- this run is executed under
+        that exact task, not Issue #19's original bootstrap task."""
+        task = _load_json(DOCUMENTS_DIR / "task-issue-27-live.json")
+        expected_version = task["executor"]["version"]
+        self.assertEqual("claude-code-2.1.197-b3-correction", expected_version)
+        version_line = next(
+            line for line in self.text.splitlines() if line.strip().startswith('"adapter_version":')
+        )
+        self.assertIn(expected_version, version_line)
+        self.assertNotIn("b3-bootstrap", version_line)
+
+    def test_live_signal_delegation_parent_is_issue_27_not_issue_19(self) -> None:
+        delegation_line = next(
+            line for line in self.text.splitlines() if line.strip().startswith('"delegation_parent":')
+        )
+        self.assertIn("issue-27-owner-decision", delegation_line)
+        self.assertNotIn("issue-19-owner-decision", delegation_line)
 
     def test_adapter_step_is_bounded_to_read_only_diagnostics(self) -> None:
         # The diagnostic invocation must run the registered B3 test command
@@ -883,6 +1192,49 @@ class B3RealControlEvidenceTests(unittest.TestCase):
         self.assertIn(REVIEW_PATH, self.text)
         self.assertIn("--review-attestation b3-output/review-attestation.json", self.text)
 
+    def test_review_attestation_control_ref_is_separate_from_issue_19s(self) -> None:
+        """Never reuse Issue #19's own review-attestation control ref/path
+        for this new task/SHA -- a review published against Issue #19's
+        task must not be able to attest Issue #27's. (Historical prose
+        describing the prior, Issue #19 attempt may still name its old
+        ref/path; only the live `env:` configuration actually used by the
+        pipeline is checked here.)"""
+        self.assertNotEqual("control/issue-19-b3-review-attestation", REVIEW_REF)
+        self.assertNotEqual(".ai/reviews/19/review-attestation.v1.json", REVIEW_PATH)
+        ref_line = next(line for line in self.text.splitlines() if line.strip().startswith("B3_REVIEW_REF:"))
+        path_line = next(line for line in self.text.splitlines() if line.strip().startswith("B3_REVIEW_PATH:"))
+        self.assertIn(REVIEW_REF, ref_line)
+        self.assertIn(REVIEW_PATH, path_line)
+        self.assertNotIn("issue-19", ref_line)
+        self.assertNotIn("/19/", path_line)
+
+    def test_workflow_captures_exact_task_and_review_attestation_commits(self) -> None:
+        """AC-C5 / requirement 5: the exact task control commit and the
+        exact commit the review-attestation ref resolved to at fetch time
+        must be preserved into workflow metadata/control evidence, never
+        re-derived or guessed downstream."""
+        fetch_task_section = self.text.split("Fetch real B3 task", 1)[1].split("- name:", 1)[0]
+        self.assertIn("task_commit=$B3_CONTROL_TASK_COMMIT", fetch_task_section)
+        fetch_review_section = self.text.split("Fetch independent review attestation", 1)[1].split(
+            "- name:", 1
+        )[0]
+        self.assertIn("git rev-parse FETCH_HEAD", fetch_review_section)
+        self.assertIn("review_attestation_commit=", fetch_review_section)
+        self.assertIn("task_commit", self.text)
+        self.assertIn("review_attestation_commit", self.text)
+
+    def test_review_fetch_section_has_no_stale_issue_19_ref(self) -> None:
+        """Truthful-provenance requirement: the fetch-review step's own
+        explanatory comment (and the rest of that step) must reference this
+        workflow's actual, live Issue #27 review-attestation ref -- never
+        the stale Issue #19 ref this step no longer fetches."""
+        fetch_review_section = self.text.split("Fetch independent review attestation", 1)[1].split(
+            "- name:", 1
+        )[0]
+        self.assertNotIn("issue-19-b3-review-attestation", fetch_review_section)
+        self.assertNotIn("/19/review-attestation.v1.json", fetch_review_section)
+        self.assertIn(REVIEW_REF, fetch_review_section)
+
     def test_task_and_review_fetch_steps_are_read_only(self) -> None:
         fetch_task_section = self.text.split("Fetch real B3 task", 1)[1].split("- name:", 1)[0]
         fetch_review_section = self.text.split("Fetch independent review attestation", 1)[1].split(
@@ -1040,7 +1392,7 @@ class B3RealControlEvidenceTests(unittest.TestCase):
         )
         self.assertEqual(0, show.returncode, show.stderr)
         task_document = json.loads(show.stdout)
-        self.assertEqual("yurikuchumov-ux/ai-operating-system#19", task_document["task_id"])
+        self.assertEqual(TASK_ID, task_document["task_id"])
 
         import sys
 

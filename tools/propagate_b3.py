@@ -289,6 +289,25 @@ PROVIDER_SIGNAL_SCHEMA: Dict[str, Any] = {
                 "credential_principal": {"type": "string", "minLength": 1},
             },
         },
+        # Issue #27 correction: real, directly observed facts needed to
+        # populate `result.checks` / `result.acceptance_results` truthfully.
+        # All five are optional (not in `required`) so every pre-existing
+        # signal fixture remains schema-valid unchanged; a signal that omits
+        # them simply yields no per-criterion evidence, never a fabricated
+        # one (see `build_checks_and_acceptance`).
+        "dependencies_installed_before_adapter": {"type": "boolean"},
+        # The exact registered-check command string this signal expects to
+        # find inside the adapter's own transcript
+        # (`execution_file_content`). Matched verbatim by
+        # `resolve_adapter_registered_command_result`; never used to alter
+        # what command is actually run.
+        "adapter_registered_command": {"oneOf": [{"type": "string", "minLength": 1}, {"type": "null"}]},
+        # The real, bounded stdout/stderr this job's own directly executed
+        # required check produced -- never the adapter's transcript, never a
+        # summary of it.
+        "required_check_log": {"oneOf": [{"type": "string", "maxLength": 1000000}, {"type": "null"}]},
+        "task_commit": {"oneOf": [{"type": "string", "pattern": _SHA_PATTERN}, {"type": "null"}]},
+        "review_attestation_commit": {"oneOf": [{"type": "string", "pattern": _SHA_PATTERN}, {"type": "null"}]},
     },
 }
 
@@ -408,6 +427,74 @@ def resolve_adapter_session_id(
     return None
 
 
+_MAX_TRANSCRIPT_EVENTS_SCANNED = 2000
+
+
+def resolve_adapter_registered_command_result(
+    execution_file_content: Optional[str], registered_command: Optional[str]
+) -> Optional[bool]:
+    """Bounded, fail-closed determination of whether the adapter's own
+    transcript shows it actually ran `registered_command` via a `Bash` tool
+    call, and whether that call's own `tool_result` carries no error.
+
+    This reads only structural transcript fields the harness itself sets
+    (`tool_use.input.command`, `tool_result.tool_use_id`,
+    `tool_result.is_error`) -- never the adapter's own natural-language
+    summary/self-report of the outcome. Returns `True` (the exact command
+    ran and did not error), `False` (it ran and did error), or `None` (the
+    command was never found in the transcript, or the transcript could not
+    be parsed) -- callers must treat `None` as "not confirmed", never
+    coerce it to `True`.
+    """
+    if not execution_file_content or not registered_command:
+        return None
+    if len(execution_file_content.encode("utf-8")) > MAX_INPUT_BYTES:
+        return None
+    try:
+        events = json.loads(execution_file_content)
+    except (json.JSONDecodeError, UnicodeDecodeError, ValueError):
+        return None
+    if not isinstance(events, list):
+        return None
+    events = events[:_MAX_TRANSCRIPT_EVENTS_SCANNED]
+    expected = registered_command.strip()
+
+    target_tool_use_ids: set = set()
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+        content = (event.get("message") or {}).get("content") if isinstance(event.get("message"), dict) else None
+        if not isinstance(content, list):
+            continue
+        for item in content:
+            if not isinstance(item, dict) or item.get("type") != "tool_use" or item.get("name") != "Bash":
+                continue
+            tool_input = item.get("input")
+            command = tool_input.get("command") if isinstance(tool_input, dict) else None
+            tool_use_id = item.get("id")
+            if isinstance(command, str) and command.strip() == expected and isinstance(tool_use_id, str):
+                target_tool_use_ids.add(tool_use_id)
+
+    if not target_tool_use_ids:
+        return None
+
+    result_ok: Optional[bool] = None
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+        content = (event.get("message") or {}).get("content") if isinstance(event.get("message"), dict) else None
+        if not isinstance(content, list):
+            continue
+        for item in content:
+            if (
+                isinstance(item, dict)
+                and item.get("type") == "tool_result"
+                and item.get("tool_use_id") in target_tool_use_ids
+            ):
+                result_ok = not bool(item.get("is_error"))
+    return result_ok
+
+
 def derive_pipeline_execution_id(workflow_run_id: str, workflow_run_attempt: str, attempt: int) -> str:
     """Deterministic UUID5 fallback execution id, derived from real,
     platform-verifiable Actions run facts. Reproducible and traceable to the
@@ -503,7 +590,11 @@ def load_provider_signal(path: Path) -> Mapping[str, Any]:
     return document
 
 
-def classify_terminal(signal: Mapping[str, Any], session_error: Optional[str]) -> Classification:
+def classify_terminal(
+    signal: Mapping[str, Any],
+    session_error: Optional[str],
+    adapter_check_result: Optional[bool] = None,
+) -> Classification:
     """Deterministically classify the terminal outcome from trusted facts only.
 
     Adapter self-report (`adapter_self_report`) and the Actions job's own
@@ -526,6 +617,18 @@ def classify_terminal(signal: Mapping[str, Any], session_error: Optional[str]) -
     when the adapter attempted to run but its real session id could not be
     resolved from its own execution_file/structured_output; that is itself
     classified `adapter_error`, never silently ignored.
+
+    `adapter_check_result` (from `resolve_adapter_registered_command_result`)
+    is `True`/`False` only when the adapter's own transcript shows it
+    actually ran the exact registered command; `False` -- a real, directly
+    observed failure of that command, never the adapter's self-report -- is
+    classified `check_failed` here, independently of whether this job's own
+    separately executed copy of the same check passed. `None` (the command
+    was never found in the transcript, e.g. because the signal predates
+    this field, or a task does not require this evidence) is never treated
+    as a failure at this classification layer; a task that requires it does
+    so instead through its own `acceptance_criteria` on the resulting
+    `result.acceptance_results` entry (see `build_checks_and_acceptance`).
     """
     go = signal["git_observation"]
 
@@ -585,6 +688,12 @@ def classify_terminal(signal: Mapping[str, Any], session_error: Optional[str]) -
         return Classification("failed", "empty_diff", "empty_diff", _TERMINAL_REASON_MESSAGES["empty_diff"], None, None)
     if signal["required_check_exit_code"] != 0:
         return Classification("failed", "check_failed", "check_failed", _TERMINAL_REASON_MESSAGES["check_failed"], None, None)
+    if adapter_check_result is False:
+        return Classification(
+            "failed", "check_failed", "check_failed",
+            "the adapter's own real transcript shows the registered command did not exit zero",
+            None, None,
+        )
     return Classification("change_proposed", "completed", None, None, None, None)
 
 
@@ -619,6 +728,240 @@ def build_trusted_observation(
         "warnings": [],
         "error": error,
     }
+
+
+_KNOWN_CHECK_COMMAND_ID = "repo.contracts.b3.tests"
+
+
+def _write_evidence_file(output_dir: Path, name: str, data: bytes) -> None:
+    evidence_dir = output_dir / "evidence"
+    evidence_dir.mkdir(parents=True, exist_ok=True)
+    path = evidence_dir / name
+    if not path.exists():
+        path.write_bytes(data)
+
+
+def _fixture_manifest_matches_required_scenarios(
+    manifest_relative_path: str, required_scenarios: Sequence[Mapping[str, Any]]
+) -> bool:
+    """Real, direct check of the checked-out `fixtures/b3/manifest.v1.json`
+    (never a self-report): every declared `required_scenarios` entry must
+    exist in the actual manifest with its `expected` fields matching."""
+    try:
+        manifest_path = (REPO_ROOT / manifest_relative_path).resolve()
+        manifest_path.relative_to(REPO_ROOT)
+        manifest = _load_bounded_json(manifest_path, "fixture manifest")
+    except (B3PropagatorError, ValueError, OSError):
+        return False
+    if not isinstance(manifest, dict):
+        return False
+    by_id = {
+        fixture.get("id"): fixture.get("expected", {})
+        for fixture in manifest.get("fixtures", [])
+        if isinstance(fixture, dict)
+    }
+    for spec in required_scenarios:
+        expected = by_id.get(spec.get("id"))
+        if expected is None:
+            return False
+        for key, value in spec.items():
+            if key == "id":
+                continue
+            if expected.get(key) != value:
+                return False
+    return True
+
+
+def _identity_lineage_passes(
+    task: Mapping[str, Any], signal: Mapping[str, Any], review: Optional[Mapping[str, Any]]
+) -> bool:
+    """Real recomputation of lineage-overlap freedom from the executor
+    identity/authored commits actually observed and the reviewer identity
+    actually loaded from the fetched review-attestation document -- mirrors
+    (without importing or modifying) `verify_b2.B2Verifier._actual_lineage_overlaps`."""
+    if review is None:
+        return False
+    forbidden = task.get("review_policy", {}).get("forbidden_lineage_overlaps", [])
+    executor_identity = signal.get("executor", {}).get("identity", {})
+    reviewer_identity = review.get("reviewer_identity", {})
+    if not isinstance(reviewer_identity, dict):
+        return False
+    result_commits = set(signal.get("git_observation", {}).get("authored_commits", []))
+    reviewer_commits = set(reviewer_identity.get("authored_commits", []))
+    for field in forbidden:
+        if field == "authored_commits":
+            if result_commits & reviewer_commits:
+                return False
+        elif executor_identity.get(field) == reviewer_identity.get(field):
+            return False
+    return True
+
+
+def _evaluate_criterion(
+    criterion: Mapping[str, Any],
+    task: Mapping[str, Any],
+    checks: Sequence[Mapping[str, Any]],
+    signal: Mapping[str, Any],
+    review: Optional[Mapping[str, Any]],
+    adapter_check_result: Optional[bool],
+    direct_exit: Optional[int],
+    deps_installed: bool,
+) -> Tuple[bool, Dict[str, Any]]:
+    """Truthfully evaluate one task-declared acceptance criterion from real,
+    directly observed evidence only. Never reads `adapter_self_report`,
+    `actions_job_conclusion`, or `raw_provider_terminal_reason`. Returns
+    `(passed, observed)`; an unrecognized predicate/parameter shape fails
+    closed (`passed=False`) rather than guessing."""
+    predicate_id = criterion["predicate_id"]
+    params = criterion["parameters"]
+    checks_by_id = {check["id"]: check for check in checks}
+
+    if predicate_id == "process.exit_code.equals":
+        component = params.get("component")
+        if component == "claude-adapter-registered-command":
+            passed = adapter_check_result is True and deps_installed and params.get("value", 0) == 0
+            return passed, {
+                "adapter_check_result": adapter_check_result,
+                "dependencies_installed_before_adapter": deps_installed,
+            }
+        if component == "finalize-direct-required-check":
+            passed = direct_exit is not None and direct_exit == params.get("value", 0)
+            return passed, {"required_check_exit_code": direct_exit}
+        return False, {"error": "unsupported_component"}
+
+    if predicate_id == "schema.instance.valid":
+        linked_check = checks_by_id.get(params.get("required_check_id"))
+        check_ok = linked_check is not None and linked_check["exit_code"] == 0
+        declared_ids = {c["id"] for c in task.get("acceptance_criteria", [])}
+        ids_ok = set(params.get("required_acceptance_ids", [])) <= declared_ids
+        passed = check_ok and ids_ok and bool(checks)
+        return passed, {"required_check_ok": check_ok, "required_acceptance_ids_declared": ids_ok}
+
+    if predicate_id == "fixture.pass_rate.equals":
+        manifest_rel = params.get("manifest")
+        manifest_ok = bool(manifest_rel) and _fixture_manifest_matches_required_scenarios(
+            manifest_rel, params.get("required_scenarios", [])
+        )
+        linked_ok = bool(criterion.get("linked_checks")) and all(
+            checks_by_id.get(cid, {}).get("exit_code") == 0 for cid in criterion["linked_checks"]
+        )
+        return manifest_ok and linked_ok, {"manifest_matches_required_scenarios": manifest_ok}
+
+    if predicate_id == "artifact.exists":
+        task_commit_present = bool(signal.get("task_commit"))
+        review_commit_present = bool(signal.get("review_attestation_commit"))
+        return task_commit_present and review_commit_present, {
+            "task_commit_present": task_commit_present,
+            "review_attestation_commit_present": review_commit_present,
+        }
+
+    if predicate_id == "identity.lineage.no_overlap":
+        passed = _identity_lineage_passes(task, signal, review)
+        return passed, {"lineage_overlap_free": passed}
+
+    return False, {"error": "unsupported_predicate"}
+
+
+def build_checks_and_acceptance(
+    task: Optional[Mapping[str, Any]],
+    review: Optional[Mapping[str, Any]],
+    signal: Mapping[str, Any],
+    adapter_check_result: Optional[bool],
+    output_dir: Path,
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """Build `result.checks` / `result.acceptance_results` / additional
+    `result.artifacts` entries from trusted, directly observed evidence only.
+
+    Never derives a passing entry from `adapter_self_report`,
+    `actions_job_conclusion`, or `raw_provider_terminal_reason`: only the
+    adapter's own transcript (`adapter_check_result`, from
+    `resolve_adapter_registered_command_result`), this job's own directly
+    executed check exit code (`required_check_exit_code`), and other
+    directly-observed signal/task/review facts are read. When there is no
+    real evidence to attach (no adapter transcript and no direct check log
+    captured), returns empty lists -- the same behavior as before this
+    correction -- rather than fabricate anything.
+    """
+    if task is None:
+        return [], [], []
+
+    artifacts: List[Dict[str, Any]] = []
+    evidence_ids: List[str] = []
+
+    execution_file_content = signal.get("execution_file_content")
+    if execution_file_content:
+        raw = execution_file_content.encode("utf-8")
+        digest = sha256_bytes(raw)
+        _write_evidence_file(output_dir, "adapter-transcript.txt", raw)
+        artifacts.append(
+            {
+                "id": "adapter-transcript",
+                "path": "evidence/adapter-transcript.txt",
+                "sha256": digest,
+                "media_type": "text/plain",
+                "size_bytes": len(raw),
+            }
+        )
+        evidence_ids.append("adapter-transcript")
+
+    required_check_log = signal.get("required_check_log")
+    if required_check_log:
+        raw = required_check_log.encode("utf-8")
+        digest = sha256_bytes(raw)
+        _write_evidence_file(output_dir, "required-check-log.txt", raw)
+        artifacts.append(
+            {
+                "id": "required-check-log",
+                "path": "evidence/required-check-log.txt",
+                "sha256": digest,
+                "media_type": "text/plain",
+                "size_bytes": len(raw),
+            }
+        )
+        evidence_ids.append("required-check-log")
+
+    if not evidence_ids:
+        return [], [], []
+
+    direct_exit = signal.get("required_check_exit_code")
+    deps_installed = bool(signal.get("dependencies_installed_before_adapter"))
+    combined_ok = adapter_check_result is True and direct_exit == 0 and deps_installed
+    check_exit_code = 0 if combined_ok else 1
+    evidence_ids = sorted(evidence_ids)
+
+    checks: List[Dict[str, Any]] = []
+    for required_check in task.get("required_checks", []):
+        if required_check.get("command_id") != _KNOWN_CHECK_COMMAND_ID:
+            continue
+        checks.append(
+            {
+                "id": required_check["id"],
+                "command_id": required_check["command_id"],
+                "exit_code": check_exit_code,
+                "evidence_artifact_ids": list(evidence_ids),
+            }
+        )
+    checks_ids = {check["id"] for check in checks}
+
+    acceptance_results: List[Dict[str, Any]] = []
+    for criterion in task.get("acceptance_criteria", []):
+        if not any(cid in checks_ids for cid in criterion.get("linked_checks", [])):
+            continue
+        passed, observed = _evaluate_criterion(
+            criterion, task, checks, signal, review, adapter_check_result, direct_exit, deps_installed
+        )
+        acceptance_results.append(
+            {
+                "id": criterion["id"],
+                "predicate_id": criterion["predicate_id"],
+                "parameters": criterion["parameters"],
+                "passed": passed,
+                "observed": observed,
+                "evidence_artifact_ids": list(evidence_ids),
+            }
+        )
+
+    return checks, acceptance_results, artifacts
 
 
 def _write_json(path: Path, document: Mapping[str, Any]) -> Path:
@@ -714,6 +1057,12 @@ def build_workflow_run_metadata(
         "new_commit": bool(result["authored_commits"]),
         "result_artifact_present": signal["result_artifact_present"],
         "required_evidence_artifact_present": signal["required_evidence_artifact_present"],
+        # Exact task control commit and exact fetched review-attestation
+        # commit, threaded through unchanged from the signal when available
+        # (AC-C5). Never fabricated: absent when the corresponding fetch
+        # step did not resolve one.
+        "task_commit": signal.get("task_commit"),
+        "review_attestation_commit": signal.get("review_attestation_commit"),
     }
 
 
@@ -740,7 +1089,10 @@ def run_pipeline(
 ) -> PipelineOutputs:
     signal = load_provider_signal(signal_path)
     execution_id, session_id, session_error = resolve_execution_identity(signal)
-    classification = classify_terminal(signal, session_error)
+    adapter_check_result = resolve_adapter_registered_command_result(
+        signal.get("execution_file_content"), signal.get("adapter_registered_command")
+    )
+    classification = classify_terminal(signal, session_error, adapter_check_result)
     observation = build_trusted_observation(signal, classification, execution_id)
     observation_path = _write_json(output_dir / "observation.json", observation)
 
@@ -749,9 +1101,54 @@ def run_pipeline(
     if candidate_spec is not None:
         candidate_path = _write_json(output_dir / "candidate.json", candidate_spec)
 
-    finalize_report = b1_finalize(observation_path, candidate_path, output_dir)
-    result_path = Path(finalize_report["result_path"])
-    result = load_json(result_path)
+    # The existing, unmodified B1 finalizer still runs exactly as before,
+    # writing its own raw result under a nested `b1-raw/` subdirectory of
+    # this same evidence root so its candidate-evidence path convention
+    # (`evidence/<sha>.raw`, relative to *its own* output dir) never
+    # collides with the additional evidence this correction writes directly
+    # under `output_dir/evidence/`. Its `checks`/`acceptance_results` are
+    # always empty (a known B1 bootstrap limitation this correction cannot
+    # fix by editing the denied `tools/finalize_b1.py`); the authoritative,
+    # enriched `result.json` this pipeline actually publishes and verifies
+    # is built immediately below from that same raw result plus real,
+    # directly observed check/acceptance evidence -- never by modifying B1.
+    b1_output_dir = output_dir / "b1-raw"
+    finalize_report = b1_finalize(observation_path, candidate_path, b1_output_dir)
+    b1_result_path = Path(finalize_report["result_path"])
+    b1_result = load_json(b1_result_path)
+
+    task_doc: Optional[Mapping[str, Any]] = None
+    try:
+        task_doc = _load_bounded_json(task_path, "task document")
+    except B3PropagatorError:
+        task_doc = None
+    review_doc: Optional[Mapping[str, Any]] = None
+    try:
+        review_doc = _load_bounded_json(review_path, "review-attestation document")
+    except B3PropagatorError:
+        review_doc = None
+
+    checks, acceptance_results, extra_artifacts = build_checks_and_acceptance(
+        task_doc, review_doc, signal, adapter_check_result, output_dir
+    )
+    # B1 candidate-evidence artifact paths are relative to its own nested
+    # `b1-raw/` output dir; rewritten here so they still resolve correctly
+    # against the one shared evidence root (`output_dir`) this pipeline's
+    # verification step actually reads from.
+    rebased_b1_artifacts = [
+        {**artifact, "path": "b1-raw/{}".format(artifact["path"])} for artifact in b1_result["artifacts"]
+    ]
+    result = dict(b1_result)
+    result["artifacts"] = rebased_b1_artifacts + extra_artifacts
+    result["checks"] = checks
+    result["acceptance_results"] = acceptance_results
+    result_errors = sorted(error.message for error in _RESULT_VALIDATOR.iter_errors(result))
+    if result_errors:
+        raise B3PropagatorError(
+            "enriched result failed result.v1 schema validation: {}".format("; ".join(result_errors))
+        )
+    result_path = output_dir / "result.json"
+    _publish_exclusive(result_path, canonical_bytes(result))
 
     go = signal["git_observation"]
     git_observation_doc = {

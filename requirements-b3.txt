@@ -1,0 +1,6 @@
+# Declared Python dependencies for the B3 pipeline (tools/*_b3.py,
+# tests/test_b3_*.py). Identical to requirements-b0.txt today because the
+# B3 propagator and its tests import jsonschema directly -- expressed via
+# pip's own recursive requirements-file support rather than duplicating the
+# pinned versions, so the two files can never silently drift apart.
+-r requirements-b0.txt

@@ -1,6 +1,33 @@
 # Changelog
 
 ## Unreleased
+- Correct the B3 live pipeline for Issue #27 after run 29397325438 attempt 2
+  proved that a valid, independent review still produced an unverifiable
+  result: `result.checks`/`result.acceptance_results` were unconditionally
+  empty and the adapter's real registered-command execution failed with
+  `ModuleNotFoundError: jsonschema` because dependencies were only ever
+  installed in the always-run finalize job, never where the adapter itself
+  ran. The `execute` job now installs the newly declared
+  `requirements-b3.txt` before invoking the pinned adapter action.
+  `tools/propagate_b3.py:build_checks_and_acceptance` now populates the
+  required check and every required acceptance result from trusted,
+  directly observed evidence only -- the adapter's own transcript (parsed
+  structurally by `resolve_adapter_registered_command_result`, never its
+  self-report) and this job's own directly executed check exit code --
+  composed on top of, never by editing, the existing unmodified B1
+  finalizer. `classify_terminal` gains one narrow, backward-compatible gate:
+  a real, transcript-observed adapter command failure now also fails closed
+  independently of a separately-passing direct check, closing the exact
+  attempt-2 gap. The live workflow now binds Issue #27's own exact task
+  control commit/path and a separate, dedicated Issue #27
+  review-attestation control ref/path (never Issue #19's), and threads the
+  exact fetched task/review-attestation commits through to
+  `workflow-run-metadata.json`. Five new fixtures
+  (`accept-live-required-evidence`, `reject-adapter-command-failure`,
+  `reject-direct-check-failure`, `reject-missing-acceptance-evidence`,
+  `reject-self-report-override`) exercise this path against a real,
+  required-checks/acceptance task fixture, bringing the B3 fixture suite to
+  20 scenarios.
 - Close two remaining B3 truthful-live blockers found by architect
   postcondition review of the second corrective attempt: (1)
   `actions/checkout` on `pull_request` defaults to the synthetic merge

@@ -434,6 +434,149 @@
         "check_run_conclusion": "failure",
         "execution_id_source": "pipeline_derived"
       }
+    },
+    {
+      "id": "accept-live-required-evidence",
+      "signal": {
+        "path": "documents/signal-accept-live-required-evidence.json",
+        "sha256": "c9bcf43ffd8ec58b7743d88e3bb6b792af5ad8de6456628378d0b6a58c26c7a4"
+      },
+      "task": {
+        "path": "documents/task-issue-27-live.json",
+        "sha256": "f46baecfa8c4f4b3098a2b23b86388c1a97c4fd7e7cb690f8255f578dd6fbf46"
+      },
+      "review_attestation": {
+        "path": "documents/review-issue-27-live.json",
+        "sha256": "adf17f4df745dd6b67fd45d9efb9a7b02db03c54af74e4887d6957f826cc3a25"
+      },
+      "verifier_identity": {
+        "path": "documents/verifier-identity.json",
+        "sha256": "8aa983d6a80c0b1ab578cc8e14de2a9211ed00d0933a200de9b28f5e666c0662"
+      },
+      "invocation": {
+        "verification_id": "80000000-0000-4000-8000-000000000016",
+        "evaluated_at": "2026-07-15T12:00:00Z"
+      },
+      "expected": {
+        "status": "change_proposed",
+        "terminal_reason": "completed",
+        "check_run_conclusion": "success",
+        "execution_id_source": "adapter_session"
+      }
+    },
+    {
+      "id": "reject-adapter-command-failure",
+      "signal": {
+        "path": "documents/signal-reject-adapter-command-failure.json",
+        "sha256": "953ef4a2c0f27cb671943abaa254c4dc4becd70a26bd29dca1d8bb96017373ff"
+      },
+      "task": {
+        "path": "documents/task-issue-27-live.json",
+        "sha256": "f46baecfa8c4f4b3098a2b23b86388c1a97c4fd7e7cb690f8255f578dd6fbf46"
+      },
+      "review_attestation": {
+        "path": "documents/review-issue-27-live.json",
+        "sha256": "adf17f4df745dd6b67fd45d9efb9a7b02db03c54af74e4887d6957f826cc3a25"
+      },
+      "verifier_identity": {
+        "path": "documents/verifier-identity.json",
+        "sha256": "8aa983d6a80c0b1ab578cc8e14de2a9211ed00d0933a200de9b28f5e666c0662"
+      },
+      "invocation": {
+        "verification_id": "80000000-0000-4000-8000-000000000017",
+        "evaluated_at": "2026-07-15T12:00:00Z"
+      },
+      "expected": {
+        "status": "failed",
+        "terminal_reason": "check_failed",
+        "check_run_conclusion": "failure"
+      }
+    },
+    {
+      "id": "reject-direct-check-failure",
+      "signal": {
+        "path": "documents/signal-reject-direct-check-failure.json",
+        "sha256": "8dfb9c97df1101116a2f458476fe08df2d24b536513d1e173fcd44899b443cae"
+      },
+      "task": {
+        "path": "documents/task-issue-27-live.json",
+        "sha256": "f46baecfa8c4f4b3098a2b23b86388c1a97c4fd7e7cb690f8255f578dd6fbf46"
+      },
+      "review_attestation": {
+        "path": "documents/review-issue-27-live.json",
+        "sha256": "adf17f4df745dd6b67fd45d9efb9a7b02db03c54af74e4887d6957f826cc3a25"
+      },
+      "verifier_identity": {
+        "path": "documents/verifier-identity.json",
+        "sha256": "8aa983d6a80c0b1ab578cc8e14de2a9211ed00d0933a200de9b28f5e666c0662"
+      },
+      "invocation": {
+        "verification_id": "80000000-0000-4000-8000-000000000018",
+        "evaluated_at": "2026-07-15T12:00:00Z"
+      },
+      "expected": {
+        "status": "failed",
+        "terminal_reason": "check_failed",
+        "check_run_conclusion": "failure"
+      }
+    },
+    {
+      "id": "reject-missing-acceptance-evidence",
+      "signal": {
+        "path": "documents/signal-reject-missing-acceptance-evidence.json",
+        "sha256": "37b9847212f56a5114959819230218349942db092ef884f3b2ea59e7cdcaa475"
+      },
+      "task": {
+        "path": "documents/task-issue-27-live.json",
+        "sha256": "f46baecfa8c4f4b3098a2b23b86388c1a97c4fd7e7cb690f8255f578dd6fbf46"
+      },
+      "review_attestation": {
+        "path": "documents/review-issue-27-live.json",
+        "sha256": "adf17f4df745dd6b67fd45d9efb9a7b02db03c54af74e4887d6957f826cc3a25"
+      },
+      "verifier_identity": {
+        "path": "documents/verifier-identity.json",
+        "sha256": "8aa983d6a80c0b1ab578cc8e14de2a9211ed00d0933a200de9b28f5e666c0662"
+      },
+      "invocation": {
+        "verification_id": "80000000-0000-4000-8000-000000000019",
+        "evaluated_at": "2026-07-15T12:00:00Z"
+      },
+      "expected": {
+        "status": "change_proposed",
+        "terminal_reason": "completed",
+        "check_run_conclusion": "failure"
+      }
+    },
+    {
+      "id": "reject-self-report-override",
+      "signal": {
+        "path": "documents/signal-reject-self-report-override.json",
+        "sha256": "c9d5696c08cddb92bb54a5b824546c0edd9de3184e7f43959d38dbd0de563740"
+      },
+      "task": {
+        "path": "documents/task-issue-27-live.json",
+        "sha256": "f46baecfa8c4f4b3098a2b23b86388c1a97c4fd7e7cb690f8255f578dd6fbf46"
+      },
+      "review_attestation": {
+        "path": "documents/review-issue-27-live.json",
+        "sha256": "adf17f4df745dd6b67fd45d9efb9a7b02db03c54af74e4887d6957f826cc3a25"
+      },
+      "verifier_identity": {
+        "path": "documents/verifier-identity.json",
+        "sha256": "8aa983d6a80c0b1ab578cc8e14de2a9211ed00d0933a200de9b28f5e666c0662"
+      },
+      "invocation": {
+        "verification_id": "80000000-0000-4000-8000-000000000020",
+        "evaluated_at": "2026-07-15T12:00:00Z"
+      },
+      "expected": {
+        "status": "failed",
+        "terminal_reason": "check_failed",
+        "check_run_conclusion": "failure",
+        "adapter_self_reported_status": "success",
+        "actions_job_conclusion": "success"
+      }
     }
   ]
 }
