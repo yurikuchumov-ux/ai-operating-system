@@ -6,7 +6,7 @@
   "adapter_outcome": "success",
   "publication_passed": true,
   "execution_id": "70000000-0000-4000-8000-000000000002",
-  "execution_file_content": "{\"type\":\"result\",\"session_id\":\"70000000-0000-4000-8000-000000000002\"}",
+  "execution_file_content": "[{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tool_use\",\"id\":\"toolu_b1\",\"name\":\"Read\",\"input\":{\"file_path\":\"src/canary/hello.py\"}}]}},{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tool_use\",\"id\":\"toolu_b2\",\"name\":\"Edit\",\"input\":{\"file_path\":\"src/canary/hello.py\"}}]}},{\"type\":\"result\",\"session_id\":\"70000000-0000-4000-8000-000000000002\"}]",
   "structured_output_raw": null,
   "workflow_run_id": "9000000005",
   "workflow_run_attempt": "1",
