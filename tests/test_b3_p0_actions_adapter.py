@@ -251,6 +251,108 @@ class ExecutionIdentityTests(unittest.TestCase):
         )
 
 
+class TruthfulLiveSignalTests(unittest.TestCase):
+    """Regression tests for the live false-success classes found after the
+    first implementation commit."""
+
+    def setUp(self) -> None:
+        self.task = _load(DOCUMENTS_DIR / "task-issue-20-canary.json")
+        self.signal = _load(DOCUMENTS_DIR / "executor-signal-accept.json")
+        self.review = _load(DOCUMENTS_DIR / "review-accept.json")
+        self.inputs = {
+            "task_commit": "5033581665f759971f8a6c5875efd2be93c2b109",
+            "task_path": ".ai/tasks/20/issue-20-canary-task.v1.json",
+            "target_branch": "agent/issue-20-canary",
+            "default_branch": "main",
+            "attempt": 1,
+            "mode": "execute",
+            "execution_run_id": "9000000001",
+        }
+
+    def decide(self) -> Decision:
+        return evaluate(self.inputs, self.task, self.signal, self.review)
+
+    def test_real_observed_check_is_required(self) -> None:
+        del self.signal["required_check"]
+        self.assertEqual("required_check_missing", self.decide().failure_code)
+
+    def test_nonzero_or_timed_out_check_fails_closed(self) -> None:
+        self.signal["required_check"]["exit_code"] = 7
+        self.assertEqual("required_check_failed", self.decide().failure_code)
+        self.signal = _load(DOCUMENTS_DIR / "executor-signal-accept.json")
+        self.signal["required_check"]["timed_out"] = True
+        self.assertEqual("required_check_failed", self.decide().failure_code)
+
+    def test_check_argv_and_subject_must_match_registry_and_head(self) -> None:
+        self.signal["required_check"]["argv"] = ["sh", "-c", "true"]
+        self.assertEqual("required_check_mismatch", self.decide().failure_code)
+        self.signal = _load(DOCUMENTS_DIR / "executor-signal-accept.json")
+        self.signal["required_check"]["subject_sha"] = "f" * 40
+        self.assertEqual("required_check_mismatch", self.decide().failure_code)
+
+    def test_adapter_outcome_and_transcript_are_terminal_evidence(self) -> None:
+        self.signal["adapter_outcome"] = "failure"
+        self.assertEqual("adapter_outcome_not_success", self.decide().failure_code)
+        self.signal = _load(DOCUMENTS_DIR / "executor-signal-accept.json")
+        self.signal["transcript"] = None
+        self.assertEqual("missing_executor_transcript", self.decide().failure_code)
+
+    def test_credential_separated_publication_must_be_proven(self) -> None:
+        self.signal["publication_passed"] = False
+        self.assertEqual("publication_not_verified", self.decide().failure_code)
+
+    def test_executor_evidence_is_bound_to_task_and_verify_run(self) -> None:
+        self.signal["executor_task_commit"] = "f" * 40
+        self.assertEqual("execution_evidence_mismatch", self.decide().failure_code)
+        self.signal = _load(DOCUMENTS_DIR / "executor-signal-accept.json")
+        self.inputs["mode"] = "verify-only"
+        self.inputs["execution_run_id"] = "123"
+        self.assertEqual("execution_evidence_mismatch", self.decide().failure_code)
+
+    def test_verification_only_still_checks_scope_and_nonempty_diff(self) -> None:
+        self.inputs["mode"] = "verify-only"
+        self.signal["changed_files"] = [".github/workflows/evil.yml"]
+        self.assertEqual("changed_paths_not_allowed", self.decide().failure_code)
+        self.signal = _load(DOCUMENTS_DIR / "executor-signal-accept.json")
+        self.signal["changed_files"] = []
+        self.signal["authored_commits"] = []
+        self.assertEqual("empty_diff", self.decide().failure_code)
+
+    def test_ref_history_and_exact_review_commit_are_required(self) -> None:
+        self.signal["default_branch_head_after"] = "f" * 40
+        self.assertEqual("ref_history_changed", self.decide().failure_code)
+        self.signal = _load(DOCUMENTS_DIR / "executor-signal-accept.json")
+        self.signal["review_attestation_commit"] = "main"
+        self.assertEqual("review_binding_missing", self.decide().failure_code)
+
+    def test_unsupported_acceptance_predicate_fails_closed(self) -> None:
+        self.task["acceptance_criteria"][0]["predicate_id"] = "artifact.exists"
+        self.assertEqual("unsupported_acceptance", self.decide().failure_code)
+
+    def test_unsupported_required_check_postcondition_fails_closed(self) -> None:
+        self.task["required_checks"][0]["expected_postconditions"][0]["parameters"]["value"] = 1
+        self.assertEqual("unsupported_acceptance", self.decide().failure_code)
+
+    def test_review_self_report_values_are_exactly_bound(self) -> None:
+        self.review["eligibility"]["overlap_results"][0]["author_values"] = ["fabricated"]
+        self.assertEqual("review_ineligible", self.decide().failure_code)
+
+    def test_result_uses_observed_exit_and_log_evidence(self) -> None:
+        decision = self.decide()
+        docs = build_documents(
+            decision,
+            {
+                "verification_id": "90000000-0000-4000-8000-0000000000bb",
+                "evaluated_at": "2026-07-16T12:00:00Z",
+                "verifier_identity": _load(DOCUMENTS_DIR / "verifier-identity.json"),
+            },
+            _tmp_dir(),
+        )
+        self.assertEqual(self.signal["required_check"]["exit_code"], docs["result"]["checks"][0]["exit_code"])
+        self.assertEqual(["required-check-log"], docs["result"]["checks"][0]["evidence_artifact_ids"])
+        self.assertIn("required-check-log", docs["artifact_ids"])
+
+
 class AcceptedResultArtifactTests(unittest.TestCase):
     """AC-A3: the accepted result declares the four required artifacts with
     real hashes and full provenance."""
@@ -384,7 +486,7 @@ class WorkflowInvariantTests(unittest.TestCase):
     def test_pull_request_never_runs_executor(self) -> None:
         # The executor job must be gated to workflow_dispatch only.
         self.assertIn("github.event_name == 'workflow_dispatch'", self.text)
-        self.assertIn("mode != 'verify-only'", self.text)
+        self.assertIn("github.event.inputs.mode == 'execute'", self.text)
 
     def test_top_level_permissions_read_only(self) -> None:
         # The top-level permissions block grants only contents: read.
@@ -392,8 +494,13 @@ class WorkflowInvariantTests(unittest.TestCase):
         self.assertIn("permissions:\n  contents: read", top)
 
     def test_only_execute_job_has_contents_write(self) -> None:
-        # Exactly one job (the executor) is granted contents: write.
+        # Exactly one credential-separated publisher is granted write;
+        # the Claude execution job remains repository read-only.
         self.assertEqual(1, self.functional.count("contents: write"))
+        execute_section = self.text.split("  execute:", 1)[1].split("  publish-target:", 1)[0]
+        self.assertNotIn("contents: write", execute_section)
+        publisher_section = self.text.split("  publish-target:", 1)[1].split("  finalize-and-verify:", 1)[0]
+        self.assertIn("contents: write", publisher_section)
 
     def test_least_privilege_no_broad_scopes(self) -> None:
         for forbidden in ("id-token:", "pull-requests: write", "packages: write", "deployments: write"):
@@ -401,14 +508,14 @@ class WorkflowInvariantTests(unittest.TestCase):
 
     def test_always_run_finalizer(self) -> None:
         self.assertIn("if: always()", self.text)
-        self.assertIn("Finalize, verify, and publish Check Run", self.text)
+        self.assertIn("Finalize, independently verify, and publish Check Run", self.text)
 
     def test_verifier_owned_check_run(self) -> None:
         self.assertIn(VERIFIER_CHECK_CONTEXT, self.text)
         self.assertIn("VERIFIER_CHECK_CONTEXT", self.text)
 
     def test_clean_ephemeral_checkout_and_exact_base(self) -> None:
-        self.assertIn("Clean ephemeral checkout at the exact protected-main base SHA", self.text)
+        self.assertIn("Clean ephemeral checkout at exact protected-main base SHA", self.text)
         self.assertIn("needs.admission.outputs.base_sha", self.text)
 
     def test_forbidden_capabilities_absent(self) -> None:
@@ -430,15 +537,31 @@ class WorkflowInvariantTests(unittest.TestCase):
                         "'{}' appears outside a denial list: {}".format(token, line),
                     )
 
-    def test_executor_denies_dangerous_tools(self) -> None:
-        # The pinned action is invoked with an explicit denial of force-push,
-        # merge, and main/master writes.
-        self.assertIn("disallowedTools", self.text)
-        for denied in ("git push --force", "gh pr merge", "git push origin main"):
-            self.assertIn(denied, self.text)
+    def test_executor_has_explicit_non_shell_tool_allowlist(self) -> None:
+        self.assertIn('--allowedTools "Read,Edit,Write,Glob,Grep"', self.text)
+        self.assertNotIn("disallowedTools", self.functional)
+        self.assertNotIn("Bash", self.text.split("--allowedTools", 1)[1].split("\n", 1)[0])
+
+    def test_workflow_owns_check_commit_and_exact_target_push(self) -> None:
+        self.assertIn("subprocess.run(argv", self.text)
+        self.assertIn("HEAD:refs/heads/{}", self.text)
+        self.assertIn("changed_paths_within_scope", self.text)
+        self.assertIn("postconditions_passed", self.text)
+
+    def test_verifier_reruns_check_on_detached_exact_subject(self) -> None:
+        self.assertIn('git switch --detach "$subject"', self.text)
+        self.assertGreaterEqual(self.text.count("workflow_controlled_process_exit_code"), 1)
+        self.assertIn("required-check.log", self.text)
+
+    def test_review_ref_is_validated_as_exact_commit_and_recorded(self) -> None:
+        self.assertIn("validate_task_ref", self.text)
+        self.assertIn("review-binding.json", self.text)
+        self.assertIn("review_attestation_commit", self.text)
 
     def test_refuses_protected_branch_write(self) -> None:
-        self.assertIn("refusing to write protected/default branch", self.text)
+        self.assertIn("Prove dispatch SHA is current protected default-branch head", self.text)
+        self.assertIn("default_branch_head_after", self.text)
+        self.assertIn("default_after != base", self.text)
 
 
 if __name__ == "__main__":

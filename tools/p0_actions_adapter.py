@@ -55,6 +55,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
+_IMPORT_REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(_IMPORT_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_IMPORT_REPO_ROOT))
+from tools.propagate_b3 import resolve_adapter_session_id
+
 try:  # pragma: no cover - exercised indirectly by the test suite
     from jsonschema import Draft202012Validator, FormatChecker
 except ModuleNotFoundError as exc:  # pragma: no cover
@@ -124,6 +129,16 @@ FAILURE_TERMINAL_REASON: Mapping[str, str] = {
     "post_review_head_change": "ref_history_unverifiable",
     "self_review": "identity_unverifiable",
     "review_ineligible": "identity_unverifiable",
+    "adapter_outcome_not_success": "adapter_error",
+    "missing_executor_transcript": "missing_artifact",
+    "required_check_missing": "missing_artifact",
+    "required_check_mismatch": "check_failed",
+    "required_check_failed": "check_failed",
+    "unsupported_acceptance": "acceptance_failed",
+    "review_binding_missing": "ref_history_unverifiable",
+    "ref_history_changed": "ref_history_unverifiable",
+    "publication_not_verified": "adapter_error",
+    "execution_evidence_mismatch": "ref_history_unverifiable",
 }
 
 # Failure code -> the decisive registry predicate whose failure it records.
@@ -143,6 +158,16 @@ FAILURE_PREDICATE: Mapping[str, str] = {
     "post_review_head_change": "review.subject_sha.equals",
     "self_review": "identity.lineage.no_overlap",
     "review_ineligible": "review.eligibility.passed",
+    "adapter_outcome_not_success": "acceptance.required.passed",
+    "missing_executor_transcript": "artifact.exists",
+    "required_check_missing": "artifact.exists",
+    "required_check_mismatch": "process.exit_code.equals",
+    "required_check_failed": "process.exit_code.equals",
+    "unsupported_acceptance": "acceptance.required.passed",
+    "review_binding_missing": "review.subject_sha.equals",
+    "ref_history_changed": "git.base_sha.equals",
+    "publication_not_verified": "acceptance.required.passed",
+    "execution_evidence_mismatch": "binding.execution_id.equals",
 }
 
 
@@ -234,6 +259,20 @@ def validate_task_path(task_path: Optional[str]) -> Optional[str]:
         return "task_path_not_allowlisted"
     if not all(_SAFE_PATH_SEGMENT_RE.match(seg) for seg in segments):
         return "task_path_not_allowlisted"
+    return None
+
+
+def validate_review_path(review_path: Optional[str]) -> Optional[str]:
+    """Validate an immutable review document's repository-relative path."""
+    if not isinstance(review_path, str) or not review_path or not review_path.endswith(".json"):
+        return "review_binding_missing"
+    if review_path.startswith("/") or "\\" in review_path or "\x00" in review_path:
+        return "review_binding_missing"
+    segments = review_path.split("/")
+    if any(segment in ("", ".", "..") for segment in segments):
+        return "review_binding_missing"
+    if not all(_SAFE_PATH_SEGMENT_RE.match(segment) for segment in segments):
+        return "review_binding_missing"
     return None
 
 
@@ -334,15 +373,12 @@ def resolve_execution_identity(
     real run facts is used and labelled `pipeline_derived` -- never a
     fabricated session id.
     """
-    session_present = bool(signal.get("adapter_session_present"))
-    execution_id = signal.get("execution_id")
-    if session_present and isinstance(execution_id, str) and execution_id:
-        try:
-            uuid.UUID(execution_id)
-        except (ValueError, TypeError, AttributeError):
-            pass
-        else:
-            return execution_id, "adapter_session"
+    execution_id = resolve_adapter_session_id(
+        signal.get("execution_file_content"),
+        signal.get("structured_output_raw"),
+    )
+    if execution_id is not None:
+        return execution_id, "adapter_session"
     subject = signal.get("subject_sha") or signal.get("base_sha") or "0" * 40
     return (
         derive_pipeline_execution_id(
@@ -358,12 +394,11 @@ def executor_evidence_failure(signal: Mapping[str, Any]) -> Optional[str]:
     """Reject when the adapter claimed to run but no real run/session
     execution evidence can be preserved."""
     attempted = bool(signal.get("adapter_attempted"))
-    session_present = bool(signal.get("adapter_session_present"))
-    execution_id = signal.get("execution_id")
     has_run_id = bool(signal.get("workflow_run_id"))
-    has_real_session = (
-        session_present and isinstance(execution_id, str) and bool(execution_id)
-    )
+    has_real_session = resolve_adapter_session_id(
+        signal.get("execution_file_content"),
+        signal.get("structured_output_raw"),
+    ) is not None
     if attempted and not (has_real_session and has_run_id):
         return "missing_executor_evidence"
     return None
@@ -374,6 +409,10 @@ def review_failure(
     subject_sha: Optional[str],
     executor_identity: Mapping[str, Any],
     authored_commits: Sequence[str],
+    forbidden_fields: Sequence[str],
+    expected_task_id: str,
+    expected_policy_id: str,
+    expected_risk_class: str,
 ) -> Optional[str]:
     """Fail closed on a missing, schema-invalid, wrong-subject, self-lineage,
     or ineligible review."""
@@ -385,29 +424,62 @@ def review_failure(
     # bound to the exact current subject SHA.
     if review.get("reviewed_sha") != subject_sha:
         return "post_review_head_change"
+    if review.get("task_id") != expected_task_id:
+        return "review_ineligible"
 
     reviewer = review.get("reviewer_identity", {})
     eligibility = review.get("eligibility", {})
+    if eligibility.get("policy_id") != expected_policy_id:
+        return "review_ineligible"
+    if eligibility.get("risk_class") != expected_risk_class:
+        return "review_ineligible"
 
-    # Recompute lineage overlap from the real reviewer/executor identities --
-    # never trust only the attestation's own `overlap`/`eligible` booleans.
-    for field_name in FORBIDDEN_LINEAGE_FIELDS:
-        exec_value = executor_identity.get(field_name)
-        if exec_value and reviewer.get(field_name) == exec_value:
-            return "self_review"
-    reviewer_commits = set(reviewer.get("authored_commits") or [])
-    if reviewer_commits & set(authored_commits):
-        return "self_review"
-
-    # Reject duplicate overlap_results entries for the same field before
-    # trusting the attestation's own recomputation (mirrors B3 v3 hardening).
-    seen_fields: set = set()
-    for entry in eligibility.get("overlap_results", []):
-        f = entry.get("field")
-        if f in seen_fields:
+    # Recompute every task-forbidden overlap and require the self-report to
+    # carry the exact observed author/reviewer values. A boolean-only claim,
+    # duplicate field, omitted field, or last-write-wins contradiction fails
+    # closed (the same v3 hardening used by tools/propagate_b3.py).
+    entries = eligibility.get("overlap_results")
+    if not isinstance(entries, list):
+        return "review_ineligible"
+    by_field: Dict[str, Mapping[str, Any]] = {}
+    for entry in entries:
+        if not isinstance(entry, Mapping) or not isinstance(entry.get("field"), str):
             return "review_ineligible"
-        seen_fields.add(f)
-        if entry.get("overlap"):
+        field_name = entry["field"]
+        if field_name in by_field:
+            return "review_ineligible"
+        by_field[field_name] = entry
+
+    for field_name in forbidden_fields:
+        entry = by_field.get(field_name)
+        if entry is None:
+            return "review_ineligible"
+        if field_name == "authored_commits":
+            author_values = sorted(set(str(value) for value in authored_commits))
+            reviewer_commits = reviewer.get("authored_commits")
+            if not isinstance(reviewer_commits, list) or not all(
+                isinstance(value, str) for value in reviewer_commits
+            ):
+                return "review_ineligible"
+            normalized_reviewer = sorted(set(reviewer_commits))
+            reviewer_value = ",".join(normalized_reviewer) if normalized_reviewer else "none"
+            overlap = bool(set(author_values) & set(normalized_reviewer))
+        else:
+            author_value = executor_identity.get(field_name)
+            reviewer_value = reviewer.get(field_name)
+            if not isinstance(author_value, str) or not author_value:
+                return "review_ineligible"
+            if not isinstance(reviewer_value, str) or not reviewer_value:
+                return "review_ineligible"
+            author_values = [author_value]
+            overlap = reviewer_value == author_value
+        if entry.get("author_values") != author_values:
+            return "review_ineligible"
+        if entry.get("reviewer_value") != reviewer_value:
+            return "review_ineligible"
+        if bool(entry.get("overlap")) != overlap:
+            return "review_ineligible"
+        if overlap:
             return "self_review"
     if not eligibility.get("eligible", False):
         return "review_ineligible"
@@ -439,6 +511,115 @@ def resolve_registered_check(
                 )
             return list(argv)
     raise P0AdapterError("unregistered command id: {}".format(command_id))
+
+
+def bounded_required_check(task: Mapping[str, Any]) -> Optional[Mapping[str, Any]]:
+    """Return the single required check supported by this thin adapter.
+
+    Multiple required commands would require an explicitly versioned
+    orchestration contract. This bootstrap intentionally fails closed rather
+    than silently running only the first one.
+    """
+    checks = task.get("required_checks")
+    if not isinstance(checks, list) or len(checks) != 1:
+        return None
+    check = checks[0]
+    if not isinstance(check, Mapping) or check.get("required") is not True:
+        return None
+    command_id = check.get("command_id")
+    if not isinstance(command_id, str) or not command_id:
+        return None
+    postconditions = check.get("expected_postconditions")
+    if not isinstance(postconditions, list) or len(postconditions) != 1:
+        return None
+    postcondition = postconditions[0]
+    if not isinstance(postcondition, Mapping):
+        return None
+    if postcondition.get("predicate_id") != "process.exit_code.equals":
+        return None
+    parameters = postcondition.get("parameters")
+    if not isinstance(parameters, Mapping) or parameters.get("value") != 0:
+        return None
+    return check
+
+
+def acceptance_is_supported(task: Mapping[str, Any]) -> bool:
+    """Accept only criteria directly observable from the one registered argv.
+
+    This prevents a generic ``accepted`` boolean from manufacturing success
+    for predicates the adapter has no truthful evaluator for.
+    """
+    check = bounded_required_check(task)
+    criteria = task.get("acceptance_criteria")
+    if check is None or not isinstance(criteria, list) or not criteria:
+        return False
+    check_id = check.get("id")
+    for criterion in criteria:
+        if not isinstance(criterion, Mapping) or criterion.get("required") is not True:
+            return False
+        if criterion.get("predicate_id") != "process.exit_code.equals":
+            return False
+        parameters = criterion.get("parameters")
+        if not isinstance(parameters, Mapping) or parameters.get("value") != 0:
+            return False
+        linked = criterion.get("linked_checks")
+        if not isinstance(linked, list) or linked != [check_id]:
+            return False
+    return True
+
+
+def required_check_failure(
+    task: Mapping[str, Any], signal: Mapping[str, Any]
+) -> Optional[str]:
+    """Validate the verifier-owned check observation against the registry."""
+    check = bounded_required_check(task)
+    if check is None or not acceptance_is_supported(task):
+        return "unsupported_acceptance"
+    observation = signal.get("required_check")
+    if not isinstance(observation, Mapping):
+        return "required_check_missing"
+    command_id = check.get("command_id")
+    try:
+        expected_argv = resolve_registered_check(str(command_id))
+    except P0AdapterError:
+        return "unsupported_acceptance"
+    if observation.get("command_id") != command_id:
+        return "required_check_mismatch"
+    if observation.get("argv") != expected_argv:
+        return "required_check_mismatch"
+    if observation.get("source") != "workflow_controlled_process_exit_code":
+        return "required_check_mismatch"
+    if observation.get("subject_sha") != signal.get("subject_sha"):
+        return "required_check_mismatch"
+    if observation.get("timed_out") is not False:
+        return "required_check_failed"
+    if not isinstance(observation.get("log"), str) or not observation.get("log"):
+        return "required_check_missing"
+    exit_code = observation.get("exit_code")
+    if not isinstance(exit_code, int) or isinstance(exit_code, bool):
+        return "required_check_missing"
+    if exit_code != 0:
+        return "required_check_failed"
+    return None
+
+
+def ref_binding_failure(
+    inputs: Mapping[str, Any], task: Mapping[str, Any], signal: Mapping[str, Any]
+) -> Optional[str]:
+    """Bind the observed branch/ref history to the immutable task."""
+    base_sha = task.get("base_sha")
+    target_branch = inputs.get("target_branch")
+    if task.get("base_ref") != inputs.get("default_branch"):
+        return "ref_history_changed"
+    if signal.get("target_branch") != target_branch:
+        return "ref_history_changed"
+    if signal.get("target_branch_head") != signal.get("subject_sha"):
+        return "ref_history_changed"
+    if signal.get("default_branch_head_before") != base_sha:
+        return "ref_history_changed"
+    if signal.get("default_branch_head_after") != base_sha:
+        return "ref_history_changed"
+    return None
 
 
 # --------------------------------------------------------------------------
@@ -545,43 +726,98 @@ def evaluate(
             "checked-out base SHA does not match the task's bound base_sha",
         )
 
-    verification_only = is_verification_only(inputs.get("mode"))
+    # 7. The thin adapter supports one registry command and only acceptance
+    #    criteria directly backed by that command's observed exit code.
+    if not acceptance_is_supported(task):
+        return fail(
+            "unsupported_acceptance",
+            "task criteria cannot be truthfully evaluated by the bounded adapter",
+        )
 
-    # 7. Real executor run/session evidence (never a synthesized executor id).
-    #    In verification-only reruns the executor did not run in this pass, so
-    #    executor-evidence admission is not re-applied.
-    if not verification_only:
-        code = executor_evidence_failure(signal)
-        if code:
-            return fail(
-                code,
-                "adapter claimed to run but no real run/session evidence exists",
-            )
+    # 8. Exact default/target ref observations are mandatory in execute and
+    #    verification-only modes. A later default-branch move or target-head
+    #    mismatch invalidates the run.
+    code = ref_binding_failure(inputs, task, signal)
+    if code:
+        return fail(code, "observed branch history is not bound to the immutable task")
+
+    # 9. A verification-only run consumes the preserved evidence from the
+    #    original execution. It does not waive executor/session/outcome
+    #    requirements merely because Claude is not invoked again.
+    code = executor_evidence_failure(signal)
+    if code:
+        return fail(
+            code,
+            "adapter claimed to run but no real run/session evidence exists",
+        )
+    if signal.get("adapter_outcome") != "success":
+        return fail(
+            "adapter_outcome_not_success",
+            "the real adapter outcome was absent, cancelled, timed out, or failed",
+        )
+    if signal.get("publication_passed") is not True:
+        return fail(
+            "publication_not_verified",
+            "the credential-separated publisher did not prove the exact target ref",
+        )
+    if signal.get("executor_task_commit") != task_commit:
+        return fail("execution_evidence_mismatch", "executor evidence belongs to another task commit")
+    if signal.get("executor_task_path") != task_path:
+        return fail("execution_evidence_mismatch", "executor evidence belongs to another task path")
+    evidence_run_id = signal.get("execution_evidence_run_id")
+    if not isinstance(evidence_run_id, str) or not evidence_run_id.isdigit():
+        return fail("execution_evidence_mismatch", "executor evidence run id is missing")
+    if is_verification_only(inputs.get("mode")) and str(inputs.get("execution_run_id") or "") != evidence_run_id:
+        return fail("execution_evidence_mismatch", "verify-only replay did not use the requested exact run")
+    if not isinstance(signal.get("transcript"), str) or not signal.get("transcript"):
+        return fail(
+            "missing_executor_transcript",
+            "the real bounded executor transcript was not preserved",
+        )
 
     authored_commits = list(signal.get("authored_commits") or [])
     changed_files = list(signal.get("changed_files") or [])
 
-    # 8. Scope: the executor's changed files must be within allowed_paths and
-    #    outside denied_paths.
-    if not verification_only:
-        allowed = task.get("allowed_paths") or []
-        denied = task.get("denied_paths") or []
-        if changed_files and not changed_paths_within_scope(
-            changed_files, allowed, denied
-        ):
-            return fail(
-                "changed_paths_not_allowed",
-                "executor changed files outside the task's allowed_paths",
-            )
-        # 9. A change-required task must produce a non-empty diff.
-        change_required = bool(
-            (task.get("change_policy") or {}).get("change_required")
+    # 10. Scope and non-empty-diff are independently recomputed in both
+    #     execute and verification-only modes.
+    allowed = task.get("allowed_paths") or []
+    denied = task.get("denied_paths") or []
+    if changed_files and not changed_paths_within_scope(changed_files, allowed, denied):
+        return fail(
+            "changed_paths_not_allowed",
+            "executor changed files outside the task's allowed_paths",
         )
-        if change_required and (not authored_commits or not changed_files):
-            return fail("empty_diff", "change-required task produced an empty diff")
+    change_required = bool((task.get("change_policy") or {}).get("change_required"))
+    if change_required and (not authored_commits or not changed_files):
+        return fail("empty_diff", "change-required task produced an empty diff")
 
-    # 10. Independent review, bound to the exact subject SHA, no self-lineage.
-    code = review_failure(review, subject_sha, task_executor_identity(signal), authored_commits)
+    # 11. The required command is rerun by the verifier on the exact subject;
+    #     its real exit/log observation is the only source of check success.
+    code = required_check_failure(task, signal)
+    if code:
+        return fail(code, "registered required-check observation is missing or failed")
+
+    # 12. Review bytes must come from an exact fetched commit and path.
+    review_commit = signal.get("review_attestation_commit")
+    review_path = signal.get("review_attestation_path")
+    if not isinstance(review_commit, str) or validate_task_ref(review_commit):
+        return fail("review_binding_missing", "review was not fetched from an exact commit")
+    if validate_review_path(review_path):
+        return fail("review_binding_missing", "review path provenance is missing")
+
+    # 13. Independent review, bound to exact subject SHA and exact lineage.
+    review_policy = task.get("review_policy") or {}
+    forbidden = review_policy.get("forbidden_lineage_overlaps") or []
+    code = review_failure(
+        review,
+        subject_sha,
+        task_executor_identity(signal),
+        authored_commits,
+        forbidden,
+        str(task.get("task_id") or ""),
+        str(review_policy.get("policy_id") or ""),
+        str(task.get("risk_class") or ""),
+    )
     if code:
         return fail(code, "review is missing, ineligible, self-lineage, or stale-head")
 
@@ -662,6 +898,14 @@ def build_documents(decision: Decision, invocation: Mapping[str, Any], workdir: 
         artifacts.append(_artifact_entry("executor-transcript", "text/plain", meta))
         artifact_ids.append("executor-transcript")
 
+    check_observation = signal.get("required_check")
+    if isinstance(check_observation, Mapping):
+        check_log = check_observation.get("log")
+        if isinstance(check_log, str) and check_log:
+            meta = _write_evidence(workdir, "required-check.log", check_log.encode("utf-8"))
+            artifacts.append(_artifact_entry("required-check-log", "text/plain", meta))
+            artifact_ids.append("required-check-log")
+
     decision_payload = {
         "accepted": decision.accepted,
         "status": decision.status,
@@ -686,6 +930,7 @@ def build_documents(decision: Decision, invocation: Mapping[str, Any], workdir: 
     verification_evidence: List[Dict[str, Any]] = []
     for artifact_id, evidence_type in (
         ("executor-transcript", "executor_transcript"),
+        ("required-check-log", "required_check_log"),
         ("result-artifact", "result_artifact"),
     ):
         match = next((a for a in artifacts if a["id"] == artifact_id), None)
@@ -734,6 +979,18 @@ def build_documents(decision: Decision, invocation: Mapping[str, Any], workdir: 
         "terminal_reason": decision.terminal_reason,
         "failure_code": decision.failure_code,
         "mode": decision.inputs.get("mode") or "execute",
+        "review_attestation_commit": signal.get("review_attestation_commit"),
+        "review_attestation_path": signal.get("review_attestation_path"),
+        "required_check_command_id": (
+            check_observation.get("command_id")
+            if isinstance(check_observation, Mapping)
+            else None
+        ),
+        "required_check_exit_code": (
+            check_observation.get("exit_code")
+            if isinstance(check_observation, Mapping)
+            else None
+        ),
     }
     meta = _write_evidence(
         workdir, "workflow-run-metadata.json", _canonical_bytes(metadata)
@@ -744,26 +1001,30 @@ def build_documents(decision: Decision, invocation: Mapping[str, Any], workdir: 
     # --- result.v1 ---------------------------------------------------------
     checks: List[Dict[str, Any]] = []
     acceptance_results: List[Dict[str, Any]] = []
-    if decision.accepted:
-        command_id = _required_command_id(task)
+    if decision.accepted and isinstance(check_observation, Mapping):
+        required_check = bounded_required_check(task)
+        assert required_check is not None  # acceptance cannot pass otherwise
+        command_id = str(required_check["command_id"])
+        exit_code = check_observation["exit_code"]
         checks.append(
             {
-                "id": "RegisteredSuite",
+                "id": required_check["id"],
                 "command_id": command_id,
-                "exit_code": 0,
-                "evidence_artifact_ids": ["result-artifact"],
+                "exit_code": exit_code,
+                "evidence_artifact_ids": ["required-check-log"],
             }
         )
-        acceptance_results.append(
-            {
-                "id": "AcceptRequiredCheck",
-                "predicate_id": "process.exit_code.equals",
-                "parameters": {"value": 0},
-                "passed": True,
-                "observed": 0,
-                "evidence_artifact_ids": ["result-artifact"],
-            }
-        )
+        for criterion in task.get("acceptance_criteria") or []:
+            acceptance_results.append(
+                {
+                    "id": criterion["id"],
+                    "predicate_id": criterion["predicate_id"],
+                    "parameters": dict(criterion["parameters"]),
+                    "passed": exit_code == criterion["parameters"]["value"],
+                    "observed": exit_code,
+                    "evidence_artifact_ids": ["required-check-log"],
+                }
+            )
 
     error = None
     if decision.status in {"failed", "blocked"}:
@@ -858,10 +1119,10 @@ def _result_identity(identity: Mapping[str, Any], role: str) -> Dict[str, Any]:
 
 
 def _required_command_id(task: Mapping[str, Any]) -> str:
-    checks = task.get("required_checks") or []
-    if checks and isinstance(checks[0], Mapping) and checks[0].get("command_id"):
-        return checks[0]["command_id"]
-    return "repo.contracts.b3.tests"
+    check = bounded_required_check(task)
+    if check is None:
+        raise P0AdapterError("task does not contain exactly one bounded required check")
+    return str(check["command_id"])
 
 
 def _build_verification(
@@ -875,9 +1136,16 @@ def _build_verification(
 ) -> Dict[str, Any]:
     predicate_results: List[Dict[str, Any]] = []
     if decision.accepted:
+        check = decision.signal.get("required_check") or {}
+        changed_files = list(decision.signal.get("changed_files") or [])
         for predicate_id, observed in (
-            ("git.base_sha.equals", decision.subject_sha),
+            ("git.base_sha.equals", decision.signal.get("base_sha")),
+            ("git.head_sha.equals", decision.subject_sha),
+            ("git.changed_paths.allowed", changed_files),
+            ("git.diff.non_empty", bool(changed_files)),
             ("binding.execution_id.equals", decision.execution_id),
+            ("process.exit_code.equals", check.get("exit_code")),
+            ("artifact.exists", list(evidence_ref_ids)),
             ("identity.lineage.no_overlap", True),
             ("review.subject_sha.equals", decision.subject_sha),
             ("review.eligibility.passed", True),
@@ -1046,6 +1314,7 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     finalize.add_argument("--default-branch", default="main")
     finalize.add_argument("--attempt", default="1")
     finalize.add_argument("--mode", default="execute")
+    finalize.add_argument("--execution-run-id", default="")
     finalize.add_argument("--verification-id", required=True)
     finalize.add_argument("--evaluated-at", required=True)
     finalize.add_argument("--output-dir", type=Path, required=True)
@@ -1085,6 +1354,7 @@ def finalize_live_run(args: argparse.Namespace) -> Dict[str, Any]:
         "default_branch": args.default_branch,
         "attempt": int(args.attempt) if str(args.attempt).isdigit() else 1,
         "mode": args.mode,
+        "execution_run_id": args.execution_run_id,
     }
     # A task that could not be fetched/validated fails closed as invalid_task
     # (an empty object never satisfies task.v1).

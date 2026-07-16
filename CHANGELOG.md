@@ -20,8 +20,16 @@
   `verification.v1.passed`, never from Claude prose or an Actions job
   conclusion; verification-only rerun mode never invokes Claude or mutates
   the branch; the workflow never merges, force-pushes, writes the default
-  branch, edits settings, or deploys. Only the executor job holds
-  `contents: write`, scoped to the target branch. Deterministic AC-A2
+  branch, edits settings, or deploys. The Claude execution job is read-only
+  and receives only file read/edit tools. It emits a binary patch after a
+  workflow-controlled registry check; a separate deterministic publisher is
+  the only job with `contents: write`, independently revalidates the immutable
+  task, patch scope, session evidence, registered argv and check exit before
+  making one ordinary push to the exact target branch. The finalizer then
+  reruns the registered argv on the exact remote subject SHA and never
+  fabricates a zero exit code or acceptance result. Verification-only replay
+  is bound to the exact prior execution run artifact, and review bytes are
+  fetched and recorded from an exact 40-hex review commit. Deterministic AC-A2
   fixtures (`fixtures/p0/manifest.v1.json`, eight required positive/negative
   scenarios) and `tests/test_b3_p0_actions_adapter.py` prove the
   admission/verification logic offline; produced `result.v1`/`verification.v1`

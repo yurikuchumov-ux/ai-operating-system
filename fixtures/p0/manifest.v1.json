@@ -112,7 +112,7 @@
         "mode": "execute"
       },
       "task": {"path": "documents/task-issue-20-canary.json", "sha256": "82587542ab4ac7accc488d54fb8f36fa622a623129213c921a4e62382ec91a7a"},
-      "executor_signal": {"path": "documents/executor-signal-missing-evidence.json", "sha256": "002ca40477071e7890cd8a4b1fcf635e6ff47f98299a99e3616c7c5fb006b70a"},
+      "executor_signal": {"path": "documents/executor-signal-missing-evidence.json", "sha256": "8e1c3c3ca349106c4df922d68a5269ee4552b435d0bf2b1f603f6998bece2762"},
       "review_attestation": {"path": "documents/review-accept.json", "sha256": "a831cc29517d96e9388790980b798686d826a5e8f7fee57567f80823d2f06e67"},
       "verifier_identity": {"path": "documents/verifier-identity.json", "sha256": "864836d2df7b872bc5fa7889a345f52a409ef229d2bd487ee58813e8884fce4f"},
       "invocation": {"verification_id": "90000000-0000-4000-8000-000000000005", "evaluated_at": "2026-07-16T12:00:00Z"},
@@ -136,7 +136,7 @@
         "mode": "execute"
       },
       "task": {"path": "documents/task-issue-20-canary.json", "sha256": "82587542ab4ac7accc488d54fb8f36fa622a623129213c921a4e62382ec91a7a"},
-      "executor_signal": {"path": "documents/executor-signal-accept.json", "sha256": "f2269cf2bd7a702f84a0055039abaee89cc4f163f944117713792731752c6eec"},
+      "executor_signal": {"path": "documents/executor-signal-accept.json", "sha256": "69a890772dd171c78299681b11835bac3e35ecebebfe2fc8a565002f509ac69d"},
       "review_attestation": {"path": "documents/review-self.json", "sha256": "c139153f72ed81e9a34b25d994e0a55dbd6c7be968396d4a7d23aca195f70200"},
       "verifier_identity": {"path": "documents/verifier-identity.json", "sha256": "864836d2df7b872bc5fa7889a345f52a409ef229d2bd487ee58813e8884fce4f"},
       "invocation": {"verification_id": "90000000-0000-4000-8000-000000000006", "evaluated_at": "2026-07-16T12:00:00Z"},
@@ -160,7 +160,7 @@
         "mode": "execute"
       },
       "task": {"path": "documents/task-issue-20-canary.json", "sha256": "82587542ab4ac7accc488d54fb8f36fa622a623129213c921a4e62382ec91a7a"},
-      "executor_signal": {"path": "documents/executor-signal-new-head.json", "sha256": "a55af6a0c09afa54422e030a50fd2a0efa97f895ffd420fa59187c8c6ca8851f"},
+      "executor_signal": {"path": "documents/executor-signal-new-head.json", "sha256": "94ba7d012ae1c5a22e0625bf64397a0e2189e69ebb28091c3ddaa7d1a19a7ff2"},
       "review_attestation": {"path": "documents/review-accept.json", "sha256": "a831cc29517d96e9388790980b798686d826a5e8f7fee57567f80823d2f06e67"},
       "verifier_identity": {"path": "documents/verifier-identity.json", "sha256": "864836d2df7b872bc5fa7889a345f52a409ef229d2bd487ee58813e8884fce4f"},
       "invocation": {"verification_id": "90000000-0000-4000-8000-000000000007", "evaluated_at": "2026-07-16T12:00:00Z"},
@@ -184,7 +184,7 @@
         "mode": "execute"
       },
       "task": {"path": "documents/task-issue-20-canary.json", "sha256": "82587542ab4ac7accc488d54fb8f36fa622a623129213c921a4e62382ec91a7a"},
-      "executor_signal": {"path": "documents/executor-signal-accept.json", "sha256": "f2269cf2bd7a702f84a0055039abaee89cc4f163f944117713792731752c6eec"},
+      "executor_signal": {"path": "documents/executor-signal-accept.json", "sha256": "69a890772dd171c78299681b11835bac3e35ecebebfe2fc8a565002f509ac69d"},
       "review_attestation": {"path": "documents/review-accept.json", "sha256": "a831cc29517d96e9388790980b798686d826a5e8f7fee57567f80823d2f06e67"},
       "verifier_identity": {"path": "documents/verifier-identity.json", "sha256": "864836d2df7b872bc5fa7889a345f52a409ef229d2bd487ee58813e8884fce4f"},
       "invocation": {"verification_id": "90000000-0000-4000-8000-000000000008", "evaluated_at": "2026-07-16T12:00:00Z"},

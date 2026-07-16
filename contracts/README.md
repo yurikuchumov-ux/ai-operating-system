@@ -465,8 +465,19 @@ are bound from that validated task, never from caller prose. A real Claude
 session id is preserved when the executor ran; otherwise the execution id is
 a pipeline-derived UUID5 of real run facts (`execution_id_source:
 pipeline_derived`) -- an executor id is never fabricated. Independent review
-is a separate input bound to the exact subject SHA: a missing, ineligible,
-self-lineage, or post-review head-change review fails closed. The stable,
+is fetched from an exact 40-hex review commit and bound to the exact subject
+SHA; its declared `author_values` and `reviewer_value` must exactly match the
+observed executor/reviewer lineage. A missing, mutable, ineligible,
+self-lineage, or post-review head-change review fails closed. Claude itself
+runs with `contents: read` and a non-shell file-tool allowlist. It can emit
+only a candidate patch. A separate workflow-owned publisher is the sole job
+with `contents: write`; it re-fetches the immutable task, reapplies and scopes
+the binary patch, reruns the registry-resolved argv without shell
+interpolation, commits once, proves the default ref unchanged, and makes one
+ordinary target-branch push. The finalizer independently reruns that same
+argv on the exact remote subject SHA, preserves its real exit/log evidence,
+and fails closed on a missing/failed check, transcript, adapter outcome,
+publication proof, or execution-run binding. The stable,
 verifier-owned Check Run (context `p0-actions-verifier`) is published only
 from this repository's own `verification.v1.passed`, never from Claude prose
 or an Actions job conclusion. Verification-only rerun mode never invokes
