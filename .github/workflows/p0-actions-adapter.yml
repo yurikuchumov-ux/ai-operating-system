@@ -273,6 +273,7 @@ jobs:
             --tools "Read,Edit,Write,Glob,Grep"
             --disallowedTools "Bash,BashOutput,KillShell,WebFetch,WebSearch,Task,NotebookEdit,ExitPlanMode"
             --add-dir /tmp/p0-control
+            --permission-mode acceptEdits
       - name: Preserve real adapter output before any postcondition decision
         if: always()
         env:
