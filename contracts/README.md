@@ -446,3 +446,55 @@ represented as a working truthful execution pipeline beyond what each step
 actually establishes -- B3's real Actions workflow notwithstanding, its own
 Check Run conclusion is only ever as trustworthy as the composed B1/B2
 tools' own evaluation of the artifacts it collects.
+
+## P0 Actions adapter/check (Issue #29)
+
+`tools/p0_actions_adapter.py` and `.github/workflows/p0-actions-adapter.yml`
+add one thin, Actions-first executor adapter/check -- not a standalone
+orchestrator service -- so a *future* immutable task (such as Issue #20's
+canary) can be executed by the pinned Claude Code Action
+(`anthropics/claude-code-action@6902c227aaa9536481b99d56f3014bbbad6c6da8`) in
+a clean, permission-bounded ephemeral checkout. Every `workflow_dispatch`
+input is untrusted: a task commit must be a full lowercase 40-hex object id,
+a task path must be an allowlisted repository-relative `.ai/tasks/` path, and
+a target branch must be an `agent/*` branch that is never `main`/`master`/the
+default branch. The immutable task is fetched by exact commit and validated
+against the unmodified `task.v1` schema before any executor is invoked;
+repository, branch, base SHA, risk class, attempt, and allowed/denied paths
+are bound from that validated task, never from caller prose. A real Claude
+session id is preserved when the executor ran; otherwise the execution id is
+a pipeline-derived UUID5 of real run facts (`execution_id_source:
+pipeline_derived`) -- an executor id is never fabricated. Independent review
+is fetched from an exact 40-hex review commit and bound to the exact subject
+SHA; its declared `author_values` and `reviewer_value` must exactly match the
+observed executor/reviewer lineage. A missing, mutable, ineligible,
+self-lineage, or post-review head-change review fails closed. Claude itself
+runs with `contents: read` and a non-shell file-tool allowlist. It can emit
+only a candidate patch. A separate workflow-owned publisher is the sole job
+with `contents: write`; it re-fetches the immutable task, reapplies and scopes
+the binary patch, reruns the registry-resolved argv without shell
+interpolation, commits once, proves the default ref unchanged, and makes one
+ordinary target-branch push. The finalizer independently reruns that same
+argv on the exact remote subject SHA, preserves its real exit/log evidence,
+and fails closed on a missing/failed check, transcript, adapter outcome,
+publication proof, or execution-run binding. The stable,
+verifier-owned Check Run (context `p0-actions-verifier`) is published only
+from this repository's own `verification.v1.passed`, never from Claude prose
+or an Actions job conclusion. Verification-only rerun mode never invokes
+Claude and never mutates the branch; the workflow never merges, force-pushes,
+writes the default branch, edits settings/secrets, or deploys.
+
+`fixtures/p0/manifest.v1.json` is the deterministic AC-A2 oracle. Its
+`run_suite` report carries `"bootstrap_scope": "P0"` and
+`"authoritative_verifier": false` with the same normative meaning as the
+B0-B3 flags above: this bootstrap establishes only the bounded
+admission/verification and evidence-finalization logic proven offline plus a
+usable-after-merge workflow scaffold. It does **not** claim GitHub
+branch-protection or required-status enforcement -- that remains Issue #29
+control-plane work after this PR. The eight required scenarios
+(`reject-mutable-task-ref`, `reject-invalid-task`, `reject-base-sha-mismatch`,
+`reject-target-branch-mismatch`, `reject-missing-executor-evidence`,
+`reject-self-review`, `reject-post-review-head-change`,
+`accept-bounded-executor-result`) each isolate one fail-closed path; a hash
+change in any pinned fixture document fails the suite closed before any
+evaluation runs.

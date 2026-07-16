@@ -1,0 +1,799 @@
+name: P0 Actions Adapter
+
+# Thin Actions-first adapter for one immutable task, one target branch and
+# one registry-resolved required command. Claude may edit files only. Trusted
+# workflow code owns branch creation, scope checks, command execution, commit,
+# ordinary push, evidence capture, independent re-run and Check Run output.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+    inputs:
+      task_commit:
+        description: Exact 40-hex commit containing the immutable task
+        required: true
+      task_path:
+        description: Allowlisted repository-relative task JSON path
+        required: true
+      target_branch:
+        description: Dedicated agent/* branch bound by the task
+        required: true
+      attempt:
+        description: Execution attempt number (1-3)
+        required: false
+        default: "1"
+      mode:
+        description: execute or verify-only
+        required: false
+        default: execute
+      execution_run_id:
+        description: Prior execute run id required by verify-only evidence replay
+        required: false
+        default: ""
+      review_ref:
+        description: Exact 40-hex commit containing the independent review
+        required: false
+        default: ""
+      review_path:
+        description: Repository-relative review JSON path on review_ref
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: p0-actions-adapter-${{ github.repository }}-${{ github.event.inputs.target_branch }}
+  cancel-in-progress: false
+
+env:
+  PINNED_ADAPTER_ACTION: anthropics/claude-code-action@6902c227aaa9536481b99d56f3014bbbad6c6da8
+  VERIFIER_CHECK_CONTEXT: p0-actions-verifier
+
+jobs:
+  bootstrap-tests:
+    name: P0 bootstrap tests (read-only)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python3 -m pip install --disable-pip-version-check --no-input -r requirements-p0-actions.txt
+      - name: Run registered bootstrap command
+        run: python3 -m unittest discover -s tests -p 'test_b3_*.py'
+
+  admission:
+    name: Admission control
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 10
+    outputs:
+      admitted: ${{ steps.bind.outputs.admitted }}
+      base_sha: ${{ steps.bind.outputs.base_sha }}
+      command_id: ${{ steps.bind.outputs.command_id }}
+      task_sha256: ${{ steps.bind.outputs.task_sha256 }}
+      adapter_sha256: ${{ steps.bind.outputs.adapter_sha256 }}
+      registry_sha256: ${{ steps.bind.outputs.registry_sha256 }}
+      session_parser_sha256: ${{ steps.bind.outputs.session_parser_sha256 }}
+    steps:
+      - name: Clean ephemeral checkout of protected default branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python3 -m pip install --disable-pip-version-check --no-input -r requirements-p0-actions.txt
+      - name: Validate untrusted input shapes before any Git fetch
+        env:
+          TASK_COMMIT: ${{ github.event.inputs.task_commit }}
+          TASK_PATH: ${{ github.event.inputs.task_path }}
+          TARGET_BRANCH: ${{ github.event.inputs.target_branch }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          MODE: ${{ github.event.inputs.mode }}
+        run: |
+          python3 - <<'PY'
+          import os
+          from tools import p0_actions_adapter as adapter
+          failures = [
+              adapter.validate_task_ref(os.environ.get('TASK_COMMIT')),
+              adapter.validate_task_path(os.environ.get('TASK_PATH')),
+              adapter.validate_target_branch(os.environ.get('TARGET_BRANCH'), os.environ.get('DEFAULT_BRANCH')),
+          ]
+          if any(failures) or os.environ.get('MODE') not in {'execute', 'verify-only'}:
+              raise SystemExit('invalid untrusted workflow input')
+          PY
+      - name: Prove dispatch SHA is current protected default-branch head
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          DISPATCH_REF: ${{ github.ref }}
+          DISPATCH_SHA: ${{ github.sha }}
+        run: |
+          git fetch --no-tags origin "+refs/heads/$DEFAULT_BRANCH:refs/remotes/origin/$DEFAULT_BRANCH"
+          observed="$(git rev-parse "refs/remotes/origin/$DEFAULT_BRANCH")"
+          test "$DISPATCH_REF" = "refs/heads/$DEFAULT_BRANCH"
+          test "$DISPATCH_SHA" = "$observed"
+      - name: Fetch immutable task from exact commit
+        env:
+          TASK_COMMIT: ${{ github.event.inputs.task_commit }}
+          TASK_PATH: ${{ github.event.inputs.task_path }}
+        run: |
+          mkdir -p p0-control
+          git fetch --no-tags --depth=1 origin "$TASK_COMMIT"
+          test "$(git rev-parse --verify "${TASK_COMMIT}^{commit}")" = "$TASK_COMMIT"
+          git show "${TASK_COMMIT}:${TASK_PATH}" > p0-control/task.json
+          test -s p0-control/task.json
+      - name: Validate immutable task and bind exact inputs
+        id: bind
+        env:
+          TASK_COMMIT: ${{ github.event.inputs.task_commit }}
+          TASK_PATH: ${{ github.event.inputs.task_path }}
+          TARGET_BRANCH: ${{ github.event.inputs.target_branch }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          BASE_SHA: ${{ github.sha }}
+          MODE: ${{ github.event.inputs.mode }}
+          EXECUTION_RUN_ID: ${{ github.event.inputs.execution_run_id }}
+          REPOSITORY: ${{ github.repository }}
+          ATTEMPT: ${{ github.event.inputs.attempt }}
+        run: |
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          from tools import p0_actions_adapter as adapter
+
+          def reject(reason):
+              print("::error::{}".format(reason))
+              raise SystemExit(1)
+
+          task = adapter.load_json(Path("p0-control/task.json"))
+          for reason in (
+              adapter.validate_task_ref(os.environ["TASK_COMMIT"]),
+              adapter.validate_task_path(os.environ["TASK_PATH"]),
+              adapter.validate_target_branch(os.environ["TARGET_BRANCH"], os.environ["DEFAULT_BRANCH"]),
+              adapter.validate_task_document(task),
+          ):
+              if reason:
+                  reject(reason)
+          if task.get("base_sha") != os.environ["BASE_SHA"]:
+              reject("base_sha_mismatch")
+          if task.get("branch") != os.environ["TARGET_BRANCH"]:
+              reject("target_branch_mismatch")
+          if task.get("repository") != os.environ["REPOSITORY"]:
+              reject("repository_mismatch")
+          if task.get("base_ref") != os.environ["DEFAULT_BRANCH"]:
+              reject("base_ref_mismatch")
+          attempt = os.environ.get("ATTEMPT") or "1"
+          if not attempt.isdigit() or not 1 <= int(attempt) <= min(3, int(task["executor"]["max_attempts"])):
+              reject("attempt_out_of_range")
+          if not adapter.acceptance_is_supported(task):
+              reject("unsupported_acceptance")
+          check = adapter.bounded_required_check(task)
+          adapter.resolve_registered_check(check["command_id"])
+          mode = (os.environ.get("MODE") or "execute").lower()
+          if mode not in {"execute", "verify-only"}:
+              reject("invalid_mode")
+          if mode == "verify-only" and not os.environ.get("EXECUTION_RUN_ID", "").isdigit():
+              reject("missing_execution_run_id")
+          out = Path(os.environ["GITHUB_OUTPUT"])
+          out.write_text(
+              "admitted=true\nbase_sha={}\ncommand_id={}\ntask_sha256={}\nadapter_sha256={}\nregistry_sha256={}\nsession_parser_sha256={}\n".format(
+                  task["base_sha"], check["command_id"],
+                  adapter.sha256_file(Path("p0-control/task.json")),
+                  adapter.sha256_file(Path("tools/p0_actions_adapter.py")),
+                  adapter.sha256_file(Path("contracts/registries/commands.v1.json")),
+                  adapter.sha256_file(Path("tools/propagate_b3.py")),
+              ), encoding="utf-8"
+          )
+          PY
+
+  execute:
+    name: Execute bounded file edits and emit verified patch
+    needs: admission
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.event.inputs.mode == 'execute' &&
+      needs.admission.outputs.admitted == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 30
+    steps:
+      - name: Clean ephemeral checkout at exact protected-main base SHA
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.admission.outputs.base_sha }}
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python3 -m pip install --disable-pip-version-check --no-input -r requirements-p0-actions.txt
+      - name: Create exact target branch and materialize bounded control inputs
+        id: prepare
+        env:
+          TASK_COMMIT: ${{ github.event.inputs.task_commit }}
+          TASK_PATH: ${{ github.event.inputs.task_path }}
+          TARGET_BRANCH: ${{ github.event.inputs.target_branch }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          BASE_SHA: ${{ needs.admission.outputs.base_sha }}
+        run: |
+          git fetch --no-tags origin "+refs/heads/$DEFAULT_BRANCH:refs/remotes/origin/$DEFAULT_BRANCH"
+          test "$(git rev-parse "refs/remotes/origin/$DEFAULT_BRANCH")" = "$BASE_SHA"
+          remote_target="$(git ls-remote --heads origin "refs/heads/$TARGET_BRANCH" | awk '{print $1}')"
+          test -z "$remote_target" || test "$remote_target" = "$BASE_SHA"
+          git switch --create "$TARGET_BRANCH" "$BASE_SHA"
+          mkdir -p /tmp/p0-control p0-adapter-output
+          git fetch --no-tags --depth=1 origin "$TASK_COMMIT"
+          test "$(git rev-parse --verify "${TASK_COMMIT}^{commit}")" = "$TASK_COMMIT"
+          git show "${TASK_COMMIT}:${TASK_PATH}" > /tmp/p0-control/task.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          from tools import p0_actions_adapter as adapter
+          task = adapter.load_json(Path('/tmp/p0-control/task.json'))
+          check = adapter.bounded_required_check(task)
+          if check is None or not adapter.acceptance_is_supported(task):
+              raise SystemExit('unsupported task acceptance/check shape')
+          Path('/tmp/p0-control/required-check.json').write_text(json.dumps({
+              'id': check['id'],
+              'command_id': check['command_id'],
+              'argv': adapter.resolve_registered_check(check['command_id']),
+          }, sort_keys=True), encoding='utf-8')
+          Path('/tmp/p0-control/allowed-paths.json').write_text(json.dumps({
+              'allowed_paths': task['allowed_paths'],
+              'denied_paths': task['denied_paths'],
+          }, sort_keys=True), encoding='utf-8')
+          PY
+          echo "started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+      - name: Claude edits files only (no shell, GitHub API, commit, or push tools)
+        id: adapter
+        continue-on-error: true
+        uses: anthropics/claude-code-action@6902c227aaa9536481b99d56f3014bbbad6c6da8
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ github.token }}
+          prompt: |
+            Implement the immutable task in /tmp/p0-control/task.json.
+            The exact allowed/denied paths are in /tmp/p0-control/allowed-paths.json.
+            The workflow, not you, executes /tmp/p0-control/required-check.json,
+            validates scope, commits, and pushes. Edit only allowed task files.
+            Do not claim test success and do not attempt Git, GitHub, network,
+            settings, deployment, merge, commit, or push operations.
+          claude_args: |
+            --max-turns 30
+            --allowedTools "Read,Edit,Write,Glob,Grep"
+      - name: Preserve real adapter output before any postcondition decision
+        if: always()
+        env:
+          ADAPTER_OUTCOME: ${{ steps.adapter.outcome }}
+          EXECUTION_FILE: ${{ steps.adapter.outputs.execution_file }}
+          STRUCTURED_OUTPUT: ${{ steps.adapter.outputs.structured_output }}
+          BRANCH_OUTPUT: ${{ steps.adapter.outputs.branch_name }}
+          TASK_COMMIT: ${{ github.event.inputs.task_commit }}
+          TASK_PATH: ${{ github.event.inputs.task_path }}
+          EXECUTION_RUN_ID: ${{ github.run_id }}
+          STARTED_AT: ${{ steps.prepare.outputs.started_at }}
+        run: |
+          python3 - <<'PY'
+          import json, os
+          from datetime import datetime, timezone
+          from pathlib import Path
+          out = Path('p0-adapter-output'); out.mkdir(exist_ok=True)
+          execution_path = os.environ.get('EXECUTION_FILE') or ''
+          if execution_path:
+              candidate = Path(execution_path)
+              if candidate.is_file() and candidate.stat().st_size <= 1024 * 1024:
+                  raw = candidate.read_bytes()
+                  (out / 'execution-file.txt').write_bytes(raw)
+                  (out / 'executor-transcript.txt').write_bytes(raw)
+          structured = os.environ.get('STRUCTURED_OUTPUT') or ''
+          if structured and len(structured.encode('utf-8')) <= 1024 * 1024:
+              (out / 'structured-output.txt').write_text(structured, encoding='utf-8')
+              if not (out / 'executor-transcript.txt').is_file():
+                  (out / 'executor-transcript.txt').write_text(structured, encoding='utf-8')
+          manifest = {
+              'adapter_outcome': os.environ.get('ADAPTER_OUTCOME') or None,
+              'adapter_branch_name': os.environ.get('BRANCH_OUTPUT') or None,
+              'postconditions_passed': False,
+              'executor_task_commit': os.environ.get('TASK_COMMIT'),
+              'executor_task_path': os.environ.get('TASK_PATH'),
+              'execution_evidence_run_id': os.environ.get('EXECUTION_RUN_ID'),
+              'started_at': os.environ.get('STARTED_AT'),
+              'finished_at': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
+          }
+          (out / 'manifest.json').write_text(json.dumps(manifest, sort_keys=True), encoding='utf-8')
+          PY
+      - name: Enforce scope, run registered argv, and emit exact binary patch
+        if: always()
+        env:
+          TARGET_BRANCH: ${{ github.event.inputs.target_branch }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          BASE_SHA: ${{ needs.admission.outputs.base_sha }}
+          EXPECTED_TASK_SHA256: ${{ needs.admission.outputs.task_sha256 }}
+          EXPECTED_ADAPTER_SHA256: ${{ needs.admission.outputs.adapter_sha256 }}
+          EXPECTED_REGISTRY_SHA256: ${{ needs.admission.outputs.registry_sha256 }}
+          EXPECTED_SESSION_PARSER_SHA256: ${{ needs.admission.outputs.session_parser_sha256 }}
+        run: |
+          test "$(shasum -a 256 /tmp/p0-control/task.json | awk '{print $1}')" = "$EXPECTED_TASK_SHA256"
+          test "$(shasum -a 256 tools/p0_actions_adapter.py | awk '{print $1}')" = "$EXPECTED_ADAPTER_SHA256"
+          test "$(shasum -a 256 contracts/registries/commands.v1.json | awk '{print $1}')" = "$EXPECTED_REGISTRY_SHA256"
+          test "$(shasum -a 256 tools/propagate_b3.py | awk '{print $1}')" = "$EXPECTED_SESSION_PARSER_SHA256"
+          python3 -I - <<'PY'
+          import json, os, subprocess, sys
+          from pathlib import Path
+          sys.path.insert(0, '.')
+          from tools import p0_actions_adapter as adapter
+          out = Path('p0-adapter-output')
+          manifest_path = out / 'manifest.json'
+          manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+          task = adapter.load_json(Path('/tmp/p0-control/task.json'))
+          check_spec = json.loads(Path('/tmp/p0-control/required-check.json').read_text(encoding='utf-8'))
+          base = os.environ['BASE_SHA']; target = os.environ['TARGET_BRANCH']
+
+          def git(*args, check=True):
+              return subprocess.run(['git', *args], check=check, text=True, capture_output=True)
+          def save():
+              manifest_path.write_text(json.dumps(manifest, sort_keys=True), encoding='utf-8')
+          def reject(reason):
+              manifest['postcondition_failure'] = reason
+              save()
+              raise SystemExit(reason)
+
+          if manifest.get('adapter_outcome') != 'success':
+              reject('adapter_outcome_not_success')
+          execution = (out / 'execution-file.txt').read_text(encoding='utf-8', errors='replace') if (out / 'execution-file.txt').is_file() else None
+          structured = (out / 'structured-output.txt').read_text(encoding='utf-8', errors='replace') if (out / 'structured-output.txt').is_file() else None
+          if adapter.resolve_adapter_session_id(execution, structured) is None:
+              reject('adapter_session_unresolvable')
+          if git('branch', '--show-current').stdout.strip() != target:
+              reject('target_branch_mismatch')
+          expected_check = adapter.bounded_required_check(task)
+          expected_spec = {
+              'id': expected_check['id'],
+              'command_id': expected_check['command_id'],
+              'argv': adapter.resolve_registered_check(expected_check['command_id']),
+          } if expected_check is not None else None
+          if check_spec != expected_spec:
+              reject('required_check_control_modified')
+
+          committed = git('diff', '--name-only', base, 'HEAD').stdout.splitlines()
+          unstaged = git('diff', '--name-only').stdout.splitlines()
+          staged = git('diff', '--cached', '--name-only').stdout.splitlines()
+          untracked = [path for path in git('ls-files', '--others', '--exclude-standard').stdout.splitlines()
+                       if not path.startswith('p0-adapter-output/')]
+          changed = sorted(set(committed + unstaged + staged + untracked))
+          if not changed:
+              reject('empty_diff')
+          if not adapter.changed_paths_within_scope(changed, task['allowed_paths'], task['denied_paths']):
+              reject('changed_paths_not_allowed')
+
+          argv = check_spec['argv']
+          timed_out = False
+          try:
+              completed = subprocess.run(argv, cwd='.', text=True, stdout=subprocess.PIPE,
+                                         stderr=subprocess.STDOUT, timeout=300)
+              exit_code = completed.returncode
+              log = completed.stdout[-1024 * 1024:]
+          except subprocess.TimeoutExpired as exc:
+              timed_out = True; exit_code = 124
+              log = ((exc.stdout or '') + (exc.stderr or ''))[-1024 * 1024:]
+          (out / 'executor-required-check.log').write_text(log or '<empty output>', encoding='utf-8')
+          manifest['executor_check'] = {
+              'command_id': check_spec['command_id'], 'argv': argv,
+              'exit_code': exit_code, 'timed_out': timed_out,
+          }
+          save()
+          if timed_out or exit_code != 0:
+              reject('required_check_failed')
+
+          git('add', '-A', '--', '.', ':(exclude)p0-adapter-output/**')
+          changed = git('diff', '--cached', '--name-only', base).stdout.splitlines()
+          if not changed:
+              reject('empty_diff')
+          if not adapter.changed_paths_within_scope(changed, task['allowed_paths'], task['denied_paths']):
+              reject('changed_paths_not_allowed_after_stage')
+          git('fetch', '--no-tags', 'origin', '+refs/heads/{0}:refs/remotes/origin/{0}'.format(os.environ['DEFAULT_BRANCH']))
+          default_before_push = git('rev-parse', 'refs/remotes/origin/{}'.format(os.environ['DEFAULT_BRANCH'])).stdout.strip()
+          if default_before_push != base:
+              reject('default_branch_changed_before_push')
+          observed_target = git('ls-remote', '--heads', 'origin', 'refs/heads/{}'.format(target)).stdout.split()
+          observed_target = observed_target[0] if observed_target else ''
+          if observed_target not in {'', base}:
+              reject('target_branch_not_clean_base')
+          patch = git('diff', '--cached', '--binary', base).stdout
+          if not patch:
+              reject('empty_patch')
+          (out / 'result.patch').write_text(patch, encoding='utf-8')
+          (out / 'task.json').write_text(json.dumps(task, sort_keys=True), encoding='utf-8')
+          (out / 'required-check.json').write_text(json.dumps(check_spec, sort_keys=True), encoding='utf-8')
+          manifest.update({
+              'postconditions_passed': True,
+              'base_sha': base,
+              'target_branch': target,
+              'default_branch_head_before': default_before_push,
+              'changed_files': changed,
+          })
+          save()
+          PY
+      - name: Upload executor evidence even on terminal failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: p0-adapter-output
+          path: p0-adapter-output/
+          if-no-files-found: error
+          retention-days: 14
+
+  publish-target:
+    name: Reverify patch and ordinary-push exact target branch
+    needs: [admission, execute]
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.event.inputs.mode == 'execute' &&
+      needs.execute.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    timeout-minutes: 15
+    steps:
+      - name: Clean ephemeral checkout at immutable base
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.admission.outputs.base_sha }}
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python3 -m pip install --disable-pip-version-check --no-input -r requirements-p0-actions.txt
+      - uses: actions/download-artifact@v4
+        with:
+          name: p0-adapter-output
+          path: p0-adapter-output
+      - name: Revalidate evidence, patch, command and exact refs before write
+        env:
+          TARGET_BRANCH: ${{ github.event.inputs.target_branch }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          BASE_SHA: ${{ needs.admission.outputs.base_sha }}
+          TASK_COMMIT: ${{ github.event.inputs.task_commit }}
+          TASK_PATH: ${{ github.event.inputs.task_path }}
+        run: |
+          git fetch --no-tags --depth=1 origin "$TASK_COMMIT"
+          test "$(git rev-parse --verify "${TASK_COMMIT}^{commit}")" = "$TASK_COMMIT"
+          git show "${TASK_COMMIT}:${TASK_PATH}" > /tmp/immutable-task.json
+          python3 - <<'PY'
+          import json, os, subprocess
+          from pathlib import Path
+          from tools import p0_actions_adapter as adapter
+          out = Path('p0-adapter-output')
+          manifest = json.loads((out / 'manifest.json').read_text(encoding='utf-8'))
+          task = adapter.load_json(Path('/tmp/immutable-task.json'))
+          check_spec = {'command_id': adapter.bounded_required_check(task)['command_id'],
+                        'argv': adapter.resolve_registered_check(adapter.bounded_required_check(task)['command_id'])}
+          base = os.environ['BASE_SHA']; target = os.environ['TARGET_BRANCH']
+
+          def git(*args, check=True):
+              return subprocess.run(['git', *args], check=check, text=True, capture_output=True)
+          def reject(reason):
+              manifest['publication_failure'] = reason
+              (out / 'manifest.json').write_text(json.dumps(manifest, sort_keys=True), encoding='utf-8')
+              raise SystemExit(reason)
+
+          if manifest.get('postconditions_passed') is not True or manifest.get('adapter_outcome') != 'success':
+              reject('unverified_executor_evidence')
+          execution = (out / 'execution-file.txt').read_text(encoding='utf-8', errors='replace') if (out / 'execution-file.txt').is_file() else None
+          structured = (out / 'structured-output.txt').read_text(encoding='utf-8', errors='replace') if (out / 'structured-output.txt').is_file() else None
+          if adapter.resolve_adapter_session_id(execution, structured) is None:
+              reject('adapter_session_unresolvable')
+          if task.get('base_sha') != base or task.get('branch') != target:
+              reject('task_ref_binding_mismatch')
+          check = adapter.bounded_required_check(task)
+          if check is None or adapter.resolve_registered_check(check['command_id']) != check_spec.get('argv'):
+              reject('registered_check_mismatch')
+
+          git('switch', '--create', target, base)
+          git('apply', '--index', str(out / 'result.patch'))
+          changed = git('diff', '--cached', '--name-only', base).stdout.splitlines()
+          if not changed or changed != manifest.get('changed_files'):
+              reject('patch_changed_files_mismatch')
+          if not adapter.changed_paths_within_scope(changed, task['allowed_paths'], task['denied_paths']):
+              reject('patch_scope_violation')
+
+          try:
+              run = subprocess.run(check_spec['argv'], text=True, stdout=subprocess.PIPE,
+                                   stderr=subprocess.STDOUT, timeout=300)
+              exit_code = run.returncode; log = run.stdout; timed_out = False
+          except subprocess.TimeoutExpired as exc:
+              exit_code = 124; log = (exc.stdout or '') + (exc.stderr or ''); timed_out = True
+          (out / 'publisher-required-check.log').write_text((log or '<empty output>')[-1024 * 1024:], encoding='utf-8')
+          manifest['publisher_check'] = {'command_id': check['command_id'], 'argv': check_spec['argv'],
+                                         'exit_code': exit_code, 'timed_out': timed_out}
+          if timed_out or exit_code != 0:
+              reject('publisher_required_check_failed')
+
+          git('-c', 'user.name=github-actions[bot]',
+              '-c', 'user.email=41898282+github-actions[bot]@users.noreply.github.com',
+              'commit', '-m', 'Issue task: bounded Actions executor result')
+          subject = git('rev-parse', 'HEAD').stdout.strip()
+          authored = git('rev-list', '{}..{}'.format(base, subject)).stdout.split()
+          if len(authored) != 1:
+              reject('unexpected_commit_count')
+
+          git('fetch', '--no-tags', 'origin', '+refs/heads/{0}:refs/remotes/origin/{0}'.format(os.environ['DEFAULT_BRANCH']))
+          default_before = git('rev-parse', 'refs/remotes/origin/{}'.format(os.environ['DEFAULT_BRANCH'])).stdout.strip()
+          remote_before_words = git('ls-remote', '--heads', 'origin', 'refs/heads/{}'.format(target)).stdout.split()
+          remote_before = remote_before_words[0] if remote_before_words else ''
+          if default_before != base or remote_before not in {'', base}:
+              reject('remote_ref_changed_before_publication')
+          git('push', 'origin', 'HEAD:refs/heads/{}'.format(target))
+          default_after = git('ls-remote', '--heads', 'origin', 'refs/heads/{}'.format(os.environ['DEFAULT_BRANCH'])).stdout.split()[0]
+          target_after = git('ls-remote', '--heads', 'origin', 'refs/heads/{}'.format(target)).stdout.split()[0]
+          if default_after != base or target_after != subject:
+              reject('post_push_ref_mismatch')
+          manifest.update({
+              'publication_passed': True,
+              'subject_sha': subject,
+              'target_branch_head': target_after,
+              'default_branch_head_before': default_before,
+              'default_branch_head_after': default_after,
+              'authored_commits': authored,
+              'changed_files': changed,
+          })
+          (out / 'manifest.json').write_text(json.dumps(manifest, sort_keys=True), encoding='utf-8')
+          PY
+      - name: Upload exact published execution evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: p0-published-output
+          path: p0-adapter-output/
+          if-no-files-found: error
+          retention-days: 14
+
+  finalize-and-verify:
+    name: Finalize, independently verify, and publish Check Run
+    needs: [admission, execute, publish-target]
+    if: always() && github.event_name == 'workflow_dispatch' && needs.admission.result != 'skipped'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+      checks: write
+    timeout-minutes: 15
+    steps:
+      - name: Clean ephemeral checkout at immutable base
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.admission.outputs.base_sha || github.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python3 -m pip install --disable-pip-version-check --no-input -r requirements-p0-actions.txt
+      - name: Download current execution evidence
+        if: github.event.inputs.mode == 'execute'
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: p0-published-output
+          path: p0-adapter-output
+      - name: Download exact prior execution evidence for verify-only
+        if: github.event.inputs.mode == 'verify-only'
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: p0-published-output
+          path: p0-adapter-output
+          run-id: ${{ github.event.inputs.execution_run_id }}
+          github-token: ${{ github.token }}
+      - name: Re-fetch immutable task from exact commit
+        if: always()
+        env:
+          TASK_COMMIT: ${{ github.event.inputs.task_commit }}
+          TASK_PATH: ${{ github.event.inputs.task_path }}
+        run: |
+          mkdir -p p0-output
+          python3 -c 'import os,sys; from tools.p0_actions_adapter import validate_task_ref,validate_task_path; sys.exit(0 if not validate_task_ref(os.environ.get("TASK_COMMIT")) and not validate_task_path(os.environ.get("TASK_PATH")) else 1)'
+          git fetch --no-tags --depth=1 origin "$TASK_COMMIT"
+          test "$(git rev-parse --verify "${TASK_COMMIT}^{commit}")" = "$TASK_COMMIT"
+          git show "${TASK_COMMIT}:${TASK_PATH}" > p0-output/task.json
+      - name: Fetch review bytes from exact immutable review commit
+        if: always()
+        env:
+          REVIEW_COMMIT: ${{ github.event.inputs.review_ref }}
+          REVIEW_PATH: ${{ github.event.inputs.review_path }}
+        run: |
+          python3 -c 'import os,sys; from tools.p0_actions_adapter import validate_task_ref,validate_review_path; sys.exit(0 if not validate_task_ref(os.environ.get("REVIEW_COMMIT")) and not validate_review_path(os.environ.get("REVIEW_PATH")) else 1)'
+          git fetch --no-tags --depth=1 origin "$REVIEW_COMMIT"
+          test "$(git rev-parse --verify "${REVIEW_COMMIT}^{commit}")" = "$REVIEW_COMMIT"
+          git show "${REVIEW_COMMIT}:${REVIEW_PATH}" > p0-output/review.json
+          test -s p0-output/review.json
+          python3 -c 'import json,os; json.dump({"commit":os.environ["REVIEW_COMMIT"],"path":os.environ["REVIEW_PATH"]},open("p0-output/review-binding.json","w"))'
+      - name: Observe exact target/default refs and checkout target SHA detached
+        id: observe
+        if: always()
+        env:
+          TARGET_BRANCH: ${{ github.event.inputs.target_branch }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          BASE_SHA: ${{ needs.admission.outputs.base_sha }}
+        run: |
+          python3 -c 'import os,sys; from tools.p0_actions_adapter import validate_target_branch; sys.exit(0 if not validate_target_branch(os.environ.get("TARGET_BRANCH"), os.environ.get("DEFAULT_BRANCH")) else 1)'
+          git fetch --no-tags origin "+refs/heads/$DEFAULT_BRANCH:refs/remotes/origin/$DEFAULT_BRANCH"
+          default_head="$(git rev-parse "refs/remotes/origin/$DEFAULT_BRANCH")"
+          git fetch --no-tags origin "+refs/heads/$TARGET_BRANCH:refs/remotes/origin/p0-target"
+          subject="$(git rev-parse refs/remotes/origin/p0-target)"
+          git switch --detach "$subject"
+          printf 'subject_sha=%s\ndefault_head=%s\n' "$subject" "$default_head" >> "$GITHUB_OUTPUT"
+      - name: Independently run registry argv on exact subject (no shell interpolation)
+        if: always()
+        continue-on-error: true
+        env:
+          SUBJECT_SHA: ${{ steps.observe.outputs.subject_sha }}
+        run: |
+          python3 - <<'PY'
+          import json, os, subprocess
+          from pathlib import Path
+          from tools import p0_actions_adapter as adapter
+          task = adapter.load_json(Path('p0-output/task.json'))
+          check = adapter.bounded_required_check(task)
+          if check is None or not adapter.acceptance_is_supported(task):
+              raise SystemExit('unsupported acceptance/check shape')
+          argv = adapter.resolve_registered_check(check['command_id'])
+          timed_out = False
+          try:
+              run = subprocess.run(argv, text=True, stdout=subprocess.PIPE,
+                                   stderr=subprocess.STDOUT, timeout=300)
+              exit_code = run.returncode; log = run.stdout
+          except subprocess.TimeoutExpired as exc:
+              timed_out = True; exit_code = 124
+              log = (exc.stdout or '') + (exc.stderr or '')
+          log = (log or '<empty output>')[-1024 * 1024:]
+          Path('p0-output/required-check.log').write_text(log, encoding='utf-8')
+          Path('p0-output/required-check.json').write_text(json.dumps({
+              'command_id': check['command_id'], 'argv': argv,
+              'source': 'workflow_controlled_process_exit_code',
+              'subject_sha': os.environ['SUBJECT_SHA'],
+              'exit_code': exit_code, 'timed_out': timed_out,
+          }, sort_keys=True), encoding='utf-8')
+          raise SystemExit(0 if exit_code == 0 and not timed_out else 1)
+          PY
+      - name: Assemble trusted signal only from observed files and Git
+        if: always()
+        env:
+          BASE_SHA: ${{ needs.admission.outputs.base_sha || github.sha }}
+          SUBJECT_SHA: ${{ steps.observe.outputs.subject_sha }}
+          DEFAULT_HEAD: ${{ steps.observe.outputs.default_head }}
+          TARGET_BRANCH: ${{ github.event.inputs.target_branch }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          python3 - <<'PY'
+          import json, os, subprocess
+          from pathlib import Path
+          def read(path):
+              p = Path(path)
+              return p.read_text(encoding='utf-8', errors='replace') if p.is_file() else None
+          def load(path):
+              try: return json.loads(read(path) or '{}')
+              except (json.JSONDecodeError, TypeError): return {}
+          base = os.environ['BASE_SHA']; subject = os.environ.get('SUBJECT_SHA') or base
+          manifest = load('p0-adapter-output/manifest.json')
+          check = load('p0-output/required-check.json')
+          check['log'] = read('p0-output/required-check.log')
+          review_binding = load('p0-output/review-binding.json')
+          authored = subprocess.run(['git','rev-list','{}..{}'.format(base, subject)], text=True, capture_output=True).stdout.split()
+          changed = subprocess.run(['git','diff','--name-only',base,subject], text=True, capture_output=True).stdout.splitlines()
+          signal = {
+              'adapter': 'human-supervised-claude-code',
+              'adapter_version': 'claude-code-2.1.197-p0-actions',
+              'adapter_attempted': True,
+              'adapter_outcome': manifest.get('adapter_outcome'),
+              'publication_passed': manifest.get('publication_passed'),
+              'executor_task_commit': manifest.get('executor_task_commit'),
+              'executor_task_path': manifest.get('executor_task_path'),
+              'execution_evidence_run_id': manifest.get('execution_evidence_run_id'),
+              'started_at': manifest.get('started_at'),
+              'finished_at': manifest.get('finished_at'),
+              'execution_file_content': read('p0-adapter-output/execution-file.txt'),
+              'structured_output_raw': read('p0-adapter-output/structured-output.txt'),
+              'transcript': read('p0-adapter-output/executor-transcript.txt'),
+              'workflow_run_id': os.environ['RUN_ID'],
+              'workflow_run_attempt': os.environ['RUN_ATTEMPT'],
+              'base_sha': base,
+              'subject_sha': subject,
+              'target_branch': os.environ['TARGET_BRANCH'],
+              'target_branch_head': subject,
+              'default_branch_head_before': manifest.get('default_branch_head_before'),
+              'default_branch_head_after': os.environ.get('DEFAULT_HEAD'),
+              'authored_commits': authored,
+              'changed_files': changed,
+              'required_check': check,
+              'review_attestation_commit': review_binding.get('commit'),
+              'review_attestation_path': review_binding.get('path'),
+              'raw_provider_terminal_reason': manifest.get('postcondition_failure'),
+              'executor_identity': {
+                  'operator_principal': 'github:${{ github.repository_owner }}',
+                  'agent_runtime_id': 'claude-code:p0-executor-session',
+                  'credential_principal': 'github:actions:p0-executor',
+                  'delegation_parent': 'owner:immutable-task',
+                  'role': 'author',
+              },
+          }
+          Path('p0-output/signal.json').write_text(json.dumps(signal, sort_keys=True), encoding='utf-8')
+          PY
+      - name: Finalize schema documents from trusted signal
+        if: always()
+        continue-on-error: true
+        env:
+          TASK_COMMIT: ${{ github.event.inputs.task_commit }}
+          TASK_PATH: ${{ github.event.inputs.task_path }}
+          TARGET_BRANCH: ${{ github.event.inputs.target_branch }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          ATTEMPT: ${{ github.event.inputs.attempt }}
+          MODE: ${{ github.event.inputs.mode }}
+          EXECUTION_RUN_ID: ${{ github.event.inputs.execution_run_id }}
+        run: |
+          python3 tools/p0_actions_adapter.py finalize \
+            --signal p0-output/signal.json \
+            --task p0-output/task.json \
+            --review-attestation p0-output/review.json \
+            --task-commit "$TASK_COMMIT" \
+            --task-path "$TASK_PATH" \
+            --target-branch "$TARGET_BRANCH" \
+            --default-branch "$DEFAULT_BRANCH" \
+            --attempt "$ATTEMPT" \
+            --mode "$MODE" \
+            --execution-run-id "$EXECUTION_RUN_ID" \
+            --verification-id "$(python3 -c 'import uuid; print(uuid.uuid4())')" \
+            --evaluated-at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --output-dir p0-output/pipeline
+      - name: Upload stable result and verification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: p0-run-${{ github.run_id }}-evidence
+          path: |
+            p0-output/pipeline/result.json
+            p0-output/pipeline/verification.json
+            p0-output/pipeline/workflow-run-metadata.json
+            p0-output/pipeline/evidence/**
+          if-no-files-found: error
+          retention-days: 90
+      - name: Publish verifier-owned stable Check Run
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const metadata = JSON.parse(fs.readFileSync('p0-output/pipeline/workflow-run-metadata.json', 'utf8'));
+            const conclusion = metadata.verification_passed === true && metadata.check_run_conclusion === 'success'
+              ? 'success' : 'failure';
+            await github.rest.checks.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              name: process.env.VERIFIER_CHECK_CONTEXT,
+              head_sha: metadata.subject_sha,
+              status: 'completed',
+              conclusion,
+              output: {
+                title: `P0 Actions verifier: ${conclusion}`,
+                summary: [
+                  `task_commit: ${metadata.task_commit}`,
+                  `subject_sha: ${metadata.subject_sha}`,
+                  `review_commit: ${metadata.review_attestation_commit}`,
+                  `required_check_exit_code: ${metadata.required_check_exit_code}`,
+                  `execution_id: ${metadata.execution_id}`,
+                  `terminal_reason: ${metadata.terminal_reason}`,
+                  `failure_code: ${metadata.failure_code}`,
+                ].join('\n'),
+              },
+            });
+      - name: Gate job on verifier result
+        if: always()
+        run: python3 -c 'import json,sys; m=json.load(open("p0-output/pipeline/workflow-run-metadata.json")); sys.exit(0 if m["verification_passed"] is True and m["check_run_conclusion"] == "success" else 1)'

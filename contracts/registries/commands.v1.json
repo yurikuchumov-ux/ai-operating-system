@@ -22,6 +22,13 @@
       "working_directory": ".",
       "environment_allowlist": [],
       "timeout_seconds": 300
+    },
+    {
+      "id": "repo.p0.actions.suite",
+      "argv": ["python3", "tools/p0_actions_adapter.py", "suite", "--manifest", "fixtures/p0/manifest.v1.json"],
+      "working_directory": ".",
+      "environment_allowlist": [],
+      "timeout_seconds": 120
     }
   ]
 }

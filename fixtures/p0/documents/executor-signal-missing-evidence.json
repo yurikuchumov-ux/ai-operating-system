@@ -1,0 +1,32 @@
+{
+  "adapter": "human-supervised-claude-code",
+  "adapter_version": "claude-code-2.1.197-issue-20-canary",
+  "adapter_attempted": true,
+  "adapter_session_present": false,
+  "adapter_outcome": "success",
+  "execution_id": null,
+  "workflow_run_id": "9000000004",
+  "workflow_run_attempt": "1",
+  "subject_sha": "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678",
+  "base_sha": "5033581665f759971f8a6c5875efd2be93c2b109",
+  "target_branch": "agent/issue-20-canary",
+  "target_branch_head": "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678",
+  "default_branch_head_before": "5033581665f759971f8a6c5875efd2be93c2b109",
+  "default_branch_head_after": "5033581665f759971f8a6c5875efd2be93c2b109",
+  "authored_commits": [
+    "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678"
+  ],
+  "changed_files": [
+    "src/canary/hello.py"
+  ],
+  "started_at": "2026-07-15T20:05:00Z",
+  "finished_at": "2026-07-15T20:07:00Z",
+  "raw_provider_terminal_reason": null,
+  "executor_identity": {
+    "operator_principal": "github:yurikuchumov-ux",
+    "agent_runtime_id": "claude-code:issue-20-session",
+    "credential_principal": "github:actions:p0-executor",
+    "delegation_parent": "issue-20-owner-decision",
+    "role": "author"
+  }
+}

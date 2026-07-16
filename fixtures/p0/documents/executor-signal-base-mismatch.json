@@ -1,0 +1,23 @@
+{
+  "adapter": "human-supervised-claude-code",
+  "adapter_version": "claude-code-2.1.197-issue-20-canary",
+  "adapter_attempted": false,
+  "adapter_session_present": false,
+  "execution_id": null,
+  "workflow_run_id": "9000000003",
+  "workflow_run_attempt": "1",
+  "subject_sha": "ffffffffffffffffffffffffffffffffffffffff",
+  "base_sha": "ffffffffffffffffffffffffffffffffffffffff",
+  "authored_commits": [],
+  "changed_files": [],
+  "started_at": "2026-07-15T20:05:00Z",
+  "finished_at": "2026-07-15T20:05:10Z",
+  "raw_provider_terminal_reason": null,
+  "executor_identity": {
+    "operator_principal": "github:yurikuchumov-ux",
+    "agent_runtime_id": "claude-code:issue-20-session",
+    "credential_principal": "github:actions:p0-executor",
+    "delegation_parent": "issue-20-owner-decision",
+    "role": "author"
+  }
+}

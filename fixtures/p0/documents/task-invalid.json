@@ -1,0 +1,73 @@
+{
+  "schema_version": "1.0.0",
+  "task_id": "yurikuchumov-ux/ai-operating-system#20",
+  "repository": "yurikuchumov-ux/ai-operating-system",
+  "issue_number": 20,
+  "objective": "Invalid task fixture: risk_class is not a member of the L0-L3 enum, so task.v1 schema validation must fail closed before any executor is bound.",
+  "change_policy": {
+    "change_required": true,
+    "policy_exception_id": null,
+    "no_change": {
+      "allowed": false,
+      "reason_codes": [],
+      "required_evidence_types": []
+    }
+  },
+  "base_ref": "main",
+  "base_sha": "5033581665f759971f8a6c5875efd2be93c2b109",
+  "branch": "agent/issue-20-canary",
+  "allowed_paths": [
+    "src/canary/**"
+  ],
+  "denied_paths": [
+    ".github/workflows/**"
+  ],
+  "risk_class": "L9",
+  "executor": {
+    "adapter": "human-supervised-claude-code",
+    "version": "claude-code-2.1.197-issue-20-canary",
+    "max_attempts": 3,
+    "timeout_seconds": 3600
+  },
+  "acceptance_criteria": [
+    {
+      "id": "AC-1",
+      "predicate_id": "process.exit_code.equals",
+      "parameters": {
+        "value": 0
+      },
+      "required": true,
+      "linked_checks": [
+        "issue-20-canary-tests"
+      ]
+    }
+  ],
+  "required_checks": [
+    {
+      "id": "issue-20-canary-tests",
+      "command_id": "repo.contracts.b3.tests",
+      "required": true,
+      "expected_postconditions": [
+        {
+          "predicate_id": "process.exit_code.equals",
+          "parameters": {
+            "value": 0
+          }
+        }
+      ]
+    }
+  ],
+  "review_policy": {
+    "reviewer_class": "independent-engineering",
+    "policy_id": "review-independence.v1",
+    "forbidden_lineage_overlaps": [
+      "agent_runtime_id",
+      "credential_principal",
+      "authored_commits"
+    ],
+    "minimum_distinct_human_operators": 1
+  },
+  "external_side_effects": "owner_approved",
+  "created_by": "github:yurikuchumov-ux/codex-control-plane",
+  "created_at": "2026-07-15T20:00:00Z"
+}

@@ -1,0 +1,7 @@
+# Declared Python dependencies for the Issue #29 P0 Actions adapter/check
+# (tools/p0_actions_adapter.py, tests/test_b3_p0_actions_adapter.py). The
+# adapter and its tests import jsonschema directly and rely on the pinned
+# rfc3339-validator so `format: date-time` assertions are actually enforced.
+# Expressed via pip's recursive requirements-file support so this set can
+# never silently drift from the B0 baseline.
+-r requirements-b0.txt

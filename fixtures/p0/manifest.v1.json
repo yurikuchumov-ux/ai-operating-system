@@ -1,0 +1,201 @@
+{
+  "schema_version": "1.0.0",
+  "policy": {
+    "authoritative_verifier": false,
+    "bootstrap_scope": "P0"
+  },
+  "fixtures": [
+    {
+      "id": "reject-mutable-task-ref",
+      "inputs": {
+        "task_commit": "HEAD",
+        "task_path": ".ai/tasks/20/issue-20-canary-task.v1.json",
+        "target_branch": "agent/issue-20-canary",
+        "default_branch": "main",
+        "attempt": 1,
+        "mode": "execute"
+      },
+      "task": {"path": "documents/task-issue-20-canary.json", "sha256": "82587542ab4ac7accc488d54fb8f36fa622a623129213c921a4e62382ec91a7a"},
+      "executor_signal": {"path": "documents/executor-signal-not-run.json", "sha256": "065550237b48b501caeb4fda025b75f289579f3593c5b7c91ee0e4b8ce584b04"},
+      "review_attestation": {"path": "documents/review-accept.json", "sha256": "a831cc29517d96e9388790980b798686d826a5e8f7fee57567f80823d2f06e67"},
+      "verifier_identity": {"path": "documents/verifier-identity.json", "sha256": "864836d2df7b872bc5fa7889a345f52a409ef229d2bd487ee58813e8884fce4f"},
+      "invocation": {"verification_id": "90000000-0000-4000-8000-000000000001", "evaluated_at": "2026-07-16T12:00:00Z"},
+      "expected": {
+        "accepted": false,
+        "status": "failed",
+        "terminal_reason": "ref_history_unverifiable",
+        "check_run_conclusion": "failure",
+        "failure_code": "mutable_task_ref",
+        "execution_id_source": "pipeline_derived"
+      }
+    },
+    {
+      "id": "reject-invalid-task",
+      "inputs": {
+        "task_commit": "5033581665f759971f8a6c5875efd2be93c2b109",
+        "task_path": ".ai/tasks/20/issue-20-canary-task.v1.json",
+        "target_branch": "agent/issue-20-canary",
+        "default_branch": "main",
+        "attempt": 1,
+        "mode": "execute"
+      },
+      "task": {"path": "documents/task-invalid.json", "sha256": "2537503609fe098a9d9aef7f7eae9f567408487c9e37422f18b373fc0ca1e919"},
+      "executor_signal": {"path": "documents/executor-signal-not-run.json", "sha256": "065550237b48b501caeb4fda025b75f289579f3593c5b7c91ee0e4b8ce584b04"},
+      "review_attestation": {"path": "documents/review-accept.json", "sha256": "a831cc29517d96e9388790980b798686d826a5e8f7fee57567f80823d2f06e67"},
+      "verifier_identity": {"path": "documents/verifier-identity.json", "sha256": "864836d2df7b872bc5fa7889a345f52a409ef229d2bd487ee58813e8884fce4f"},
+      "invocation": {"verification_id": "90000000-0000-4000-8000-000000000002", "evaluated_at": "2026-07-16T12:00:00Z"},
+      "expected": {
+        "accepted": false,
+        "status": "failed",
+        "terminal_reason": "adapter_error",
+        "check_run_conclusion": "failure",
+        "failure_code": "invalid_task",
+        "execution_id_source": "pipeline_derived"
+      }
+    },
+    {
+      "id": "reject-base-sha-mismatch",
+      "inputs": {
+        "task_commit": "5033581665f759971f8a6c5875efd2be93c2b109",
+        "task_path": ".ai/tasks/20/issue-20-canary-task.v1.json",
+        "target_branch": "agent/issue-20-canary",
+        "default_branch": "main",
+        "attempt": 1,
+        "mode": "execute"
+      },
+      "task": {"path": "documents/task-issue-20-canary.json", "sha256": "82587542ab4ac7accc488d54fb8f36fa622a623129213c921a4e62382ec91a7a"},
+      "executor_signal": {"path": "documents/executor-signal-base-mismatch.json", "sha256": "6c8095f01954d4f2ed28453e49a588fbfa44ef1686d0ef542ec03a0f8793e5e6"},
+      "review_attestation": {"path": "documents/review-accept.json", "sha256": "a831cc29517d96e9388790980b798686d826a5e8f7fee57567f80823d2f06e67"},
+      "verifier_identity": {"path": "documents/verifier-identity.json", "sha256": "864836d2df7b872bc5fa7889a345f52a409ef229d2bd487ee58813e8884fce4f"},
+      "invocation": {"verification_id": "90000000-0000-4000-8000-000000000003", "evaluated_at": "2026-07-16T12:00:00Z"},
+      "expected": {
+        "accepted": false,
+        "status": "failed",
+        "terminal_reason": "ref_history_unverifiable",
+        "check_run_conclusion": "failure",
+        "failure_code": "base_sha_mismatch",
+        "execution_id_source": "pipeline_derived"
+      }
+    },
+    {
+      "id": "reject-target-branch-mismatch",
+      "inputs": {
+        "task_commit": "5033581665f759971f8a6c5875efd2be93c2b109",
+        "task_path": ".ai/tasks/20/issue-20-canary-task.v1.json",
+        "target_branch": "agent/issue-20-wrong",
+        "default_branch": "main",
+        "attempt": 1,
+        "mode": "execute"
+      },
+      "task": {"path": "documents/task-issue-20-canary.json", "sha256": "82587542ab4ac7accc488d54fb8f36fa622a623129213c921a4e62382ec91a7a"},
+      "executor_signal": {"path": "documents/executor-signal-not-run.json", "sha256": "065550237b48b501caeb4fda025b75f289579f3593c5b7c91ee0e4b8ce584b04"},
+      "review_attestation": {"path": "documents/review-accept.json", "sha256": "a831cc29517d96e9388790980b798686d826a5e8f7fee57567f80823d2f06e67"},
+      "verifier_identity": {"path": "documents/verifier-identity.json", "sha256": "864836d2df7b872bc5fa7889a345f52a409ef229d2bd487ee58813e8884fce4f"},
+      "invocation": {"verification_id": "90000000-0000-4000-8000-000000000004", "evaluated_at": "2026-07-16T12:00:00Z"},
+      "expected": {
+        "accepted": false,
+        "status": "failed",
+        "terminal_reason": "scope_violation",
+        "check_run_conclusion": "failure",
+        "failure_code": "target_branch_mismatch",
+        "execution_id_source": "pipeline_derived"
+      }
+    },
+    {
+      "id": "reject-missing-executor-evidence",
+      "inputs": {
+        "task_commit": "5033581665f759971f8a6c5875efd2be93c2b109",
+        "task_path": ".ai/tasks/20/issue-20-canary-task.v1.json",
+        "target_branch": "agent/issue-20-canary",
+        "default_branch": "main",
+        "attempt": 1,
+        "mode": "execute"
+      },
+      "task": {"path": "documents/task-issue-20-canary.json", "sha256": "82587542ab4ac7accc488d54fb8f36fa622a623129213c921a4e62382ec91a7a"},
+      "executor_signal": {"path": "documents/executor-signal-missing-evidence.json", "sha256": "8e1c3c3ca349106c4df922d68a5269ee4552b435d0bf2b1f603f6998bece2762"},
+      "review_attestation": {"path": "documents/review-accept.json", "sha256": "a831cc29517d96e9388790980b798686d826a5e8f7fee57567f80823d2f06e67"},
+      "verifier_identity": {"path": "documents/verifier-identity.json", "sha256": "864836d2df7b872bc5fa7889a345f52a409ef229d2bd487ee58813e8884fce4f"},
+      "invocation": {"verification_id": "90000000-0000-4000-8000-000000000005", "evaluated_at": "2026-07-16T12:00:00Z"},
+      "expected": {
+        "accepted": false,
+        "status": "failed",
+        "terminal_reason": "identity_unverifiable",
+        "check_run_conclusion": "failure",
+        "failure_code": "missing_executor_evidence",
+        "execution_id_source": "pipeline_derived"
+      }
+    },
+    {
+      "id": "reject-self-review",
+      "inputs": {
+        "task_commit": "5033581665f759971f8a6c5875efd2be93c2b109",
+        "task_path": ".ai/tasks/20/issue-20-canary-task.v1.json",
+        "target_branch": "agent/issue-20-canary",
+        "default_branch": "main",
+        "attempt": 1,
+        "mode": "execute"
+      },
+      "task": {"path": "documents/task-issue-20-canary.json", "sha256": "82587542ab4ac7accc488d54fb8f36fa622a623129213c921a4e62382ec91a7a"},
+      "executor_signal": {"path": "documents/executor-signal-accept.json", "sha256": "69a890772dd171c78299681b11835bac3e35ecebebfe2fc8a565002f509ac69d"},
+      "review_attestation": {"path": "documents/review-self.json", "sha256": "c139153f72ed81e9a34b25d994e0a55dbd6c7be968396d4a7d23aca195f70200"},
+      "verifier_identity": {"path": "documents/verifier-identity.json", "sha256": "864836d2df7b872bc5fa7889a345f52a409ef229d2bd487ee58813e8884fce4f"},
+      "invocation": {"verification_id": "90000000-0000-4000-8000-000000000006", "evaluated_at": "2026-07-16T12:00:00Z"},
+      "expected": {
+        "accepted": false,
+        "status": "failed",
+        "terminal_reason": "identity_unverifiable",
+        "check_run_conclusion": "failure",
+        "failure_code": "self_review",
+        "execution_id_source": "adapter_session"
+      }
+    },
+    {
+      "id": "reject-post-review-head-change",
+      "inputs": {
+        "task_commit": "5033581665f759971f8a6c5875efd2be93c2b109",
+        "task_path": ".ai/tasks/20/issue-20-canary-task.v1.json",
+        "target_branch": "agent/issue-20-canary",
+        "default_branch": "main",
+        "attempt": 1,
+        "mode": "execute"
+      },
+      "task": {"path": "documents/task-issue-20-canary.json", "sha256": "82587542ab4ac7accc488d54fb8f36fa622a623129213c921a4e62382ec91a7a"},
+      "executor_signal": {"path": "documents/executor-signal-new-head.json", "sha256": "94ba7d012ae1c5a22e0625bf64397a0e2189e69ebb28091c3ddaa7d1a19a7ff2"},
+      "review_attestation": {"path": "documents/review-accept.json", "sha256": "a831cc29517d96e9388790980b798686d826a5e8f7fee57567f80823d2f06e67"},
+      "verifier_identity": {"path": "documents/verifier-identity.json", "sha256": "864836d2df7b872bc5fa7889a345f52a409ef229d2bd487ee58813e8884fce4f"},
+      "invocation": {"verification_id": "90000000-0000-4000-8000-000000000007", "evaluated_at": "2026-07-16T12:00:00Z"},
+      "expected": {
+        "accepted": false,
+        "status": "failed",
+        "terminal_reason": "ref_history_unverifiable",
+        "check_run_conclusion": "failure",
+        "failure_code": "post_review_head_change",
+        "execution_id_source": "adapter_session"
+      }
+    },
+    {
+      "id": "accept-bounded-executor-result",
+      "inputs": {
+        "task_commit": "5033581665f759971f8a6c5875efd2be93c2b109",
+        "task_path": ".ai/tasks/20/issue-20-canary-task.v1.json",
+        "target_branch": "agent/issue-20-canary",
+        "default_branch": "main",
+        "attempt": 1,
+        "mode": "execute"
+      },
+      "task": {"path": "documents/task-issue-20-canary.json", "sha256": "82587542ab4ac7accc488d54fb8f36fa622a623129213c921a4e62382ec91a7a"},
+      "executor_signal": {"path": "documents/executor-signal-accept.json", "sha256": "69a890772dd171c78299681b11835bac3e35ecebebfe2fc8a565002f509ac69d"},
+      "review_attestation": {"path": "documents/review-accept.json", "sha256": "a831cc29517d96e9388790980b798686d826a5e8f7fee57567f80823d2f06e67"},
+      "verifier_identity": {"path": "documents/verifier-identity.json", "sha256": "864836d2df7b872bc5fa7889a345f52a409ef229d2bd487ee58813e8884fce4f"},
+      "invocation": {"verification_id": "90000000-0000-4000-8000-000000000008", "evaluated_at": "2026-07-16T12:00:00Z"},
+      "expected": {
+        "accepted": true,
+        "status": "change_proposed",
+        "terminal_reason": "completed",
+        "check_run_conclusion": "success",
+        "failure_code": null,
+        "execution_id_source": "adapter_session"
+      }
+    }
+  ]
+}

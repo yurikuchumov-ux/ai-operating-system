@@ -1,0 +1,7 @@
+{
+  "operator_principal": "github:actions:p0-verifier",
+  "agent_runtime_id": "p0-actions-adapter:verifier",
+  "credential_principal": "github:actions:p0-verifier",
+  "delegation_parent": "issue-29-owner-decision",
+  "role": "verifier"
+}
