@@ -23,6 +23,7 @@ Coverage maps to the task's acceptance criteria:
 from __future__ import annotations
 
 import json
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -33,13 +34,17 @@ from tools import p0_actions_adapter as adapter
 from tools.p0_actions_adapter import (
     Decision,
     PINNED_ADAPTER_ACTION,
+    PROVIDER_TRANSIENT_OUTPUT_PATH,
     VERIFIER_CHECK_CONTEXT,
     build_documents,
     changed_paths_within_scope,
     evaluate,
     is_verification_only,
+    prohibited_transcript_tool_use,
     resolve_registered_check,
     run_suite,
+    transcript_tool_policy_failure,
+    transcript_tool_use_names,
     validate_target_branch,
     validate_task_path,
     validate_task_ref,
@@ -53,7 +58,7 @@ WORKFLOW_PATH = REPO_ROOT / ".github/workflows/p0-actions-adapter.yml"
 RESULT_SCHEMA_PATH = REPO_ROOT / "contracts/schemas/result.v1.schema.json"
 VERIFICATION_SCHEMA_PATH = REPO_ROOT / "contracts/schemas/verification.v1.schema.json"
 
-# The eight scenarios AC-A2 requires by name.
+# The original eight scenarios AC-A2 requires by name.
 REQUIRED_SCENARIOS = {
     "reject-mutable-task-ref",
     "reject-invalid-task",
@@ -63,10 +68,17 @@ REQUIRED_SCENARIOS = {
     "reject-self-review",
     "reject-post-review-head-change",
     "accept-bounded-executor-result",
+    # Issue #32 correction: the four scenarios proving the live-canary
+    # corrective fixes (AC-C2).
+    "exclude-provider-transient-output",
+    "prohibit-shell-tool-execution",
+    "preserve-primary-scope-failure",
+    "persist-observed-changed-paths-on-failure",
 }
 
 REQUIRED_RESULT_ARTIFACT_IDS = {
     "executor-transcript",
+    "executor-manifest",
     "result-artifact",
     "verification-report",
     "workflow-run-metadata",
@@ -77,6 +89,8 @@ REQUIRED_PROVENANCE = {
     "workflow_run_attempt",
     "execution_id",
     "subject_sha",
+    "primary_terminal_reason",
+    "observed_changed_paths",
     "task_commit",
 }
 
@@ -360,6 +374,14 @@ class AcceptedResultArtifactTests(unittest.TestCase):
     def _accept_decision(self) -> Decision:
         task = _load(DOCUMENTS_DIR / "task-issue-20-canary.json")
         signal = _load(DOCUMENTS_DIR / "executor-signal-accept.json")
+        # Issue #32 correction (AC-C3): the executor's own real manifest
+        # bytes are a required, distinct evidence artifact. This is added
+        # in-memory (never written back to the pinned fixture document, so
+        # its sha256 stays exactly as recorded in the manifest) to prove
+        # `build_documents` produces it whenever the trusted signal carries it.
+        signal["executor_manifest_raw"] = json.dumps(
+            {"adapter_outcome": "success", "postconditions_passed": True}, sort_keys=True
+        )
         review = _load(DOCUMENTS_DIR / "review-accept.json")
         inputs = {
             "task_commit": "5033581665f759971f8a6c5875efd2be93c2b109",
@@ -443,6 +465,530 @@ class ReviewIndependenceTests(unittest.TestCase):
         self.assertFalse(decision.accepted)
         self.assertEqual("reviewer_unavailable", decision.failure_code)
         self.assertEqual("blocked", decision.status)
+
+
+class TranscriptToolUseTests(unittest.TestCase):
+    """Issue #32 correction: the trusted transcript's own structural
+    `tool_use.name` fields are independently re-verified against the
+    edit-only allowlist -- never the provider's own claimed success."""
+
+    def _events(self, *names: str, session_id: str = "70000000-0000-4000-8000-000000000001") -> str:
+        events = [
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [
+                        {"type": "tool_use", "id": "toolu_{}".format(i), "name": name, "input": {}}
+                    ]
+                },
+            }
+            for i, name in enumerate(names)
+        ]
+        events.append({"type": "result", "session_id": session_id})
+        return json.dumps(events)
+
+    def test_only_edit_only_tool_use_is_accepted(self) -> None:
+        content = self._events("Read", "Edit", "Glob", "Grep", "Write")
+        self.assertEqual(["Read", "Edit", "Glob", "Grep", "Write"], transcript_tool_use_names(content))
+        self.assertIsNone(prohibited_transcript_tool_use(content))
+
+    def test_bash_tool_use_is_rejected(self) -> None:
+        content = self._events("Read", "Bash")
+        self.assertEqual("Bash", prohibited_transcript_tool_use(content))
+
+    def test_any_non_allowlisted_tool_is_rejected(self) -> None:
+        for name in ("Bash", "WebFetch", "WebSearch", "Task", "NotebookEdit"):
+            content = self._events(name)
+            self.assertEqual(name, prohibited_transcript_tool_use(content))
+
+    def test_missing_or_unparsable_transcript_is_not_coerced_into_a_violation(self) -> None:
+        self.assertIsNone(prohibited_transcript_tool_use(None))
+        self.assertIsNone(prohibited_transcript_tool_use(""))
+        self.assertIsNone(prohibited_transcript_tool_use("{not json"))
+        self.assertIsNone(prohibited_transcript_tool_use(json.dumps({"type": "result"})))
+
+    def test_oversized_transcript_is_rejected_never_scanned(self) -> None:
+        huge = self._events("Bash") + ("x" * (2 * 1024 * 1024))
+        self.assertIsNone(transcript_tool_use_names(huge))
+        self.assertIsNone(prohibited_transcript_tool_use(huge))
+
+    def test_empty_array_is_unscannable_not_a_clean_scan(self) -> None:
+        # A structurally valid but empty event array provides no positive
+        # evidence that only allowed tools ran -- it must not be treated the
+        # same as "scanned clean, zero tool_use found".
+        self.assertIsNone(transcript_tool_use_names("[]"))
+        self.assertIsNone(prohibited_transcript_tool_use("[]"))
+
+    def test_non_empty_array_with_no_tool_use_events_is_scannable_and_clean(self) -> None:
+        content = json.dumps([{"type": "result", "session_id": "70000000-0000-4000-8000-000000000001"}])
+        self.assertEqual([], transcript_tool_use_names(content))
+        self.assertIsNone(prohibited_transcript_tool_use(content))
+
+    def test_event_count_over_the_bound_is_unscannable_not_a_truncated_scan(self) -> None:
+        """Pass-3 correction: the whole admitted transcript must be
+        examined. A transcript whose event count exceeds
+        `_MAX_TRANSCRIPT_EVENTS_SCANNED`, with a real `Bash` call placed
+        just past the old scan prefix, must never be silently truncated and
+        treated as clean -- it must fail closed as unscannable."""
+        bound = adapter._MAX_TRANSCRIPT_EVENTS_SCANNED
+        events = [
+            {
+                "type": "assistant",
+                "message": {"content": [{"type": "tool_use", "id": "toolu_pad", "name": "Read", "input": {}}]},
+            }
+            for _ in range(bound)
+        ]
+        events.append(
+            {
+                "type": "assistant",
+                "message": {"content": [{"type": "tool_use", "id": "toolu_over", "name": "Bash", "input": {}}]},
+            }
+        )
+        content = json.dumps(events)
+        self.assertEqual(bound + 1, len(json.loads(content)))
+        self.assertLess(len(content.encode("utf-8")), adapter.MAX_TRANSCRIPT_BYTES)
+        self.assertIsNone(transcript_tool_use_names(content))
+        self.assertIsNone(prohibited_transcript_tool_use(content))
+        self.assertEqual("unscannable_executor_transcript", transcript_tool_policy_failure(content))
+
+    def test_event_count_exactly_at_the_bound_is_still_fully_scanned(self) -> None:
+        """Clean control: an event count exactly at the bound (not over it)
+        is still scanned in full, including a violation in its final event."""
+        bound = adapter._MAX_TRANSCRIPT_EVENTS_SCANNED
+        events = [
+            {
+                "type": "assistant",
+                "message": {"content": [{"type": "tool_use", "id": "toolu_pad", "name": "Read", "input": {}}]},
+            }
+            for _ in range(bound - 1)
+        ]
+        events.append(
+            {
+                "type": "assistant",
+                "message": {"content": [{"type": "tool_use", "id": "toolu_last", "name": "Bash", "input": {}}]},
+            }
+        )
+        content = json.dumps(events)
+        self.assertEqual(bound, len(json.loads(content)))
+        names = transcript_tool_use_names(content)
+        self.assertIsNotNone(names)
+        self.assertEqual("Bash", names[-1])
+        self.assertEqual("Bash", prohibited_transcript_tool_use(content))
+
+    def test_non_object_top_level_events_fail_closed(self) -> None:
+        """Pass-3 correction: `[null]` and `[1]` are structurally valid JSON
+        arrays but their events cannot be safely interpreted -- they must
+        never be coerced into "no tool_use observed"."""
+        for content in ("[null]", "[1]", json.dumps([None, {"type": "result"}]), json.dumps(["not-an-object"])):
+            self.assertIsNone(transcript_tool_use_names(content), content)
+            self.assertIsNone(prohibited_transcript_tool_use(content), content)
+            self.assertEqual("unscannable_executor_transcript", transcript_tool_policy_failure(content), content)
+
+    def test_tool_use_with_absent_non_string_or_empty_name_fails_closed(self) -> None:
+        """Pass-3 correction: a real `tool_use` content block whose `name`
+        cannot be safely identified (missing, non-string, or empty) must
+        never be silently skipped -- an unidentifiable tool invocation is
+        never treated as if it were absent."""
+        bad_names = [
+            {},  # name entirely absent
+            {"name": 123},  # non-string
+            {"name": ""},  # empty string
+            {"name": None},  # explicit null
+        ]
+        for extra in bad_names:
+            item = {"type": "tool_use", "id": "toolu_bad"}
+            item.update(extra)
+            content = json.dumps(
+                [
+                    {"type": "assistant", "message": {"content": [item]}},
+                    {"type": "result", "session_id": "70000000-0000-4000-8000-000000000001"},
+                ]
+            )
+            self.assertIsNone(transcript_tool_use_names(content), content)
+            self.assertIsNone(prohibited_transcript_tool_use(content), content)
+            self.assertEqual(
+                "unscannable_executor_transcript", transcript_tool_policy_failure(content), content
+            )
+
+    def test_legitimate_non_tool_content_blocks_are_preserved(self) -> None:
+        """Control: ordinary non-`tool_use` content blocks (e.g. `text`) and
+        events with no `message`/`content` at all remain legitimate and do
+        not trip the new structural checks."""
+        content = json.dumps(
+            [
+                {"type": "assistant", "message": {"content": [{"type": "text", "text": "thinking..."}]}},
+                {"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "toolu_1", "name": "Read", "input": {}}]}},
+                {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "toolu_1", "content": "ok", "is_error": False}]}},
+                {"type": "result", "session_id": "70000000-0000-4000-8000-000000000001"},
+            ]
+        )
+        self.assertEqual(["Read"], transcript_tool_use_names(content))
+        self.assertIsNone(prohibited_transcript_tool_use(content))
+        self.assertIsNone(transcript_tool_policy_failure(content))
+
+    def test_evaluate_rejects_a_real_bash_call_even_when_every_other_signal_claims_success(self) -> None:
+        task = _load(DOCUMENTS_DIR / "task-issue-20-canary.json")
+        signal = _load(DOCUMENTS_DIR / "executor-signal-accept.json")
+        review = _load(DOCUMENTS_DIR / "review-accept.json")
+        signal["execution_file_content"] = self._events("Read", "Bash")
+        inputs = {
+            "task_commit": "5033581665f759971f8a6c5875efd2be93c2b109",
+            "task_path": ".ai/tasks/20/issue-20-canary-task.v1.json",
+            "target_branch": "agent/issue-20-canary",
+            "default_branch": "main",
+            "attempt": 1,
+            "mode": "execute",
+        }
+        decision = evaluate(inputs, task, signal, review)
+        self.assertFalse(decision.accepted)
+        self.assertEqual("prohibited_tool_use", decision.failure_code)
+        self.assertEqual("scope_violation", decision.terminal_reason)
+        self.assertEqual("failure", decision.check_run_conclusion)
+
+
+class MandatoryTranscriptScannabilityTests(unittest.TestCase):
+    """Regression coverage for the independently-verified false-success
+    class: `evaluate()` must never accept a run merely because
+    `structured_output_raw` resolves a real session id -- the trusted
+    structural transcript (`execution_file_content`) must itself be present,
+    size-bounded, and a genuinely scannable non-empty JSON event array.
+    Reproduces, against the otherwise-fully-valid accept signal, the exact
+    four false-success cases independent verification found:
+      1. the original non-array execution-file object;
+      2. invalid JSON execution file plus a structured-output session id;
+      3. missing execution file plus a structured-output session id;
+      4. an empty array plus a structured-output session id.
+    """
+
+    VALID_STRUCTURED_OUTPUT = json.dumps(
+        {"type": "result", "session_id": "80000000-0000-4000-8000-000000000099"}
+    )
+
+    def _otherwise_success_signal(self):
+        return _load(DOCUMENTS_DIR / "executor-signal-accept.json")
+
+    def _inputs(self):
+        return {
+            "task_commit": "5033581665f759971f8a6c5875efd2be93c2b109",
+            "task_path": ".ai/tasks/20/issue-20-canary-task.v1.json",
+            "target_branch": "agent/issue-20-canary",
+            "default_branch": "main",
+            "attempt": 1,
+            "mode": "execute",
+        }
+
+    def _decide(self, signal):
+        task = _load(DOCUMENTS_DIR / "task-issue-20-canary.json")
+        review = _load(DOCUMENTS_DIR / "review-accept.json")
+        return evaluate(self._inputs(), task, signal, review)
+
+    def test_baseline_otherwise_success_signal_is_accepted(self) -> None:
+        """Control: the unmodified, now-genuinely-scannable accept signal is
+        still accepted -- proving the fix does not over-reject valid runs."""
+        decision = self._decide(self._otherwise_success_signal())
+        self.assertTrue(decision.accepted)
+        self.assertIsNone(decision.failure_code)
+
+    def test_original_non_array_execution_file_object_is_rejected(self) -> None:
+        signal = self._otherwise_success_signal()
+        signal["execution_file_content"] = json.dumps(
+            {"type": "result", "session_id": "70000000-0000-4000-8000-000000000001"}
+        )
+        decision = self._decide(signal)
+        self.assertFalse(decision.accepted)
+        self.assertEqual("unscannable_executor_transcript", decision.failure_code)
+        self.assertEqual("missing_artifact", decision.terminal_reason)
+        self.assertEqual("failure", decision.check_run_conclusion)
+
+    def test_invalid_json_execution_file_with_structured_output_session_is_rejected(self) -> None:
+        signal = self._otherwise_success_signal()
+        signal["execution_file_content"] = "{not valid json"
+        signal["structured_output_raw"] = self.VALID_STRUCTURED_OUTPUT
+        # Identity resolution still succeeds from structured_output_raw ...
+        execution_id, source = adapter.resolve_execution_identity(signal)
+        self.assertEqual("80000000-0000-4000-8000-000000000099", execution_id)
+        self.assertEqual("adapter_session", source)
+        # ... but that must never substitute for transcript tool-policy proof.
+        decision = self._decide(signal)
+        self.assertFalse(decision.accepted)
+        self.assertEqual("unscannable_executor_transcript", decision.failure_code)
+
+    def test_missing_execution_file_with_structured_output_session_is_rejected(self) -> None:
+        signal = self._otherwise_success_signal()
+        signal["execution_file_content"] = None
+        signal["structured_output_raw"] = self.VALID_STRUCTURED_OUTPUT
+        execution_id, source = adapter.resolve_execution_identity(signal)
+        self.assertEqual("80000000-0000-4000-8000-000000000099", execution_id)
+        self.assertEqual("adapter_session", source)
+        decision = self._decide(signal)
+        self.assertFalse(decision.accepted)
+        self.assertEqual("unscannable_executor_transcript", decision.failure_code)
+
+    def test_empty_array_execution_file_with_structured_output_session_is_rejected(self) -> None:
+        signal = self._otherwise_success_signal()
+        signal["execution_file_content"] = "[]"
+        signal["structured_output_raw"] = self.VALID_STRUCTURED_OUTPUT
+        execution_id, source = adapter.resolve_execution_identity(signal)
+        self.assertEqual("80000000-0000-4000-8000-000000000099", execution_id)
+        self.assertEqual("adapter_session", source)
+        decision = self._decide(signal)
+        self.assertFalse(decision.accepted)
+        self.assertEqual("unscannable_executor_transcript", decision.failure_code)
+
+    def test_valid_edit_only_event_array_passes_and_prohibited_tool_still_fails(self) -> None:
+        clean = self._otherwise_success_signal()
+        self.assertIsNone(transcript_tool_policy_failure(clean["execution_file_content"]))
+        self.assertTrue(self._decide(clean).accepted)
+
+        dirty = self._otherwise_success_signal()
+        dirty["execution_file_content"] = json.dumps(
+            [
+                {
+                    "type": "assistant",
+                    "message": {
+                        "content": [
+                            {"type": "tool_use", "id": "toolu_x", "name": "Bash", "input": {}}
+                        ]
+                    },
+                },
+                {"type": "result", "session_id": "70000000-0000-4000-8000-000000000001"},
+            ]
+        )
+        self.assertEqual("prohibited_tool_use", transcript_tool_policy_failure(dirty["execution_file_content"]))
+        decision = self._decide(dirty)
+        self.assertFalse(decision.accepted)
+        self.assertEqual("prohibited_tool_use", decision.failure_code)
+
+    def test_2001st_event_bash_bypass_is_rejected(self) -> None:
+        """Pass-3 correction: an otherwise-success signal whose transcript
+        has more events than `_MAX_TRANSCRIPT_EVENTS_SCANNED`, with a real
+        `Bash` call placed past the old scan prefix, must be rejected as
+        unscannable rather than silently accepted from a truncated scan."""
+        bound = adapter._MAX_TRANSCRIPT_EVENTS_SCANNED
+        events = [
+            {
+                "type": "assistant",
+                "message": {"content": [{"type": "tool_use", "id": "toolu_pad", "name": "Read", "input": {}}]},
+            }
+            for _ in range(bound)
+        ]
+        events.append(
+            {
+                "type": "assistant",
+                "message": {"content": [{"type": "tool_use", "id": "toolu_over", "name": "Bash", "input": {}}]},
+            }
+        )
+        # A trailing result event carries the real session id so that
+        # identity resolution succeeds independently of the tool-policy scan
+        # -- proving the rejection below comes from the transcript check,
+        # not from an unrelated missing-session-evidence failure.
+        events.append({"type": "result", "session_id": "70000000-0000-4000-8000-000000000001"})
+        signal = self._otherwise_success_signal()
+        signal["execution_file_content"] = json.dumps(events)
+        signal["structured_output_raw"] = json.dumps(
+            {"type": "result", "session_id": "70000000-0000-4000-8000-000000000001"}
+        )
+        self.assertLess(len(signal["execution_file_content"].encode("utf-8")), adapter.MAX_TRANSCRIPT_BYTES)
+        execution_id, source = adapter.resolve_execution_identity(signal)
+        self.assertEqual("70000000-0000-4000-8000-000000000001", execution_id)
+        self.assertEqual("adapter_session", source)
+        decision = self._decide(signal)
+        self.assertFalse(decision.accepted)
+        self.assertEqual("unscannable_executor_transcript", decision.failure_code)
+        self.assertEqual("missing_artifact", decision.terminal_reason)
+        self.assertEqual("failure", decision.check_run_conclusion)
+
+    def test_malformed_structural_events_are_rejected(self) -> None:
+        """Pass-3 correction: `[null]`, `[1]`, and a `tool_use` block with a
+        non-string `name` must never be accepted merely because
+        `structured_output_raw` resolves a real session id."""
+        for execution_file_content in (
+            "[null]",
+            "[1]",
+            json.dumps(
+                [
+                    {
+                        "type": "assistant",
+                        "message": {
+                            "content": [{"type": "tool_use", "id": "toolu_bad", "name": 123, "input": {}}]
+                        },
+                    }
+                ]
+            ),
+        ):
+            signal = self._otherwise_success_signal()
+            signal["execution_file_content"] = execution_file_content
+            signal["structured_output_raw"] = self.VALID_STRUCTURED_OUTPUT
+            execution_id, source = adapter.resolve_execution_identity(signal)
+            self.assertEqual("80000000-0000-4000-8000-000000000099", execution_id, execution_file_content)
+            self.assertEqual("adapter_session", source, execution_file_content)
+            decision = self._decide(signal)
+            self.assertFalse(decision.accepted, execution_file_content)
+            self.assertEqual(
+                "unscannable_executor_transcript", decision.failure_code, execution_file_content
+            )
+            self.assertEqual("failure", decision.check_run_conclusion, execution_file_content)
+
+
+class ProviderTransientIsolationTests(unittest.TestCase):
+    """Issue #32 correction: the provider's own known transient
+    (`output.txt`) must already be isolated upstream of `evaluate()`; its
+    presence in the observed changed-file set is always treated as a scope
+    violation here, never silently exempted -- so a task-created file
+    smuggled at that exact path can never escape scope enforcement."""
+
+    def _decide(self, changed_files):
+        task = _load(DOCUMENTS_DIR / "task-issue-20-canary.json")
+        signal = _load(DOCUMENTS_DIR / "executor-signal-accept.json")
+        review = _load(DOCUMENTS_DIR / "review-accept.json")
+        signal["changed_files"] = changed_files
+        inputs = {
+            "task_commit": "5033581665f759971f8a6c5875efd2be93c2b109",
+            "task_path": ".ai/tasks/20/issue-20-canary-task.v1.json",
+            "target_branch": "agent/issue-20-canary",
+            "default_branch": "main",
+            "attempt": 1,
+            "mode": "execute",
+        }
+        return evaluate(inputs, task, signal, review)
+
+    def test_clean_observed_changed_files_are_accepted(self) -> None:
+        decision = self._decide(["src/canary/hello.py"])
+        self.assertTrue(decision.accepted)
+
+    def test_provider_transient_present_in_observed_changed_files_is_rejected(self) -> None:
+        decision = self._decide([PROVIDER_TRANSIENT_OUTPUT_PATH, "src/canary/hello.py"])
+        self.assertFalse(decision.accepted)
+        self.assertEqual("changed_paths_not_allowed", decision.failure_code)
+        self.assertEqual("scope_violation", decision.terminal_reason)
+
+    def test_task_created_arbitrary_output_outside_allowed_paths_is_never_exempted(self) -> None:
+        """The isolation is narrow: a real out-of-scope path that is *not*
+        the exact provider transient is rejected exactly as before."""
+        decision = self._decide(["not-allowed/arbitrary.txt"])
+        self.assertFalse(decision.accepted)
+        self.assertEqual("changed_paths_not_allowed", decision.failure_code)
+
+
+class ExecutorManifestPrimaryFailurePrecedenceTests(unittest.TestCase):
+    """Issue #32 correction: the executor manifest's own earliest recorded
+    terminal failure takes precedence over every downstream check that
+    assumes execution/publication proceeded, and neither the target branch
+    nor an independent review is required to reach that decision."""
+
+    def _base_signal(self):
+        signal = _load(DOCUMENTS_DIR / "executor-signal-accept.json")
+        signal["publication_passed"] = False
+        signal["target_branch_head"] = None
+        signal["default_branch_head_before"] = None
+        signal["default_branch_head_after"] = None
+        signal["executor_manifest_primary_failure"] = "changed_paths_not_allowed"
+        return signal
+
+    def _inputs(self):
+        return {
+            "task_commit": "5033581665f759971f8a6c5875efd2be93c2b109",
+            "task_path": ".ai/tasks/20/issue-20-canary-task.v1.json",
+            "target_branch": "agent/issue-20-canary",
+            "default_branch": "main",
+            "attempt": 1,
+            "mode": "execute",
+        }
+
+    def test_primary_failure_wins_over_absent_target_branch_and_missing_review(self) -> None:
+        task = _load(DOCUMENTS_DIR / "task-issue-20-canary.json")
+        signal = self._base_signal()
+        decision = evaluate(self._inputs(), task, signal, None)
+        self.assertFalse(decision.accepted)
+        self.assertEqual("changed_paths_not_allowed", decision.failure_code)
+        self.assertEqual("scope_violation", decision.terminal_reason)
+        self.assertEqual("failure", decision.check_run_conclusion)
+
+    def test_unrecognized_manifest_failure_still_fails_closed(self) -> None:
+        task = _load(DOCUMENTS_DIR / "task-issue-20-canary.json")
+        signal = self._base_signal()
+        signal["executor_manifest_primary_failure"] = "some_new_unknown_reason"
+        decision = evaluate(self._inputs(), task, signal, None)
+        self.assertFalse(decision.accepted)
+        self.assertEqual("adapter_outcome_not_success", decision.failure_code)
+
+    def test_success_path_is_unaffected_and_still_requires_branch_and_review(self) -> None:
+        """No manifest primary failure recorded: the ordinary success path,
+        including the exact target branch and an independent review, is
+        required exactly as before this correction."""
+        task = _load(DOCUMENTS_DIR / "task-issue-20-canary.json")
+        signal = _load(DOCUMENTS_DIR / "executor-signal-accept.json")
+        self.assertNotIn("executor_manifest_primary_failure", signal)
+        decision_no_review = evaluate(self._inputs(), task, signal, None)
+        self.assertFalse(decision_no_review.accepted)
+        self.assertEqual("reviewer_unavailable", decision_no_review.failure_code)
+
+        review = _load(DOCUMENTS_DIR / "review-accept.json")
+        decision_accepted = evaluate(self._inputs(), task, signal, review)
+        self.assertTrue(decision_accepted.accepted)
+
+
+class ObservedChangedPathsPersistenceTests(unittest.TestCase):
+    """Issue #32 correction: the exact observed changed-path list is
+    persisted into `workflow-run-metadata` before every scope rejection, not
+    just on success."""
+
+    def test_observed_changed_paths_persist_on_a_scope_rejection(self) -> None:
+        task = _load(DOCUMENTS_DIR / "task-issue-20-canary.json")
+        signal = _load(DOCUMENTS_DIR / "executor-signal-accept.json")
+        signal["publication_passed"] = False
+        signal["executor_manifest_primary_failure"] = "changed_paths_not_allowed"
+        signal["observed_changed_paths"] = [".github/workflows/p0-actions-adapter.yml", "output.txt"]
+        inputs = {
+            "task_commit": "5033581665f759971f8a6c5875efd2be93c2b109",
+            "task_path": ".ai/tasks/20/issue-20-canary-task.v1.json",
+            "target_branch": "agent/issue-20-canary",
+            "default_branch": "main",
+            "attempt": 1,
+            "mode": "execute",
+        }
+        decision = evaluate(inputs, task, signal, None)
+        self.assertFalse(decision.accepted)
+        docs = build_documents(
+            decision,
+            {
+                "verification_id": "90000000-0000-4000-8000-0000000000ee",
+                "evaluated_at": "2026-07-16T12:00:00Z",
+                "verifier_identity": _load(DOCUMENTS_DIR / "verifier-identity.json"),
+            },
+            _tmp_dir(),
+        )
+        self.assertEqual(
+            [".github/workflows/p0-actions-adapter.yml", "output.txt"],
+            docs["metadata"]["observed_changed_paths"],
+        )
+        self.assertEqual("scope_violation", docs["metadata"]["primary_terminal_reason"])
+
+    def test_observed_changed_paths_falls_back_to_changed_files_when_absent(self) -> None:
+        decision = evaluate(
+            {
+                "task_commit": "5033581665f759971f8a6c5875efd2be93c2b109",
+                "task_path": ".ai/tasks/20/issue-20-canary-task.v1.json",
+                "target_branch": "agent/issue-20-canary",
+                "default_branch": "main",
+                "attempt": 1,
+                "mode": "execute",
+            },
+            _load(DOCUMENTS_DIR / "task-issue-20-canary.json"),
+            _load(DOCUMENTS_DIR / "executor-signal-accept.json"),
+            _load(DOCUMENTS_DIR / "review-accept.json"),
+        )
+        self.assertTrue(decision.accepted)
+        docs = build_documents(
+            decision,
+            {
+                "verification_id": "90000000-0000-4000-8000-0000000000ff",
+                "evaluated_at": "2026-07-16T12:00:00Z",
+                "verifier_identity": _load(DOCUMENTS_DIR / "verifier-identity.json"),
+            },
+            _tmp_dir(),
+        )
+        self.assertEqual(["src/canary/hello.py"], docs["metadata"]["observed_changed_paths"])
 
 
 class ProducedDocumentSchemaTests(unittest.TestCase):
@@ -538,9 +1084,52 @@ class WorkflowInvariantTests(unittest.TestCase):
                     )
 
     def test_executor_has_explicit_non_shell_tool_allowlist(self) -> None:
-        self.assertIn('--allowedTools "Read,Edit,Write,Glob,Grep"', self.text)
-        self.assertNotIn("disallowedTools", self.functional)
-        self.assertNotIn("Bash", self.text.split("--allowedTools", 1)[1].split("\n", 1)[0])
+        # Issue #32 correction: `--allowedTools` alone is never the deny
+        # boundary. The bounded surface is declared with `--tools`, and
+        # `--disallowedTools` is present as defense-in-depth explicitly
+        # naming `Bash` -- and the workflow's own trusted transcript parser
+        # (`transcript_tool_policy_failure`) is the real, independently
+        # enforced boundary (asserted separately below).
+        self.assertNotIn("--allowedTools", self.text)
+        tools_match = re.search(r'--tools\s+"([^"]*)"', self.text)
+        self.assertIsNotNone(tools_match, "expected an explicit --tools argument for the adapter step")
+        self.assertEqual("Read,Edit,Write,Glob,Grep", tools_match.group(1))
+        disallowed_match = re.search(r'--disallowedTools\s+"([^"]*)"', self.text)
+        self.assertIsNotNone(disallowed_match, "expected defense-in-depth --disallowedTools")
+        disallowed_tools = {t.strip() for t in disallowed_match.group(1).split(",")}
+        self.assertIn("Bash", disallowed_tools)
+        self.assertFalse(disallowed_tools & {"Read", "Edit", "Write", "Glob", "Grep"})
+
+    def test_prohibited_transcript_tool_use_is_independently_verified(self) -> None:
+        # The workflow never relies solely on the provider's own CLI flags:
+        # it independently re-parses the real preserved transcript bytes for
+        # any actual tool_use outside the edit-only allowlist, and requires
+        # the transcript to be positively scannable at all (never treating a
+        # missing/malformed/empty transcript as "no violation found"), in
+        # both the execute job and the credential-separated publisher.
+        self.assertEqual(2, self.text.count("adapter.transcript_tool_policy_failure(execution)"))
+        self.assertEqual(2, self.text.count("reject(tool_policy_failure)"))
+        self.assertNotIn("prohibited_transcript_tool_use(execution)", self.text)
+
+    def test_provider_transient_output_is_isolated_narrowly(self) -> None:
+        self.assertIn("Assert provider-owned transient output.txt is absent before invocation", self.text)
+        self.assertIn("test ! -e output.txt", self.text)
+        self.assertIn("PROVIDER_TRANSIENT_OUTPUT_PATH", self.text)
+        self.assertIn("provider_transient.unlink()", self.text)
+
+    def test_observed_changed_paths_persisted_before_scope_decisions(self) -> None:
+        occurrences = self.text.count("manifest['observed_changed_paths'] = changed")
+        self.assertGreaterEqual(occurrences, 2)
+        self.assertIn("'observed_changed_paths': manifest.get('observed_changed_paths')", self.text)
+
+    def test_executor_manifest_primary_failure_is_threaded_into_signal(self) -> None:
+        self.assertIn("primary_failure = manifest.get('postcondition_failure') or manifest.get('publication_failure')", self.text)
+        self.assertIn("'executor_manifest_primary_failure': primary_failure", self.text)
+
+    def test_finalizer_falls_back_to_execute_job_evidence_when_publication_never_ran(self) -> None:
+        self.assertIn("Download execute-job evidence when publication never ran (execute mode)", self.text)
+        self.assertIn("Download execute-job evidence when publication never ran (verify-only mode)", self.text)
+        self.assertIn("hashFiles('p0-adapter-output/manifest.json') == ''", self.text)
 
     def test_workflow_owns_check_commit_and_exact_target_push(self) -> None:
         self.assertIn("subprocess.run(argv", self.text)

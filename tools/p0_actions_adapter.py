@@ -87,6 +87,26 @@ VERIFIER_CHECK_CONTEXT = "p0-actions-verifier"
 
 TASK_ID = "yurikuchumov-ux/ai-operating-system#29"
 
+# Issue #32 correction: the pinned Claude Code Action writes this exact,
+# untracked repository-root path as a byproduct of serializing its own
+# execution output. It is the *only* untracked path the workflow may ever
+# treat as a provider transient -- never a directory, never a glob, and
+# never anything the task's own `allowed_paths`/`denied_paths` govern (no
+# real task ever legitimately allowlists a bare repository-root
+# `output.txt`, so narrowly discarding this one exact path can never let a
+# task-created deliverable escape scope enforcement).
+PROVIDER_TRANSIENT_OUTPUT_PATH = "output.txt"
+
+# Issue #32 correction: the exact, bounded built-in tool surface the pinned
+# Claude Code Action may use. The workflow's own `--tools`/`--disallowedTools`
+# flags declare this same bound, but this module independently re-verifies it
+# from the real, preserved transcript bytes -- the executor's own claimed
+# success is never trusted as proof that no other tool ran.
+EXECUTOR_ALLOWED_TOOLS: Tuple[str, ...] = ("Read", "Edit", "Write", "Glob", "Grep")
+
+MAX_TRANSCRIPT_BYTES = 1024 * 1024
+_MAX_TRANSCRIPT_EVENTS_SCANNED = 2000
+
 # A task commit ref must be a full lowercase 40-hex object id -- never a
 # branch name, tag, short sha, or uppercase hex (all of which can move or be
 # ambiguous).
@@ -139,6 +159,8 @@ FAILURE_TERMINAL_REASON: Mapping[str, str] = {
     "ref_history_changed": "ref_history_unverifiable",
     "publication_not_verified": "adapter_error",
     "execution_evidence_mismatch": "ref_history_unverifiable",
+    "prohibited_tool_use": "scope_violation",
+    "unscannable_executor_transcript": "missing_artifact",
 }
 
 # Failure code -> the decisive registry predicate whose failure it records.
@@ -168,6 +190,45 @@ FAILURE_PREDICATE: Mapping[str, str] = {
     "ref_history_changed": "git.base_sha.equals",
     "publication_not_verified": "acceptance.required.passed",
     "execution_evidence_mismatch": "binding.execution_id.equals",
+    "prohibited_tool_use": "acceptance.required.passed",
+    "unscannable_executor_transcript": "artifact.exists",
+}
+
+# Issue #32 correction: every distinct terminal-rejection code the workflow's
+# own executor manifest (`p0-adapter-output/manifest.json`) may record --
+# either `postcondition_failure` (the `execute` job, before any push) or
+# `publication_failure` (the credential-separated `publish-target` job) --
+# normalized onto one of this module's own `FAILURE_TERMINAL_REASON` keys.
+# When the manifest already recorded *any* of these, that is the earliest
+# trusted terminal cause: a downstream observation (e.g. the target branch
+# never existing because the executor was rejected before it could be
+# pushed) is evidence of *why* publication never happened, never a
+# replacement diagnosis. `evaluate()` checks this before any downstream
+# ref-history, executor-evidence, or review check that would otherwise
+# reinterpret that absence as its own distinct failure.
+MANIFEST_FAILURE_NORMALIZATION: Mapping[str, str] = {
+    "changed_paths_not_allowed": "changed_paths_not_allowed",
+    "changed_paths_not_allowed_after_stage": "changed_paths_not_allowed",
+    "patch_scope_violation": "changed_paths_not_allowed",
+    "empty_diff": "empty_diff",
+    "empty_patch": "empty_diff",
+    "required_check_failed": "required_check_failed",
+    "publisher_required_check_failed": "required_check_failed",
+    "registered_check_mismatch": "required_check_mismatch",
+    "required_check_control_modified": "required_check_mismatch",
+    "adapter_outcome_not_success": "adapter_outcome_not_success",
+    "unverified_executor_evidence": "adapter_outcome_not_success",
+    "target_branch_mismatch": "target_branch_mismatch",
+    "adapter_session_unresolvable": "missing_executor_evidence",
+    "task_ref_binding_mismatch": "ref_history_changed",
+    "default_branch_changed_before_push": "ref_history_changed",
+    "target_branch_not_clean_base": "ref_history_changed",
+    "remote_ref_changed_before_publication": "ref_history_changed",
+    "post_push_ref_mismatch": "ref_history_changed",
+    "patch_changed_files_mismatch": "execution_evidence_mismatch",
+    "unexpected_commit_count": "execution_evidence_mismatch",
+    "prohibited_tool_use": "prohibited_tool_use",
+    "unscannable_executor_transcript": "unscannable_executor_transcript",
 }
 
 
@@ -401,6 +462,128 @@ def executor_evidence_failure(signal: Mapping[str, Any]) -> Optional[str]:
     ) is not None
     if attempted and not (has_real_session and has_run_id):
         return "missing_executor_evidence"
+    return None
+
+
+def executor_manifest_primary_failure(signal: Mapping[str, Any]) -> Optional[str]:
+    """Resolve the executor manifest's own earliest recorded terminal
+    failure (if any) to one of this module's `FAILURE_TERMINAL_REASON` codes.
+
+    Returns `None` only when the trusted signal carries no such recorded
+    failure at all (the ordinary success path, or a signal from before this
+    correction). Any non-empty recorded value -- known or not -- always
+    normalizes to a real failure code (falling back to
+    `adapter_outcome_not_success` for a value this module does not
+    specifically recognize) so that a manifest-recorded rejection can never
+    silently fall through to a downstream check that assumes the run
+    proceeded further than it actually did.
+    """
+    raw = signal.get("executor_manifest_primary_failure")
+    if not isinstance(raw, str) or not raw:
+        return None
+    return MANIFEST_FAILURE_NORMALIZATION.get(raw, "adapter_outcome_not_success")
+
+
+def transcript_tool_use_names(execution_file_content: Optional[str]) -> Optional[List[str]]:
+    """Scan the pinned Claude Code Action's own real `execution_file` bytes
+    (a JSON array of harness-emitted turn events -- the same shape
+    `tools/propagate_b3.py` already reads) for every `tool_use.name` the
+    executor actually invoked, in event order.
+
+    Returns `None` when the content cannot be *positively verified* as a
+    real transcript at all: missing, oversized, not JSON, not a JSON array,
+    an empty array, an event count exceeding `_MAX_TRANSCRIPT_EVENTS_SCANNED`
+    (the whole admitted transcript is always examined -- an event count over
+    the bound is rejected outright rather than silently scanning only a
+    truncated prefix and treating the unscanned suffix as clean), any
+    top-level event that is not itself a JSON object (e.g. `null` or a bare
+    number -- a shape that cannot be safely interpreted as "not a tool
+    call"), or any content block whose `type` is `tool_use` but whose `name`
+    is absent, non-string, or empty (a tool invocation whose target cannot
+    be identified is never treated as if it were absent).
+
+    None of these is "no tool_use observed" -- an executor cannot bypass
+    tool-policy verification merely by omitting, corrupting, oversizing, or
+    structurally mangling the one evidence source it is derived from, so the
+    caller (`transcript_tool_policy_failure`) must treat `None` as a
+    terminal failure, never as a clean scan. A non-empty, successfully and
+    fully parsed event array always returns a list (which may itself be
+    empty of *tool_use* entries if the executor genuinely invoked no tool
+    that turn).
+    """
+    if not execution_file_content:
+        return None
+    if len(execution_file_content.encode("utf-8")) > MAX_TRANSCRIPT_BYTES:
+        return None
+    try:
+        events = json.loads(execution_file_content)
+    except (json.JSONDecodeError, UnicodeDecodeError, ValueError):
+        return None
+    if not isinstance(events, list) or not events:
+        return None
+    if len(events) > _MAX_TRANSCRIPT_EVENTS_SCANNED:
+        return None
+    names: List[str] = []
+    for event in events:
+        if not isinstance(event, dict):
+            return None
+        message = event.get("message")
+        content = message.get("content") if isinstance(message, dict) else None
+        if not isinstance(content, list):
+            continue
+        for item in content:
+            if not isinstance(item, dict) or item.get("type") != "tool_use":
+                continue
+            name = item.get("name")
+            if not isinstance(name, str) or not name:
+                return None
+            names.append(name)
+    return names
+
+
+def prohibited_transcript_tool_use(execution_file_content: Optional[str]) -> Optional[str]:
+    """Return the first tool name actually invoked in the trusted transcript
+    that is outside `EXECUTOR_ALLOWED_TOOLS`, or `None` when every observed
+    `tool_use` (if any) is inside it, or when the transcript could not be
+    scanned at all. Never reads the adapter's own prose self-report -- only
+    the structural `tool_use.name` field the harness itself sets.
+
+    This narrow helper only ever reports a *proven* violation; it does not
+    itself distinguish "scanned clean" from "unscannable" -- callers that
+    must require a positively verified transcript use
+    `transcript_tool_policy_failure` instead.
+    """
+    names = transcript_tool_use_names(execution_file_content)
+    if names is None:
+        return None
+    for name in names:
+        if name not in EXECUTOR_ALLOWED_TOOLS:
+            return name
+    return None
+
+
+def transcript_tool_policy_failure(execution_file_content: Optional[str]) -> Optional[str]:
+    """The authoritative, fail-closed trusted-transcript tool-policy gate.
+
+    Returns `"unscannable_executor_transcript"` when the structural
+    transcript cannot be positively verified at all (missing, oversized,
+    malformed, non-array, or empty -- see `transcript_tool_use_names`);
+    returns `"prohibited_tool_use"` when it is verified but proves an actual
+    tool_use outside `EXECUTOR_ALLOWED_TOOLS`; returns `None` only when the
+    transcript was successfully parsed as a non-empty JSON event array and
+    every observed `tool_use` is inside the allowlist.
+
+    Resolving execution/session identity from `structured_output_raw` (see
+    `resolve_execution_identity`) is never a substitute for this check: a
+    signal can resolve a real session id while still having no verifiable
+    transcript, and such a signal must never be accepted.
+    """
+    names = transcript_tool_use_names(execution_file_content)
+    if names is None:
+        return "unscannable_executor_transcript"
+    for name in names:
+        if name not in EXECUTOR_ALLOWED_TOOLS:
+            return "prohibited_tool_use"
     return None
 
 
@@ -734,6 +917,20 @@ def evaluate(
             "task criteria cannot be truthfully evaluated by the bounded adapter",
         )
 
+    # 7b. The executor manifest's own earliest recorded terminal failure (if
+    #     any) takes precedence over every downstream check below that
+    #     assumes execution/publication proceeded. An absent target branch
+    #     after (for example) a scope rejection is downstream evidence of
+    #     that same rejection, never a distinct `ref_history_unverifiable`
+    #     diagnosis, and neither the branch nor an independent review is
+    #     required to reach this decision.
+    manifest_failure_code = executor_manifest_primary_failure(signal)
+    if manifest_failure_code:
+        return fail(
+            manifest_failure_code,
+            "executor manifest recorded an earlier terminal failure before publication",
+        )
+
     # 8. Exact default/target ref observations are mandatory in execute and
     #    verification-only modes. A later default-branch move or target-head
     #    mismatch invalidates the run.
@@ -775,13 +972,38 @@ def evaluate(
             "the real bounded executor transcript was not preserved",
         )
 
+    # 9b. Independently re-verify, from the trusted transcript's own
+    #     structural `tool_use.name` fields, that the executor invoked only
+    #     the declared edit-only tool surface. The workflow's own
+    #     `--tools`/`--disallowedTools` bound is defense-in-depth, never the
+    #     sole boundary; a Bash (or any other non-allowlisted) tool_use here
+    #     fails closed regardless of what the executor claims to have done.
+    #     A missing, oversized, malformed, non-array, or empty transcript is
+    #     never treated as "no violation found" -- resolving execution/
+    #     session identity from `structured_output_raw` above is never a
+    #     substitute for this independent, positive tool-policy verification.
+    code = transcript_tool_policy_failure(signal.get("execution_file_content"))
+    if code:
+        return fail(
+            code,
+            "trusted transcript tool-use policy could not be verified or was violated",
+        )
+
     authored_commits = list(signal.get("authored_commits") or [])
     changed_files = list(signal.get("changed_files") or [])
 
     # 10. Scope and non-empty-diff are independently recomputed in both
-    #     execute and verification-only modes.
+    #     execute and verification-only modes. The provider's own known
+    #     transient (`output.txt`) must already have been isolated upstream
+    #     -- its presence here proves that isolation failed, so it is
+    #     always a scope violation, never silently exempted at this layer.
     allowed = task.get("allowed_paths") or []
     denied = task.get("denied_paths") or []
+    if PROVIDER_TRANSIENT_OUTPUT_PATH in changed_files:
+        return fail(
+            "changed_paths_not_allowed",
+            "provider-owned transient output.txt was not isolated before scope evaluation",
+        )
     if changed_files and not changed_paths_within_scope(changed_files, allowed, denied):
         return fail(
             "changed_paths_not_allowed",
@@ -898,6 +1120,17 @@ def build_documents(decision: Decision, invocation: Mapping[str, Any], workdir: 
         artifacts.append(_artifact_entry("executor-transcript", "text/plain", meta))
         artifact_ids.append("executor-transcript")
 
+    # Issue #32 correction: the executor's own real manifest bytes
+    # (`p0-adapter-output/manifest.json` -- the primary/publication
+    # failure code, `observed_changed_paths`, etc.) are preserved as their
+    # own evidence artifact, distinct from the human-readable transcript,
+    # whenever the workflow actually produced one.
+    executor_manifest_raw = signal.get("executor_manifest_raw")
+    if isinstance(executor_manifest_raw, str) and executor_manifest_raw:
+        meta = _write_evidence(workdir, "executor-manifest.json", executor_manifest_raw.encode("utf-8"))
+        artifacts.append(_artifact_entry("executor-manifest", "application/json", meta))
+        artifact_ids.append("executor-manifest")
+
     check_observation = signal.get("required_check")
     if isinstance(check_observation, Mapping):
         check_log = check_observation.get("log")
@@ -930,6 +1163,7 @@ def build_documents(decision: Decision, invocation: Mapping[str, Any], workdir: 
     verification_evidence: List[Dict[str, Any]] = []
     for artifact_id, evidence_type in (
         ("executor-transcript", "executor_transcript"),
+        ("executor-manifest", "executor_manifest"),
         ("required-check-log", "required_check_log"),
         ("result-artifact", "result_artifact"),
     ):
@@ -977,7 +1211,9 @@ def build_documents(decision: Decision, invocation: Mapping[str, Any], workdir: 
         "pinned_action": PINNED_ADAPTER_ACTION,
         "status": decision.status,
         "terminal_reason": decision.terminal_reason,
+        "primary_terminal_reason": decision.terminal_reason,
         "failure_code": decision.failure_code,
+        "observed_changed_paths": list(signal.get("observed_changed_paths") or changed_files),
         "mode": decision.inputs.get("mode") or "execute",
         "review_attestation_commit": signal.get("review_attestation_commit"),
         "review_attestation_path": signal.get("review_attestation_path"),
@@ -1208,7 +1444,19 @@ def run_fixture(
     fixture: Mapping[str, Any], base_dir: Path, workdir: Path
 ) -> Dict[str, Any]:
     task = _resolve_document(base_dir, fixture.get("task"))
-    signal = _resolve_document(base_dir, fixture.get("executor_signal")) or {}
+    # Issue #32 correction: most executor-signal fixtures are a hash-pinned
+    # document (`{"path": ..., "sha256": ...}`), verified byte-for-byte by
+    # `_resolve_document`. A fixture may instead declare
+    # `executor_signal_inline` -- a literal signal object written directly
+    # in this reviewed manifest -- for scenarios that need a signal shape no
+    # existing pinned document has (e.g. a transcript containing a
+    # prohibited tool_use). Both forms are real, repo-reviewed fixture data;
+    # only the pinned form additionally guards against silent document drift.
+    inline_signal = fixture.get("executor_signal_inline")
+    if isinstance(inline_signal, Mapping):
+        signal = dict(inline_signal)
+    else:
+        signal = _resolve_document(base_dir, fixture.get("executor_signal")) or {}
     review = _resolve_document(base_dir, fixture.get("review_attestation"))
     verifier_identity = _resolve_document(base_dir, fixture.get("verifier_identity")) or {}
 
