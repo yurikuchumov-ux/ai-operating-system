@@ -1,0 +1,121 @@
+{
+  "schema_version": "1.0.0",
+  "task_id": "yurikuchumov-ux/ai-operating-system#35",
+  "repository": "yurikuchumov-ux/ai-operating-system",
+  "issue_number": 35,
+  "objective": "Correct only the external control-directory permission defect proven by Issue #20 live canary run 29539537080. Allow the pinned Claude executor to read /tmp/p0-control through the CLI's bounded additional-directory mechanism while preserving the exact edit-only tool surface, immutable input revalidation, changed-path enforcement, failure propagation, credential separation, and human-only merge. Add deterministic regression tests that require the narrow directory grant and reject broad permission bypass. Do not implement Issue #20 canonical naming, rename repositories, weaken scope, add Bash or network tools, deploy, merge, or add an orchestrator service.",
+  "change_policy": {
+    "change_required": true,
+    "policy_exception_id": "owner-approved-live-canary-corrective-2026-07-17",
+    "no_change": {
+      "allowed": false,
+      "reason_codes": [],
+      "required_evidence_types": []
+    }
+  },
+  "base_ref": "main",
+  "base_sha": "aab52d2547708c3f70437cb83662f1297fad7557",
+  "branch": "agent/issue-35-p0-control-dir-permission",
+  "allowed_paths": [
+    ".github/workflows/p0-actions-adapter.yml",
+    "tests/test_b3_p0_actions_adapter.py"
+  ],
+  "denied_paths": [
+    ".ai/tasks/**",
+    "AI_OS.md",
+    "README.md",
+    "CHANGELOG.md",
+    "contracts/**",
+    "docs/**",
+    "fixtures/**",
+    "requirements-*.txt",
+    "standards/**",
+    "templates/**",
+    "tools/**",
+    "tests/test_b0_contracts.py",
+    "tests/test_b1_finalizer.py",
+    "tests/test_b2_verifier.py",
+    "tests/test_b3_terminal_propagation.py"
+  ],
+  "risk_class": "L2",
+  "executor": {
+    "adapter": "human-supervised-claude-code",
+    "version": "claude-code-issue-35-p0-control-dir-permission",
+    "max_attempts": 3,
+    "timeout_seconds": 3600
+  },
+  "acceptance_criteria": [
+    {
+      "id": "AC-PERM-1",
+      "predicate_id": "process.exit_code.equals",
+      "parameters": {
+        "component": "p0-control-dir-permission-regression-suite",
+        "value": 0,
+        "trusted_evidence_source": "architect_controlled_process_exit_code",
+        "forbidden_sources": [
+          "executor_self_report",
+          "actions_job_conclusion"
+        ]
+      },
+      "required": true,
+      "linked_checks": [
+        "p0-control-dir-permission-tests"
+      ]
+    },
+    {
+      "id": "AC-PERM-2",
+      "predicate_id": "schema.instance.valid",
+      "parameters": {
+        "required_workflow_invariants": [
+          "bounded-control-directory-readable",
+          "edit-only-tool-surface-preserved",
+          "permission-bypass-forbidden",
+          "immutable-input-revalidation-preserved",
+          "task-path-scope-not-weakened",
+          "human-only-merge"
+        ],
+        "forbidden_capabilities": [
+          "bypass-permissions",
+          "automatic-merge",
+          "force-push",
+          "default-branch-write",
+          "settings-write",
+          "deployment"
+        ]
+      },
+      "required": true,
+      "linked_checks": [
+        "p0-control-dir-permission-tests"
+      ]
+    }
+  ],
+  "required_checks": [
+    {
+      "id": "p0-control-dir-permission-tests",
+      "command_id": "repo.contracts.b3.tests",
+      "required": true,
+      "expected_postconditions": [
+        {
+          "predicate_id": "process.exit_code.equals",
+          "parameters": {
+            "value": 0,
+            "architect_invocation": "python3 -m unittest discover -s tests -p test_b3_*.py"
+          }
+        }
+      ]
+    }
+  ],
+  "review_policy": {
+    "reviewer_class": "independent-engineering",
+    "policy_id": "review-independence.v1",
+    "forbidden_lineage_overlaps": [
+      "agent_runtime_id",
+      "credential_principal",
+      "authored_commits"
+    ],
+    "minimum_distinct_human_operators": 1
+  },
+  "external_side_effects": "owner_approved",
+  "created_by": "github:yurikuchumov-ux/codex-control-plane",
+  "created_at": "2026-07-16T22:30:42Z"
+}
