@@ -1,0 +1,168 @@
+{
+  "schema_version": "1.0.0",
+  "task_id": "yurikuchumov-ux/ai-operating-system#32",
+  "repository": "yurikuchumov-ux/ai-operating-system",
+  "issue_number": 32,
+  "objective": "Correct only the P0 Actions adapter defects proven by live workflow run 29484531866. Prevent provider-owned transient output.txt from entering task changed-path scope without weakening allowed/denied enforcement; replace the misleading allowedTools-only claim with an actually bounded Claude tool surface using supported CLI controls and trusted transcript evidence; persist the exact observed changed-path list on success and failure; and preserve the earliest trusted terminal failure through result, verification, workflow metadata, and Check Run even when no target branch is published. Add deterministic regression fixtures and tests for the live failure. Do not implement Issue #20 canonical naming, rename repositories, activate required status, change product behavior, deploy, merge, or add an orchestrator service.",
+  "change_policy": {
+    "change_required": true,
+    "policy_exception_id": "owner-approved-live-canary-corrective-2026-07-16",
+    "no_change": {
+      "allowed": false,
+      "reason_codes": [],
+      "required_evidence_types": []
+    }
+  },
+  "base_ref": "main",
+  "base_sha": "32b19473068b9ac58e6fd31a5c01c534acb3e2e6",
+  "branch": "agent/issue-32-p0-actions-corrective",
+  "allowed_paths": [
+    ".github/workflows/p0-actions-adapter.yml",
+    "tools/p0_actions_adapter.py",
+    "tests/test_b3_p0_actions_adapter.py",
+    "tests/test_b3_terminal_propagation.py",
+    "fixtures/p0/**"
+  ],
+  "denied_paths": [
+    ".ai/tasks/**",
+    "AI_OS.md",
+    "README.md",
+    "CHANGELOG.md",
+    "contracts/**",
+    "docs/**",
+    "requirements-*.txt",
+    "standards/**",
+    "templates/**",
+    "tests/test_b0_contracts.py",
+    "tests/test_b1_finalizer.py",
+    "tests/test_b2_verifier.py",
+    "tools/finalize_b1.py",
+    "tools/propagate_b3.py",
+    "tools/validate_b0.py",
+    "tools/verify_b2.py"
+  ],
+  "risk_class": "L2",
+  "executor": {
+    "adapter": "human-supervised-claude-code",
+    "version": "claude-code-2.1.197-issue-32-live-canary-corrective",
+    "max_attempts": 3,
+    "timeout_seconds": 7200
+  },
+  "acceptance_criteria": [
+    {
+      "id": "AC-C1",
+      "predicate_id": "process.exit_code.equals",
+      "parameters": {
+        "component": "p0-actions-corrective-registered-suite",
+        "value": 0,
+        "trusted_evidence_source": "architect_controlled_process_exit_code",
+        "forbidden_sources": [
+          "executor_self_report",
+          "actions_job_conclusion"
+        ]
+      },
+      "required": true,
+      "linked_checks": [
+        "p0-actions-corrective-tests"
+      ]
+    },
+    {
+      "id": "AC-C2",
+      "predicate_id": "fixture.pass_rate.equals",
+      "parameters": {
+        "manifest": "fixtures/p0/manifest.v1.json",
+        "expected": 1.0,
+        "oracle_owner": "control-plane-contract",
+        "required_scenarios": [
+          "exclude-provider-transient-output",
+          "prohibit-shell-tool-execution",
+          "preserve-primary-scope-failure",
+          "persist-observed-changed-paths-on-failure"
+        ]
+      },
+      "required": true,
+      "linked_checks": [
+        "p0-actions-corrective-tests"
+      ]
+    },
+    {
+      "id": "AC-C3",
+      "predicate_id": "artifact.exists",
+      "parameters": {
+        "required_result_artifact_ids": [
+          "executor-transcript",
+          "executor-manifest",
+          "result-artifact",
+          "verification-report",
+          "workflow-run-metadata"
+        ],
+        "required_provenance": [
+          "workflow_run_id",
+          "execution_id",
+          "primary_terminal_reason",
+          "observed_changed_paths"
+        ],
+        "forbidden_synthetic_evidence": true
+      },
+      "required": true,
+      "linked_checks": [
+        "p0-actions-corrective-tests"
+      ]
+    },
+    {
+      "id": "AC-C4",
+      "predicate_id": "schema.instance.valid",
+      "parameters": {
+        "required_workflow_invariants": [
+          "provider-transients-isolated-before-scope",
+          "task-path-scope-not-weakened",
+          "claude-tool-surface-explicitly-bounded",
+          "transcript-tool-policy-verified",
+          "earliest-trusted-failure-precedence",
+          "human-only-merge"
+        ],
+        "forbidden_capabilities": [
+          "automatic-merge",
+          "force-push",
+          "default-branch-write",
+          "settings-write",
+          "deployment",
+          "standalone-orchestrator-service"
+        ]
+      },
+      "required": true,
+      "linked_checks": [
+        "p0-actions-corrective-tests"
+      ]
+    }
+  ],
+  "required_checks": [
+    {
+      "id": "p0-actions-corrective-tests",
+      "command_id": "repo.contracts.b3.tests",
+      "required": true,
+      "expected_postconditions": [
+        {
+          "predicate_id": "process.exit_code.equals",
+          "parameters": {
+            "value": 0,
+            "architect_invocation": "python3 -m unittest discover -s tests -p test_b3_*.py"
+          }
+        }
+      ]
+    }
+  ],
+  "review_policy": {
+    "reviewer_class": "independent-engineering",
+    "policy_id": "review-independence.v1",
+    "forbidden_lineage_overlaps": [
+      "agent_runtime_id",
+      "credential_principal",
+      "authored_commits"
+    ],
+    "minimum_distinct_human_operators": 1
+  },
+  "external_side_effects": "owner_approved",
+  "created_by": "github:yurikuchumov-ux/codex-control-plane",
+  "created_at": "2026-07-16T08:55:19Z"
+}
