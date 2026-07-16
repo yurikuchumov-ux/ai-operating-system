@@ -1,0 +1,28 @@
+{
+  "adapter": "human-supervised-claude-code",
+  "adapter_version": "claude-code-2.1.197-issue-20-canary",
+  "adapter_attempted": true,
+  "adapter_session_present": true,
+  "execution_id": "70000000-0000-4000-8000-000000000002",
+  "workflow_run_id": "9000000005",
+  "workflow_run_attempt": "1",
+  "subject_sha": "b2c3d4e5f60718293a4b5c6d7e8f901234567890",
+  "base_sha": "5033581665f759971f8a6c5875efd2be93c2b109",
+  "authored_commits": [
+    "b2c3d4e5f60718293a4b5c6d7e8f901234567890"
+  ],
+  "changed_files": [
+    "src/canary/hello.py"
+  ],
+  "started_at": "2026-07-15T21:05:00Z",
+  "finished_at": "2026-07-15T21:07:00Z",
+  "raw_provider_terminal_reason": null,
+  "transcript": "Claude Code session 70000000-0000-4000-8000-000000000002 produced a NEW executor commit b2c3... after the prior review, invalidating any review bound to the earlier head.",
+  "executor_identity": {
+    "operator_principal": "github:yurikuchumov-ux",
+    "agent_runtime_id": "claude-code:issue-20-session",
+    "credential_principal": "github:actions:p0-executor",
+    "delegation_parent": "issue-20-owner-decision",
+    "role": "author"
+  }
+}

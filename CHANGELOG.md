@@ -1,6 +1,35 @@
 # Changelog
 
 ## Unreleased
+- Add the Issue #29 P0 Actions adapter/check: one thin, Actions-first
+  executor adapter (`tools/p0_actions_adapter.py`) and workflow
+  (`.github/workflows/p0-actions-adapter.yml`) -- not a standalone
+  orchestrator service -- so a future immutable task (e.g. Issue #20's
+  canary) can be executed by the pinned
+  `anthropics/claude-code-action@6902c227aaa9536481b99d56f3014bbbad6c6da8`
+  in a clean, permission-bounded ephemeral checkout. Every workflow input is
+  untrusted (full lowercase 40-hex task commit, allowlisted `.ai/tasks/`
+  path, `agent/*` non-default target branch); the immutable task is fetched
+  by exact commit and validated against the unmodified `task.v1` schema, and
+  base/branch are bound before any executor runs. A real Claude session id
+  is preserved, otherwise a pipeline-derived UUID5 of real run facts is used
+  (never a fabricated executor id). Independent review is bound to the exact
+  subject SHA and fails closed when missing, ineligible, self-lineage, or
+  invalidated by a new executor head. The verifier-owned Check Run (context
+  `p0-actions-verifier`) is published only from this repository's own
+  `verification.v1.passed`, never from Claude prose or an Actions job
+  conclusion; verification-only rerun mode never invokes Claude or mutates
+  the branch; the workflow never merges, force-pushes, writes the default
+  branch, edits settings, or deploys. Only the executor job holds
+  `contents: write`, scoped to the target branch. Deterministic AC-A2
+  fixtures (`fixtures/p0/manifest.v1.json`, eight required positive/negative
+  scenarios) and `tests/test_b3_p0_actions_adapter.py` prove the
+  admission/verification logic offline; produced `result.v1`/`verification.v1`
+  documents validate against the unmodified schemas. Registers the
+  `repo.p0.actions.suite` command. Does not claim GitHub branch-protection
+  or required-status enforcement -- that remains Issue #29 control-plane work
+  after this PR. The B0-B3 contracts, schemas, workflows, and tools are
+  unchanged.
 - Correct the B3 live pipeline for Issue #27 after run 29397325438 attempt 2
   proved that a valid, independent review still produced an unverifiable
   result: `result.checks`/`result.acceptance_results` were unconditionally

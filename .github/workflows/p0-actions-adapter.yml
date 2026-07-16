@@ -1,0 +1,569 @@
+name: P0 Actions Adapter
+
+# Issue #29 P0: a thin, Actions-first executor adapter/check -- NOT a
+# standalone orchestrator service. It exists so that a *future* immutable
+# task (such as Issue #20's canary) can be executed by the pinned Claude Code
+# Action in a clean, permission-bounded ephemeral checkout, its real
+# run/session/result evidence preserved even on failure, and a
+# verifier-owned Check Run (context: p0-actions-verifier) published solely
+# from this repository's own independent verification -- never from Claude
+# prose or an Actions job conclusion.
+#
+# Security invariants enforced structurally below (see AC-A5 in the immutable
+# task; the deterministic proof of the admission/verification logic lives in
+# the offline fixtures/tests, tools/p0_actions_adapter.py):
+#   * immutable-task-commit     : the task is fetched by an exact 40-hex
+#                                 commit (workflow_dispatch input), never a
+#                                 movable branch/tag.
+#   * clean-ephemeral-checkout  : every job checks out fresh; the executor
+#                                 job starts from the exact protected-main
+#                                 base SHA and creates/updates only the
+#                                 dedicated agent/* target branch.
+#   * exact-base-and-target-branch : base/head disagreement is rejected;
+#                                 target branch must equal the task's bound
+#                                 branch and be an agent/* branch, never
+#                                 main/master/<default>.
+#   * least-privilege-write-scope : only the `execute` job is granted
+#                                 `contents: write`; every other job is
+#                                 read-only. No `pull-requests: write`, no
+#                                 `id-token`, no settings/deploy scope.
+#   * always-run-finalizer      : the finalize job runs with `always()` and
+#                                 still publishes truthful evidence + a
+#                                 schema-valid result on executor failure.
+#   * verifier-controls-check-run : the Check Run conclusion is derived only
+#                                 from verification.v1.passed via
+#                                 tools/p0_actions_adapter.py.
+#   * human-only-merge          : this workflow NEVER merges. Opening a Draft
+#                                 PR remains coordinator-owned (out of scope
+#                                 here) so that doing it does not broaden this
+#                                 workflow's permissions.
+#
+# Forbidden capabilities (AC-A5 forbidden set), none of which appear below:
+# automatic-merge, force-push, default-branch-write, settings-write,
+# deployment, standalone-orchestrator-service.
+#
+# GitHub branch-protection / required-status enforcement is control-plane
+# work tracked separately in Issue #29 AFTER this PR; this workflow does not
+# and must not claim to configure repository settings.
+
+on:
+  # A pull_request event runs ONLY the read-only bootstrap tests below. It
+  # never runs the write-capable executor implicitly.
+  pull_request:
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+    inputs:
+      task_commit:
+        description: "Exact 40-hex commit of the immutable task contract (never a branch or tag)"
+        required: true
+      task_path:
+        description: "Repository-relative task path under .ai/tasks/ (allowlisted)"
+        required: true
+      target_branch:
+        description: "Dedicated agent/* target branch (never main/master/default)"
+        required: true
+      attempt:
+        description: "Execution attempt number (1-3)"
+        required: false
+        default: "1"
+      mode:
+        description: "execute (invoke the executor) or verify-only (re-verify a published subject; never invokes Claude, never mutates the branch)"
+        required: false
+        default: "execute"
+      review_ref:
+        description: "Optional control ref carrying the independent review attestation bound to the exact subject SHA (absent => fail closed)"
+        required: false
+        default: ""
+      review_path:
+        description: "Repository-relative path of the review attestation on review_ref"
+        required: false
+        default: ""
+
+# Least privilege at the top level: read-only. The single write-capable job
+# below re-declares its own narrowly scoped `contents: write`.
+permissions:
+  contents: read
+
+concurrency:
+  group: p0-actions-adapter-${{ github.ref }}-${{ github.event.inputs.target_branch }}
+  cancel-in-progress: false
+
+env:
+  PINNED_ADAPTER_ACTION: "anthropics/claude-code-action@6902c227aaa9536481b99d56f3014bbbad6c6da8"
+  VERIFIER_CHECK_CONTEXT: "p0-actions-verifier"
+  EXECUTE_JOB_TIMEOUT_MINUTES: "30"
+
+jobs:
+  # ------------------------------------------------------------------ #
+  # Read-only bootstrap tests. Runs on BOTH pull_request and
+  # workflow_dispatch. This is the registered required check
+  # (p0-actions-bootstrap-tests). It never invokes the executor.
+  # ------------------------------------------------------------------ #
+  bootstrap-tests:
+    name: P0 bootstrap tests (read-only)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: python3 -m pip install --disable-pip-version-check --no-input -r requirements-p0-actions.txt
+      - name: Run the registered P0 bootstrap suite (real, workflow-controlled exit code)
+        run: python3 -m unittest discover -s tests -p test_b3_*.py
+
+  # ------------------------------------------------------------------ #
+  # Admission control (workflow_dispatch only): validate every untrusted
+  # input, fetch and schema-validate the immutable task by exact commit,
+  # and bind branch/base BEFORE any executor is invoked. Read-only.
+  # ------------------------------------------------------------------ #
+  admission:
+    name: Admission control (validate untrusted inputs + immutable task)
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 10
+    outputs:
+      base_sha: ${{ steps.bind.outputs.base_sha }}
+      command_id: ${{ steps.bind.outputs.command_id }}
+      admitted: ${{ steps.bind.outputs.admitted }}
+    steps:
+      - name: Checkout base only (clean, ephemeral)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: python3 -m pip install --disable-pip-version-check --no-input -r requirements-p0-actions.txt
+      - name: Fetch the immutable task by exact commit (read-only, never a movable ref)
+        id: fetch_task
+        env:
+          TASK_COMMIT: ${{ github.event.inputs.task_commit }}
+          TASK_PATH: ${{ github.event.inputs.task_path }}
+        run: |
+          mkdir -p p0-output
+          set +e
+          git fetch --depth=1 origin "$TASK_COMMIT" >/dev/null 2>&1
+          if [ "$(git rev-parse --verify -q "${TASK_COMMIT}^{commit}" 2>/dev/null)" = "$TASK_COMMIT" ]; then
+            git show "${TASK_COMMIT}:${TASK_PATH}" > p0-output/task.json 2>/dev/null
+            [ -s p0-output/task.json ] || rm -f p0-output/task.json
+          fi
+          set -e
+      - name: Validate untrusted inputs, task schema, and base/branch binding
+        id: bind
+        env:
+          TASK_COMMIT: ${{ github.event.inputs.task_commit }}
+          TASK_PATH: ${{ github.event.inputs.task_path }}
+          TARGET_BRANCH: ${{ github.event.inputs.target_branch }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          BASE_SHA: ${{ github.sha }}
+        # All admission logic is in the audited, tested adapter module -- no
+        # untrusted value is ever interpolated into a shell command here.
+        run: |
+          python3 - <<'PY'
+          import os
+          import sys
+          from pathlib import Path
+          sys.path.insert(0, ".")
+          from tools import p0_actions_adapter as adapter
+
+          gh_out = os.environ["GITHUB_OUTPUT"]
+
+          def emit(key, value):
+              with open(gh_out, "a", encoding="utf-8") as handle:
+                  handle.write("{}={}\n".format(key, value))
+
+          def reject(code):
+              print("::error::admission rejected: {}".format(code))
+              emit("admitted", "false")
+              raise SystemExit(1)
+
+          task_commit = os.environ["TASK_COMMIT"]
+          task_path = os.environ["TASK_PATH"]
+          target_branch = os.environ["TARGET_BRANCH"]
+          default_branch = os.environ.get("DEFAULT_BRANCH") or "main"
+          base_sha = os.environ["BASE_SHA"]
+
+          for code in (
+              adapter.validate_task_ref(task_commit),
+              adapter.validate_task_path(task_path),
+              adapter.validate_target_branch(target_branch, default_branch),
+          ):
+              if code:
+                  reject(code)
+
+          task_file = Path("p0-output/task.json")
+          if not task_file.is_file():
+              reject("task_document_unavailable")
+          task = adapter.load_json(task_file)
+          if adapter.validate_task_document(task):
+              reject("invalid_task")
+          if task.get("branch") != target_branch:
+              reject("target_branch_mismatch")
+          if task.get("base_sha") != base_sha:
+              reject("base_sha_mismatch")
+
+          # Resolve the required check strictly from the command registry by
+          # id -- never interpolate task prose into a shell.
+          command_id = (task.get("required_checks") or [{}])[0].get("command_id", "")
+          adapter.resolve_registered_check(command_id)
+
+          emit("base_sha", base_sha)
+          emit("command_id", command_id)
+          emit("admitted", "true")
+          PY
+
+  # ------------------------------------------------------------------ #
+  # Executor (workflow_dispatch, mode=execute only). The ONLY job with
+  # `contents: write`, and only to push the dedicated agent/* branch.
+  # Never runs on pull_request; never runs in verify-only mode.
+  # ------------------------------------------------------------------ #
+  execute:
+    name: Execute adapter (bounded, least-privilege, target-branch write only)
+    needs: admission
+    if: >-
+      github.event_name == 'workflow_dispatch'
+      && github.event.inputs.mode != 'verify-only'
+      && needs.admission.outputs.admitted == 'true'
+    runs-on: ubuntu-latest
+    # Minimum branch-write permission necessary. No pull-requests, no
+    # id-token, no packages, no pages/deployments, no settings scope.
+    permissions:
+      contents: write
+    timeout-minutes: 30
+    steps:
+      - name: Clean ephemeral checkout at the exact protected-main base SHA
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.admission.outputs.base_sha }}
+          fetch-depth: 0
+      - name: Refuse to operate on a protected/default branch
+        env:
+          TARGET_BRANCH: ${{ github.event.inputs.target_branch }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          case "$TARGET_BRANCH" in
+            main|master|"$DEFAULT_BRANCH")
+              echo "::error::refusing to write protected/default branch $TARGET_BRANCH"
+              exit 1 ;;
+          esac
+          case "$TARGET_BRANCH" in
+            agent/*) : ;;
+            *) echo "::error::target branch must be an agent/* branch"; exit 1 ;;
+          esac
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies before the executor runs
+        run: python3 -m pip install --disable-pip-version-check --no-input -r requirements-p0-actions.txt
+      - name: Run executor (real pinned Claude Code Action, bounded to allowed paths)
+        id: adapter
+        # Pinned by exact commit -- never a floating tag. continue-on-error
+        # keeps the job alive so the always-run finalizer can observe and
+        # classify the real terminal state from evidence.
+        continue-on-error: true
+        uses: anthropics/claude-code-action@6902c227aaa9536481b99d56f3014bbbad6c6da8
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ github.token }}
+          prompt: |
+            You are the bounded P0 executor for the immutable task fetched at
+            commit ${{ github.event.inputs.task_commit }} (${{ github.event.inputs.task_path }}).
+            Edit ONLY the task's allowed_paths and run ONLY the registry-resolved
+            required check (command id: ${{ needs.admission.outputs.command_id }}).
+            Never edit workflows, schemas, settings, or denied paths. Never push
+            to main/master, never merge, never force-push, never deploy.
+          claude_args: |
+            --max-turns 30
+            --disallowedTools "Bash(git push --force:*),Bash(git push -f:*),Bash(gh pr merge:*),Bash(gh workflow:*),Bash(gh api:*),Bash(git push origin main:*),Bash(git push origin master:*)"
+      - name: Capture real executor evidence
+        id: capture
+        if: always()
+        env:
+          ADAPTER_OUTCOME: ${{ steps.adapter.outcome }}
+          ADAPTER_EXECUTION_FILE: ${{ steps.adapter.outputs.execution_file }}
+          ADAPTER_STRUCTURED_OUTPUT: ${{ steps.adapter.outputs.structured_output }}
+          ADAPTER_BRANCH_NAME: ${{ steps.adapter.outputs.branch_name }}
+        run: |
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          out = Path("p0-adapter-output"); out.mkdir(parents=True, exist_ok=True)
+          execution_file = os.environ.get("ADAPTER_EXECUTION_FILE") or ""
+          copied = False
+          if execution_file:
+              cand = Path(execution_file)
+              if cand.is_file() and cand.stat().st_size <= 1024 * 1024:
+                  (out / "execution-file.txt").write_bytes(cand.read_bytes())
+                  copied = True
+          (out / "manifest.json").write_text(json.dumps({
+              "adapter_outcome": os.environ.get("ADAPTER_OUTCOME") or None,
+              "adapter_execution_file_copied": copied,
+              "adapter_structured_output": os.environ.get("ADAPTER_STRUCTURED_OUTPUT") or None,
+              "adapter_branch_name": os.environ.get("ADAPTER_BRANCH_NAME") or None,
+          }, sort_keys=True), encoding="utf-8")
+          PY
+      - name: Upload real executor evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: p0-adapter-output
+          path: p0-adapter-output/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # ------------------------------------------------------------------ #
+  # Finalize + verify + publish (workflow_dispatch, always()). Produces a
+  # schema-valid result on success AND on executor failure/cancellation,
+  # then publishes the verifier-owned Check Run from verification.v1.
+  # Read-only w.r.t. the repository; only writes a Check Run.
+  # ------------------------------------------------------------------ #
+  finalize-and-verify:
+    name: Finalize, verify, and publish Check Run (always runs)
+    needs: [admission, execute]
+    if: always() && github.event_name == 'workflow_dispatch' && needs.admission.result != 'skipped'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      checks: write
+    timeout-minutes: 15
+    steps:
+      - name: Clean ephemeral checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: python3 -m pip install --disable-pip-version-check --no-input -r requirements-p0-actions.txt
+      - name: Download real executor evidence (absence is meaningful evidence)
+        if: always()
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: p0-adapter-output
+          path: p0-adapter-output
+      - name: Re-fetch the immutable task by exact commit (read-only)
+        if: always()
+        env:
+          TASK_COMMIT: ${{ github.event.inputs.task_commit }}
+          TASK_PATH: ${{ github.event.inputs.task_path }}
+        run: |
+          mkdir -p p0-output
+          set +e
+          git fetch --depth=1 origin "$TASK_COMMIT" >/dev/null 2>&1
+          if [ "$(git rev-parse --verify -q "${TASK_COMMIT}^{commit}" 2>/dev/null)" = "$TASK_COMMIT" ]; then
+            git show "${TASK_COMMIT}:${TASK_PATH}" > p0-output/task.json 2>/dev/null
+            [ -s p0-output/task.json ] || rm -f p0-output/task.json
+          fi
+          set -e
+      - name: Fetch independent review attestation (read-only; absent => fail closed)
+        if: always()
+        env:
+          REVIEW_REF: ${{ github.event.inputs.review_ref }}
+          REVIEW_PATH: ${{ github.event.inputs.review_path }}
+        run: |
+          mkdir -p p0-output
+          if [ -n "$REVIEW_REF" ] && [ -n "$REVIEW_PATH" ]; then
+            set +e
+            git fetch --depth=1 origin "$REVIEW_REF" >/dev/null 2>&1
+            git show "FETCH_HEAD:$REVIEW_PATH" > p0-output/review.json 2>/dev/null
+            [ -s p0-output/review.json ] || rm -f p0-output/review.json
+            set -e
+          fi
+      - name: Fetch the executor's pushed target branch (read-only observation)
+        id: observe
+        if: always()
+        env:
+          TARGET_BRANCH: ${{ github.event.inputs.target_branch }}
+          BASE_SHA: ${{ github.sha }}
+        run: |
+          set +e
+          git fetch --depth=50 origin "$TARGET_BRANCH" >/dev/null 2>&1
+          head="$(git rev-parse --verify -q FETCH_HEAD 2>/dev/null)"
+          set -e
+          if [ -z "$head" ]; then head="$BASE_SHA"; fi
+          {
+            echo "head_sha=$head"
+          } >> "$GITHUB_OUTPUT"
+      - name: Assemble trusted provider signal from real evidence
+        if: always()
+        env:
+          BASE_SHA: ${{ github.sha }}
+          SUBJECT_SHA: ${{ steps.observe.outputs.head_sha }}
+          WORKFLOW_RUN_ID: ${{ github.run_id }}
+          WORKFLOW_RUN_ATTEMPT: ${{ github.run_attempt }}
+          EXECUTE_RESULT: ${{ needs.execute.result }}
+          MODE: ${{ github.event.inputs.mode }}
+        # The signal is assembled from real, directly-observed facts only --
+        # never from the executor's own self-report or the Actions job
+        # conclusion (both recorded, neither trusted for pass/fail).
+        run: |
+          python3 - <<'PY'
+          import json, os, subprocess
+          from pathlib import Path
+
+          base_sha = os.environ["BASE_SHA"]
+          subject_sha = os.environ["SUBJECT_SHA"]
+          mode = os.environ.get("MODE") or "execute"
+
+          manifest = {}
+          mpath = Path("p0-adapter-output/manifest.json")
+          if mpath.is_file():
+              try:
+                  manifest = json.loads(mpath.read_text(encoding="utf-8"))
+              except (json.JSONDecodeError, UnicodeDecodeError):
+                  manifest = {}
+          adapter_attempted = bool(manifest) and mode != "verify-only"
+
+          # Real diff observation of the executor's pushed branch vs base.
+          authored = subprocess.run(
+              ["git", "rev-list", "{}..{}".format(base_sha, subject_sha)],
+              capture_output=True, text=True,
+          ).stdout.split()
+          changed = subprocess.run(
+              ["git", "diff", "--name-only", base_sha, subject_sha],
+              capture_output=True, text=True,
+          ).stdout.split()
+
+          execution_file = Path("p0-adapter-output/execution-file.txt")
+          session_present = execution_file.is_file()
+          execution_id = None
+          if session_present:
+              import re
+              blob = execution_file.read_text(encoding="utf-8", errors="replace")
+              m = re.search(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}", blob)
+              execution_id = m.group(0) if m else None
+              session_present = execution_id is not None
+
+          signal = {
+              "adapter": "human-supervised-claude-code",
+              "adapter_version": "claude-code-2.1.197-p0-actor-bootstrap",
+              "adapter_attempted": adapter_attempted,
+              "adapter_session_present": session_present,
+              "execution_id": execution_id,
+              "workflow_run_id": os.environ["WORKFLOW_RUN_ID"],
+              "workflow_run_attempt": os.environ["WORKFLOW_RUN_ATTEMPT"],
+              "subject_sha": subject_sha,
+              "base_sha": base_sha,
+              "authored_commits": authored,
+              "changed_files": changed,
+              "raw_provider_terminal_reason": None,
+              "actions_job_conclusion": os.environ.get("EXECUTE_RESULT"),
+              "executor_identity": {
+                  "operator_principal": "github:yurikuchumov-ux",
+                  "agent_runtime_id": "claude-code:p0-executor-session",
+                  "credential_principal": "github:actions:p0-executor",
+                  "delegation_parent": "issue-29-owner-decision",
+                  "role": "author",
+              },
+          }
+          Path("p0-output").mkdir(parents=True, exist_ok=True)
+          Path("p0-output/signal.json").write_text(json.dumps(signal, sort_keys=True), encoding="utf-8")
+          PY
+      - name: Finalize (independent verification; writes schema-valid result/verification/metadata)
+        if: always()
+        continue-on-error: true
+        # Untrusted inputs are passed only as quoted shell env expansions --
+        # never `${{ ... }}`-interpolated into the command line -- because
+        # this always-run step also executes when admission rejected the
+        # (still unvalidated) inputs.
+        env:
+          TASK_COMMIT: ${{ github.event.inputs.task_commit }}
+          TASK_PATH: ${{ github.event.inputs.task_path }}
+          TARGET_BRANCH: ${{ github.event.inputs.target_branch }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          ATTEMPT: ${{ github.event.inputs.attempt }}
+          MODE: ${{ github.event.inputs.mode }}
+        run: |
+          python3 tools/p0_actions_adapter.py finalize \
+            --signal p0-output/signal.json \
+            --task p0-output/task.json \
+            --review-attestation p0-output/review.json \
+            --task-commit "$TASK_COMMIT" \
+            --task-path "$TASK_PATH" \
+            --target-branch "$TARGET_BRANCH" \
+            --default-branch "$DEFAULT_BRANCH" \
+            --attempt "$ATTEMPT" \
+            --mode "$MODE" \
+            --verification-id "$(python3 -c 'import uuid; print(uuid.uuid4())')" \
+            --evaluated-at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --output-dir p0-output/pipeline \
+            | tee p0-output/metadata.json
+      - name: Upload result, verification, and workflow-run-metadata (always)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: p0-run-${{ github.run_id }}-evidence
+          path: |
+            p0-output/pipeline/result.json
+            p0-output/pipeline/verification.json
+            p0-output/pipeline/workflow-run-metadata.json
+            p0-output/pipeline/evidence/**
+          if-no-files-found: error
+          retention-days: 90
+      - name: Publish verifier-owned Check Run from independent verification only
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            // The Check Run conclusion is derived ONLY from this repository's
+            // own verification.v1.passed, carried through as
+            // check_run_conclusion by tools/p0_actions_adapter.py -- never
+            // from Claude prose or the executor job's Actions conclusion.
+            // This workflow NEVER merges, force-pushes, writes main, edits
+            // settings, or deploys.
+            const fs = require('fs');
+            const metadata = JSON.parse(
+              fs.readFileSync('p0-output/pipeline/workflow-run-metadata.json', 'utf8')
+            );
+            const conclusion = metadata.check_run_conclusion === 'success' ? 'success' : 'failure';
+            await github.rest.checks.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              name: process.env.VERIFIER_CHECK_CONTEXT,
+              head_sha: metadata.subject_sha,
+              status: 'completed',
+              conclusion: conclusion,
+              output: {
+                title: `P0 Actions verifier: ${conclusion}`,
+                summary: [
+                  `mode: ${metadata.mode}`,
+                  `task_commit: ${metadata.task_commit}`,
+                  `target_branch: ${metadata.target_branch}`,
+                  `subject_sha: ${metadata.subject_sha}`,
+                  `execution_id: ${metadata.execution_id}`,
+                  `execution_id_source: ${metadata.execution_id_source}`,
+                  `verification_passed: ${metadata.verification_passed}`,
+                  `terminal_reason: ${metadata.terminal_reason}`,
+                  `failure_code: ${metadata.failure_code}`,
+                ].join('\n'),
+              },
+            });
+      - name: Gate finalize job on the verifier's conclusion
+        if: always()
+        run: |
+          python3 -c "
+          import json, sys
+          with open('p0-output/pipeline/workflow-run-metadata.json') as handle:
+              metadata = json.load(handle)
+          conclusion = metadata['check_run_conclusion']
+          print('check_run_conclusion={}'.format(conclusion))
+          sys.exit(0 if conclusion == 'success' else 1)
+          "

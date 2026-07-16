@@ -1,0 +1,41 @@
+{
+  "schema_version": "1.0.0",
+  "task_id": "yurikuchumov-ux/ai-operating-system#20",
+  "review_id": "manual-review-20-1",
+  "reviewed_sha": "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678",
+  "reviewer_identity": {
+    "operator_principal": "human:independent-reviewer-20",
+    "agent_runtime_id": "openai:chatgpt:independent-review-session-20",
+    "credential_principal": "openai:chatgpt:account:independent-reviewer-20",
+    "delegation_parent": "owner:review-request-20",
+    "role": "reviewer",
+    "authored_commits": []
+  },
+  "eligibility": {
+    "policy_id": "review-independence.v1",
+    "risk_class": "L2",
+    "overlap_results": [
+      {
+        "field": "agent_runtime_id",
+        "overlap": false,
+        "author_values": ["claude-code:issue-20-session"],
+        "reviewer_value": "openai:chatgpt:independent-review-session-20"
+      },
+      {
+        "field": "credential_principal",
+        "overlap": false,
+        "author_values": ["github:actions:p0-executor"],
+        "reviewer_value": "openai:chatgpt:account:independent-reviewer-20"
+      },
+      {
+        "field": "authored_commits",
+        "overlap": false,
+        "author_values": ["a1b2c3d4e5f60718293a4b5c6d7e8f9012345678"],
+        "reviewer_value": "none"
+      }
+    ],
+    "eligible": true,
+    "reason_codes": []
+  },
+  "reviewed_at": "2026-07-15T20:30:00Z"
+}
