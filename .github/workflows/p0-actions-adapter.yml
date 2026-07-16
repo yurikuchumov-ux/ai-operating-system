@@ -272,6 +272,7 @@ jobs:
             --max-turns 30
             --tools "Read,Edit,Write,Glob,Grep"
             --disallowedTools "Bash,BashOutput,KillShell,WebFetch,WebSearch,Task,NotebookEdit,ExitPlanMode"
+            --add-dir /tmp/p0-control
       - name: Preserve real adapter output before any postcondition decision
         if: always()
         env:

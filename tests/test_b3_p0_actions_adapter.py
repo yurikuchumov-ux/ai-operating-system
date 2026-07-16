@@ -1152,6 +1152,53 @@ class WorkflowInvariantTests(unittest.TestCase):
         self.assertIn("default_branch_head_after", self.text)
         self.assertIn("default_after != base", self.text)
 
+    def _claude_args_block(self) -> str:
+        # The claude_args YAML block-scalar value is every line more deeply
+        # indented than the `claude_args:` key that begins with a `--` flag;
+        # bounding on indentation (not just "any indented line") keeps this
+        # from spilling into the following, less-indented workflow step.
+        match = re.search(r"claude_args:\s*\|\n((?:[ \t]{12}--\S.*\n)+)", self.text)
+        self.assertIsNotNone(match, "expected a claude_args block")
+        return match.group(1)
+
+    def test_claude_args_grant_exactly_the_narrow_control_directory(self) -> None:
+        # Issue #35 correction: the pinned Claude invocation must read
+        # /tmp/p0-control (task.json, allowed-paths.json, required-check.json)
+        # through the CLI's own bounded --add-dir mechanism -- nothing wider.
+        claude_args_block = self._claude_args_block()
+        add_dir_matches = re.findall(r"--add-dir\s+(\S+)", claude_args_block)
+        self.assertEqual(["/tmp/p0-control"], add_dir_matches)
+
+    def test_claude_args_never_grant_broad_permission_bypass(self) -> None:
+        claude_args_block = self._claude_args_block()
+        forbidden_tokens = (
+            "--dangerously-skip-permissions",
+            "--permission-mode bypassPermissions",
+            "bypassPermissions",
+            "dangerously-skip-permissions",
+        )
+        for token in forbidden_tokens:
+            self.assertNotIn(token, claude_args_block)
+        # The only --add-dir grant is the exact /tmp/p0-control path (no
+        # trailing slash, no wildcard, no additional directories appended).
+        add_dir_matches = re.findall(r"--add-dir(?:\s+\S+)+", claude_args_block)
+        for match in add_dir_matches:
+            self.assertEqual("--add-dir /tmp/p0-control", match.strip())
+
+    def test_edit_only_tool_surface_still_bounded_alongside_directory_grant(self) -> None:
+        # The narrow directory grant must coexist with, not replace, the
+        # existing edit-only --tools allowlist and Bash --disallowedTools
+        # defense-in-depth already asserted above.
+        tools_match = re.search(r'--tools\s+"([^"]*)"', self.text)
+        self.assertIsNotNone(tools_match)
+        self.assertEqual("Read,Edit,Write,Glob,Grep", tools_match.group(1))
+        disallowed_match = re.search(r'--disallowedTools\s+"([^"]*)"', self.text)
+        self.assertIsNotNone(disallowed_match)
+        disallowed_tools = {t.strip() for t in disallowed_match.group(1).split(",")}
+        self.assertIn("Bash", disallowed_tools)
+        self.assertNotIn("--allowedTools", self.text)
+        self.assertNotIn("--permission-mode", self.text)
+
 
 if __name__ == "__main__":
     unittest.main()
