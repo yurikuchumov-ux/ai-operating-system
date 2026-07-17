@@ -398,13 +398,22 @@ jobs:
               #  4. byte-for-byte identity with its canonical /tmp/p0-control peer
               # Missing, extra, substituted, symlinked, unreadable, or
               # non-removable state fails closed as executor_adapter_mismatch.
-              if not codex_control.exists():
+              try:
+                  control_exists = codex_control.exists()
+                  control_is_symlink = codex_control.is_symlink() if control_exists else False
+                  control_is_dir = codex_control.is_dir() if control_exists and not control_is_symlink else False
+              except (OSError, IOError):
                   control_failure = 'executor_adapter_mismatch'
-              elif codex_control.is_symlink():
+                  control_exists = False
+                  control_is_symlink = False
+                  control_is_dir = False
+              if control_failure is None and not control_exists:
                   control_failure = 'executor_adapter_mismatch'
-              elif not codex_control.is_dir():
+              elif control_failure is None and control_is_symlink:
                   control_failure = 'executor_adapter_mismatch'
-              else:
+              elif control_failure is None and not control_is_dir:
+                  control_failure = 'executor_adapter_mismatch'
+              elif control_failure is None:
                   # It is a real directory. Validate structure and content.
                   expected_files = {'task.json', 'allowed-paths.json', 'required-check.json'}
                   try:

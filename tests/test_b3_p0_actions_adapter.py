@@ -1490,57 +1490,37 @@ class CodexControlCleanupTests(unittest.TestCase):
         return canonical, workspace
 
     def _run_cleanup_logic(self, tmp_canonical: Path, workspace: Path) -> str | None:
-        """Execute the workflow's cleanup logic and return control_failure."""
-        import os as _os, stat as _stat, shutil
-        codex_control = workspace / ".p0-codex-control"
-        control_failure = None
-        # Inline the exact workflow cleanup logic (Issue #43 corrected).
-        if not codex_control.exists():
-            control_failure = 'executor_adapter_mismatch'
-        elif codex_control.is_symlink():
-            control_failure = 'executor_adapter_mismatch'
-        elif not codex_control.is_dir():
-            control_failure = 'executor_adapter_mismatch'
-        else:
-            expected_files = {'task.json', 'allowed-paths.json', 'required-check.json'}
-            try:
-                observed_files = set(_os.listdir(codex_control))
-                if observed_files != expected_files:
-                    control_failure = 'executor_adapter_mismatch'
-                else:
-                    for name in expected_files:
-                        workspace_file = codex_control / name
-                        canonical_file = tmp_canonical / "p0-control" / name
-                        if workspace_file.is_symlink():
-                            control_failure = 'executor_adapter_mismatch'
-                            break
-                        if not workspace_file.is_file():
-                            control_failure = 'executor_adapter_mismatch'
-                            break
-                        if not canonical_file.is_file():
-                            control_failure = 'executor_adapter_mismatch'
-                            break
-                        if canonical_file.is_symlink():
-                            control_failure = 'executor_adapter_mismatch'
-                            break
-                        workspace_bytes = workspace_file.read_bytes()
-                        canonical_bytes = canonical_file.read_bytes()
-                        if workspace_bytes != canonical_bytes:
-                            control_failure = 'executor_adapter_mismatch'
-                            break
-            except (OSError, IOError):
-                control_failure = 'executor_adapter_mismatch'
-        if control_failure is None:
-            try:
-                for item in codex_control.iterdir():
-                    item.chmod(item.stat().st_mode | _stat.S_IWUSR)
-                codex_control.chmod(codex_control.stat().st_mode | _stat.S_IWUSR)
-                shutil.rmtree(codex_control)
-                if codex_control.exists():
-                    control_failure = 'executor_adapter_mismatch'
-            except (OSError, IOError):
-                control_failure = 'executor_adapter_mismatch'
-        return control_failure
+        """Execute the exact cleanup block embedded in the workflow.
+
+        Extracting the production block makes these regressions sensitive to
+        semantic workflow changes instead of testing a hand-maintained copy.
+        Only the absolute canonical-control path is redirected into the test
+        fixture; all filesystem operations remain the production operations.
+        """
+        import os
+        import textwrap
+
+        workflow = WORKFLOW_PATH.read_text(encoding="utf-8")
+        start = "          codex_control = Path('.p0-codex-control')\n"
+        end = "          manifest = {\n"
+        self.assertEqual(1, workflow.count(start))
+        cleanup_source = start + workflow.split(start, 1)[1].split(end, 1)[0]
+
+        canonical_control = tmp_canonical / "p0-control"
+
+        def workflow_path(value: str | Path) -> Path:
+            if str(value) == "/tmp/p0-control":
+                return canonical_control
+            return Path(value)
+
+        namespace = {"Path": workflow_path, "is_codex": True}
+        previous_cwd = Path.cwd()
+        try:
+            os.chdir(workspace)
+            exec(textwrap.dedent(cleanup_source), namespace)
+        finally:
+            os.chdir(previous_cwd)
+        return namespace["control_failure"]
 
     def test_valid_readonly_directory_is_removed_and_proven_absent(self) -> None:
         """Positive case: a real non-empty read-only directory with exactly
@@ -1638,6 +1618,87 @@ class CodexControlCleanupTests(unittest.TestCase):
         control_dir.chmod(control_dir.stat().st_mode & ~0o222)
         failure = self._run_cleanup_logic(tmp, workspace)
         self.assertEqual('executor_adapter_mismatch', failure)
+
+    def test_unreadable_directory_listing_fails_closed(self) -> None:
+        """Negative: a listdir permission failure deterministically fails closed."""
+        from unittest.mock import patch
+
+        tmp = _tmp_dir()
+        workspace = _tmp_dir()
+        self._setup_control_dirs(tmp, workspace)
+        with patch("os.listdir", side_effect=PermissionError("unreadable control directory")):
+            failure = self._run_cleanup_logic(tmp, workspace)
+        self.assertEqual('executor_adapter_mismatch', failure)
+
+    def test_unreadable_control_file_fails_closed(self) -> None:
+        """Negative: a read_bytes failure deterministically fails closed."""
+        from unittest.mock import patch
+
+        tmp = _tmp_dir()
+        workspace = _tmp_dir()
+        self._setup_control_dirs(tmp, workspace)
+        original_read_bytes = Path.read_bytes
+
+        def fail_workspace_read(path: Path) -> bytes:
+            if path.parent.name == ".p0-codex-control":
+                raise PermissionError("unreadable control file")
+            return original_read_bytes(path)
+
+        with patch.object(Path, "read_bytes", autospec=True, side_effect=fail_workspace_read):
+            failure = self._run_cleanup_logic(tmp, workspace)
+        self.assertEqual('executor_adapter_mismatch', failure)
+
+    def test_control_stat_failure_fails_closed(self) -> None:
+        """Negative: a control-directory stat failure deterministically fails closed."""
+        from unittest.mock import patch
+
+        tmp = _tmp_dir()
+        workspace = _tmp_dir()
+        self._setup_control_dirs(tmp, workspace)
+        original_stat = Path.stat
+
+        def fail_control_stat(path: Path, *args, **kwargs):
+            if path.name == ".p0-codex-control":
+                raise PermissionError("unreadable control metadata")
+            return original_stat(path, *args, **kwargs)
+
+        with patch.object(Path, "stat", autospec=True, side_effect=fail_control_stat):
+            failure = self._run_cleanup_logic(tmp, workspace)
+        self.assertEqual('executor_adapter_mismatch', failure)
+
+    def test_chmod_failure_fails_closed(self) -> None:
+        """Negative: inability to restore write permission fails closed."""
+        from unittest.mock import patch
+
+        tmp = _tmp_dir()
+        workspace = _tmp_dir()
+        self._setup_control_dirs(tmp, workspace)
+        with patch.object(Path, "chmod", autospec=True, side_effect=PermissionError("chmod denied")):
+            failure = self._run_cleanup_logic(tmp, workspace)
+        self.assertEqual('executor_adapter_mismatch', failure)
+
+    def test_rmtree_failure_fails_closed(self) -> None:
+        """Negative: an exception from removal deterministically fails closed."""
+        from unittest.mock import patch
+
+        tmp = _tmp_dir()
+        workspace = _tmp_dir()
+        self._setup_control_dirs(tmp, workspace)
+        with patch("shutil.rmtree", side_effect=PermissionError("removal denied")):
+            failure = self._run_cleanup_logic(tmp, workspace)
+        self.assertEqual('executor_adapter_mismatch', failure)
+
+    def test_directory_remaining_after_rmtree_fails_closed(self) -> None:
+        """Negative: a non-raising removal that leaves the directory fails closed."""
+        from unittest.mock import patch
+
+        tmp = _tmp_dir()
+        workspace = _tmp_dir()
+        _, control_dir = self._setup_control_dirs(tmp, workspace)
+        with patch("shutil.rmtree", return_value=None):
+            failure = self._run_cleanup_logic(tmp, workspace)
+        self.assertEqual('executor_adapter_mismatch', failure)
+        self.assertTrue(control_dir.exists())
 
     def test_workflow_has_exact_codex_control_cleanup_logic(self) -> None:
         """Meta-test: the workflow contains the exact Issue #43 cleanup logic."""
