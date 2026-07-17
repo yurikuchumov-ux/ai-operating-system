@@ -1,0 +1,50 @@
+{
+  "schema_version": "1.0.0",
+  "task_id": "yurikuchumov-ux/ai-operating-system#40",
+  "review_id": "external-gpt-review-issue-40-996449b-1",
+  "reviewed_sha": "996449bbeaaaa6c794be0d719dd6c1d42b5cef7c",
+  "reviewer_identity": {
+    "operator_principal": "human:yurykuchumov",
+    "agent_runtime_id": "openai:chatgpt:independent-review-session",
+    "credential_principal": "openai:chatgpt:account:yurykuchumov",
+    "delegation_parent": "owner:issue-40-review-request",
+    "role": "reviewer",
+    "authored_commits": []
+  },
+  "eligibility": {
+    "policy_id": "review-independence.v1",
+    "risk_class": "L3",
+    "overlap_results": [
+      {
+        "field": "agent_runtime_id",
+        "overlap": false,
+        "author_values": [
+          "openai:codex:019f55ba-98f5-70d2-833d-28fa75cc5658"
+        ],
+        "reviewer_value": "openai:chatgpt:independent-review-session"
+      },
+      {
+        "field": "credential_principal",
+        "overlap": false,
+        "author_values": [
+          "github:cli:yurikuchumov-ux"
+        ],
+        "reviewer_value": "openai:chatgpt:account:yurykuchumov"
+      },
+      {
+        "field": "authored_commits",
+        "overlap": false,
+        "author_values": [
+          "305b15e0d374c675325cd03979cbb9f22cf5b9ad",
+          "778d274ca4509255548e1c2a3819d79b4ea3cf5c",
+          "996449bbeaaaa6c794be0d719dd6c1d42b5cef7c",
+          "ab3202fd5cdb0fc4da57c3d663843b2a8ca87ea7"
+        ],
+        "reviewer_value": "none"
+      }
+    ],
+    "eligible": true,
+    "reason_codes": []
+  },
+  "reviewed_at": "2026-07-17T09:44:02Z"
+}
