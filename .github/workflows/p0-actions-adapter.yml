@@ -69,6 +69,8 @@ jobs:
         with:
           python-version: "3.11"
       - run: python3 -m pip install --disable-pip-version-check --no-input -r requirements-p0-actions.txt
+      - name: Prepare cross-platform private temp root
+        run: sudo install -d -m 1777 /private/tmp
       - name: Verify exact immutable Issue 40 task routing regression
         run: python3 -m unittest tests.test_b3_p0_actions_adapter.CodexActionEvidenceTests.test_exact_issue_40_bootstrap_binding_resolves_to_codex_action -v
       - name: Run registered bootstrap command

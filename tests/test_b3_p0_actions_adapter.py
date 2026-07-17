@@ -1261,6 +1261,8 @@ class WorkflowInvariantTests(unittest.TestCase):
         self.assertIn("ref: ${{ github.event.pull_request.head.sha || github.sha }}", bootstrap)
         self.assertIn("fetch-depth: 0", bootstrap)
         self.assertIn("persist-credentials: false", bootstrap)
+        self.assertIn("Prepare cross-platform private temp root", bootstrap)
+        self.assertIn("sudo install -d -m 1777 /private/tmp", bootstrap)
         self.assertIn("Verify exact immutable Issue 40 task routing regression", bootstrap)
         self.assertIn("Run full repository suite", bootstrap)
         self.assertIn("Parse workflow YAML independently", bootstrap)
