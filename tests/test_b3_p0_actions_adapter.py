@@ -32,8 +32,15 @@ from jsonschema import Draft202012Validator, FormatChecker
 
 from tools import p0_actions_adapter as adapter
 from tools.p0_actions_adapter import (
+    CODEX_EXECUTOR_ADAPTER,
     Decision,
     PINNED_ADAPTER_ACTION,
+    PINNED_CODEX_ACTION,
+    PINNED_CODEX_CLI_VERSION,
+    PINNED_CODEX_EFFORT,
+    PINNED_CODEX_MODEL,
+    PINNED_CODEX_PERMISSION_PROFILE,
+    PINNED_CODEX_SAFETY_STRATEGY,
     PROVIDER_TRANSIENT_OUTPUT_PATH,
     VERIFIER_CHECK_CONTEXT,
     build_documents,
@@ -45,6 +52,7 @@ from tools.p0_actions_adapter import (
     run_suite,
     transcript_tool_policy_failure,
     transcript_tool_use_names,
+    validate_executor_adapter,
     validate_target_branch,
     validate_task_path,
     validate_task_ref,
@@ -263,6 +271,105 @@ class ExecutionIdentityTests(unittest.TestCase):
         self.assertEqual(
             "missing_executor_evidence", adapter.executor_evidence_failure(signal)
         )
+
+
+class CodexActionEvidenceTests(unittest.TestCase):
+    """Issue #40: Codex has truthful run-bound evidence, never a fabricated
+    Claude session or transcript."""
+
+    def _codex_case(self):
+        task = _load(DOCUMENTS_DIR / "task-issue-20-canary.json")
+        task["executor"]["adapter"] = CODEX_EXECUTOR_ADAPTER
+        task["executor"]["version"] = PINNED_CODEX_CLI_VERSION
+        signal = _load(DOCUMENTS_DIR / "executor-signal-accept.json")
+        signal.update(
+            {
+                "adapter": CODEX_EXECUTOR_ADAPTER,
+                "adapter_version": "codex-cli-{}".format(PINNED_CODEX_CLI_VERSION),
+                "adapter_action": PINNED_CODEX_ACTION,
+                "codex_cli_version": PINNED_CODEX_CLI_VERSION,
+                "codex_model": PINNED_CODEX_MODEL,
+                "codex_effort": PINNED_CODEX_EFFORT,
+                "codex_permission_profile": PINNED_CODEX_PERMISSION_PROFILE,
+                "codex_safety_strategy": PINNED_CODEX_SAFETY_STRATEGY,
+                "execution_evidence_run_attempt": "1",
+                "execution_file_content": None,
+                "structured_output_raw": None,
+                "transcript": None,
+                "codex_final_message": "Implemented the bounded task.",
+                "executor_identity": {
+                    "operator_principal": "github:yurikuchumov-ux",
+                    "agent_runtime_id": "openai-codex-action:run-9000000001",
+                    "credential_principal": "openai:api-key:github-secret:OPENAI_API_KEY",
+                    "delegation_parent": "issue-20-owner-decision",
+                    "role": "author",
+                },
+            }
+        )
+        review = _load(DOCUMENTS_DIR / "review-accept.json")
+        for overlap in review["eligibility"]["overlap_results"]:
+            if overlap["field"] == "agent_runtime_id":
+                overlap["author_values"] = [signal["executor_identity"]["agent_runtime_id"]]
+            elif overlap["field"] == "credential_principal":
+                overlap["author_values"] = [signal["executor_identity"]["credential_principal"]]
+        inputs = {
+            "task_commit": signal["executor_task_commit"],
+            "task_path": signal["executor_task_path"],
+            "target_branch": task["branch"],
+            "default_branch": "main",
+            "attempt": 1,
+            "mode": "execute",
+        }
+        return inputs, task, signal, review
+
+    def test_codex_run_is_accepted_without_claude_transcript(self) -> None:
+        inputs, task, signal, review = self._codex_case()
+        decision = evaluate(inputs, task, signal, review)
+        self.assertTrue(decision.accepted, decision.failure_code)
+        self.assertEqual("codex_action_run", decision.execution_id_source)
+        import uuid as _uuid
+        _uuid.UUID(decision.execution_id)
+
+    def test_codex_policy_mismatch_fails_closed(self) -> None:
+        inputs, task, signal, review = self._codex_case()
+        signal["codex_safety_strategy"] = "unsafe"
+        decision = evaluate(inputs, task, signal, review)
+        self.assertFalse(decision.accepted)
+        self.assertEqual("executor_adapter_mismatch", decision.failure_code)
+
+    def test_manifest_executor_adapter_shape_uses_codex_policy(self) -> None:
+        _, _, signal, _ = self._codex_case()
+        manifest = dict(signal)
+        manifest["executor_adapter"] = manifest.pop("adapter")
+        self.assertIsNone(adapter.codex_action_evidence_failure(manifest))
+        manifest["codex_model"] = "some-default-model"
+        self.assertEqual(
+            "executor_adapter_mismatch",
+            adapter.codex_action_evidence_failure(manifest),
+        )
+
+    def test_codex_requires_positive_run_attempt_and_real_invocation(self) -> None:
+        _, _, signal, _ = self._codex_case()
+        signal["adapter_attempted"] = False
+        self.assertEqual("missing_executor_evidence", adapter.executor_evidence_failure(signal))
+        signal["adapter_attempted"] = True
+        signal["execution_evidence_run_attempt"] = "0"
+        self.assertEqual("missing_executor_evidence", adapter.executor_evidence_failure(signal))
+
+    def test_task_and_signal_adapter_must_match(self) -> None:
+        inputs, task, signal, review = self._codex_case()
+        task["executor"]["adapter"] = "human-supervised-claude-code"
+        decision = evaluate(inputs, task, signal, review)
+        self.assertEqual("executor_adapter_mismatch", decision.failure_code)
+
+    def test_issue_39_cannot_replay_a_fourth_claude_attempt(self) -> None:
+        _, task, _, _ = self._codex_case()
+        task["task_id"] = "yurikuchumov-ux/ai-operating-system#39"
+        task["issue_number"] = 39
+        task["executor"]["adapter"] = "human-supervised-claude-code"
+        self.assertEqual("executor_attempts_exhausted", validate_executor_adapter(task))
+        task["executor"]["adapter"] = CODEX_EXECUTOR_ADAPTER
+        self.assertIsNone(validate_executor_adapter(task))
 
 
 class TruthfulLiveSignalTests(unittest.TestCase):
@@ -912,6 +1019,15 @@ class ExecutorManifestPrimaryFailurePrecedenceTests(unittest.TestCase):
         self.assertFalse(decision.accepted)
         self.assertEqual("adapter_outcome_not_success", decision.failure_code)
 
+    def test_control_integrity_failure_keeps_its_primary_reason(self) -> None:
+        task = _load(DOCUMENTS_DIR / "task-issue-20-canary.json")
+        signal = self._base_signal()
+        signal["executor_manifest_primary_failure"] = "control_integrity_failed"
+        decision = evaluate(self._inputs(), task, signal, None)
+        self.assertFalse(decision.accepted)
+        self.assertEqual("control_integrity_failed", decision.failure_code)
+        self.assertEqual("ref_history_unverifiable", decision.terminal_reason)
+
     def test_success_path_is_unaffected_and_still_requires_branch_and_review(self) -> None:
         """No manifest primary failure recorded: the ordinary success path,
         including the exact target branch and an independent review, is
@@ -1024,6 +1140,54 @@ class WorkflowInvariantTests(unittest.TestCase):
         self.assertIn(PINNED_ADAPTER_ACTION, self.text)
         self.assertNotIn("claude-code-action@main", self.text)
         self.assertNotIn("claude-code-action@v", self.text)
+
+    def test_codex_action_and_cli_are_exactly_pinned(self) -> None:
+        self.assertIn("uses: {}".format(PINNED_CODEX_ACTION), self.text)
+        self.assertNotIn("openai/codex-action@v", self.text)
+        self.assertIn('codex-version: "{}"'.format(PINNED_CODEX_CLI_VERSION), self.text)
+        self.assertIn("model: {}".format(PINNED_CODEX_MODEL), self.text)
+        self.assertIn("effort: {}".format(PINNED_CODEX_EFFORT), self.text)
+
+    def test_codex_security_profile_and_secret_boundary_are_exact(self) -> None:
+        codex_step = self.text.split("- name: Codex edits the workspace", 1)[1].split(
+            "- name: Preserve real adapter output", 1
+        )[0]
+        self.assertIn('permission-profile: "{}"'.format(PINNED_CODEX_PERMISSION_PROFILE), codex_step)
+        self.assertIn("safety-strategy: {}".format(PINNED_CODEX_SAFETY_STRATEGY), codex_step)
+        self.assertIn("openai-api-key: ${{ secrets.OPENAI_API_KEY }}", codex_step)
+        self.assertNotIn("github-token:", codex_step)
+        self.assertNotIn("github_token:", codex_step)
+        self.assertNotIn("sandbox:", codex_step)
+        execute_checkout = self.text.split("  execute:", 1)[1].split("  publish-target:", 1)[0]
+        self.assertIn("persist-credentials: false", execute_checkout)
+
+    def test_codex_is_selected_only_from_immutable_task_adapter(self) -> None:
+        self.assertIn("executor_adapter: ${{ steps.bind.outputs.executor_adapter }}", self.text)
+        self.assertIn("adapter.task_executor_adapter(task)", self.text)
+        self.assertIn(
+            "if: needs.admission.outputs.executor_adapter == 'openai-codex-action'",
+            self.text,
+        )
+        self.assertIn(
+            "if: needs.admission.outputs.executor_adapter == 'human-supervised-claude-code'",
+            self.text,
+        )
+
+    def test_codex_has_run_evidence_without_fabricated_claude_transcript(self) -> None:
+        self.assertIn("codex-final-message.txt", self.text)
+        self.assertIn("adapter.codex_action_evidence_failure(manifest)", self.text)
+        self.assertIn("execution_evidence_run_attempt", self.text)
+        self.assertIn("openai-codex-action:run-", self.text)
+        self.assertNotIn("executor-transcript.txt').write_text(codex_final", self.text)
+        self.assertIn("shutil.rmtree(codex_control)", self.text)
+        # output.txt is a known Claude action byproduct only. A Codex-created
+        # output.txt must remain visible to the ordinary scope rejection.
+        self.assertIn("if not is_codex and provider_transient.is_file():", self.text)
+
+    def test_control_hash_failure_is_preserved_before_python_import(self) -> None:
+        self.assertIn("control_integrity_failed=false", self.text)
+        self.assertIn('d["postcondition_failure"]="control_integrity_failed"', self.text)
+        self.assertIn('manifest.get(\'postcondition_failure\')', self.text)
 
     def test_workflow_dispatch_inputs_present(self) -> None:
         for token in ("workflow_dispatch", "task_commit", "task_path", "target_branch", "mode"):

@@ -5,8 +5,9 @@ P0 infrastructure bootstrap (Issue #29). It is *not* a standalone
 orchestrator service: it is the trusted admission-control and finalization
 logic that the companion workflow
 (`.github/workflows/p0-actions-adapter.yml`) calls so that a *future*
-immutable task (such as Issue #20's canary) can be executed by the pinned
-Claude Code Action in a clean, permission-bounded ephemeral checkout.
+immutable task can be executed by either the pinned Claude Code Action or
+the pinned OpenAI Codex Action in a clean, permission-bounded ephemeral
+checkout.
 
 Design invariants (mirrored, never re-implemented, from the merged B0-B3
 contracts and the B3 workflow):
@@ -20,20 +21,18 @@ contracts and the B3 workflow):
     executor is invoked. Repository, branch, base SHA, risk class, attempt,
     and allowed/denied paths are bound from that validated task, never from
     caller prose.
-  * A real Claude session/execution id is preserved when the adapter
-    actually ran. When the adapter never attempted (admission failed before
-    invocation) the execution id is a *pipeline-derived* UUID5 of real run
-    facts, labelled `execution_id_source == "pipeline_derived"`; an executor
-    id is never synthesized to stand in for a session the adapter claimed to
-    have but cannot prove.
+  * A real Claude session id is preserved for Claude. Codex Action exposes no
+    equivalent structural session, so its UUID is derived from immutable
+    Actions run facts and labelled `codex_action_run`, never represented as a
+    Claude transcript/session.
   * Independent review is a separate input bound to the exact subject SHA. A
     missing, ineligible, self-lineage, or stale-head (post-review executor
     commit) review fails closed.
   * The Check Run conclusion is derived only from this module's independent
     verification (`verification.v1`), never from Claude prose or an Actions
     job conclusion.
-  * Verification-only rerun mode never invokes Claude and never mutates the
-    branch.
+  * Verification-only rerun mode never invokes either author adapter and
+    never mutates the branch.
 
 The module writes only schema-valid `result.v1` / `verification.v1`
 documents plus a `workflow-run-metadata.json` provenance record, and exposes
@@ -76,10 +75,23 @@ VERIFICATION_SCHEMA_PATH = SCHEMA_DIR / "verification.v1.schema.json"
 REVIEW_SCHEMA_PATH = SCHEMA_DIR / "review-attestation.v1.schema.json"
 COMMAND_REGISTRY_PATH = REPO_ROOT / "contracts/registries/commands.v1.json"
 
-# The exact, pinned Claude Code Action commit already proven on
-# origin/design/issue-12-executor-orchestrator and reused by the B3 workflow.
-# A floating tag is never permitted.
-PINNED_ADAPTER_ACTION = "anthropics/claude-code-action@6902c227aaa9536481b99d56f3014bbbad6c6da8"
+# Exact action pins.  The original name is retained as an alias because the
+# existing fixture suite imports it while the workflow now has two bounded
+# author paths.
+PINNED_CLAUDE_ACTION = "anthropics/claude-code-action@6902c227aaa9536481b99d56f3014bbbad6c6da8"
+PINNED_CODEX_ACTION = "openai/codex-action@52fe01ec70a42f454c9d2ebd47598f9fd6893d56"
+PINNED_ADAPTER_ACTION = PINNED_CLAUDE_ACTION
+
+CLAUDE_EXECUTOR_ADAPTER = "human-supervised-claude-code"
+CODEX_EXECUTOR_ADAPTER = "openai-codex-action"
+SUPPORTED_EXECUTOR_ADAPTERS = frozenset(
+    {CLAUDE_EXECUTOR_ADAPTER, CODEX_EXECUTOR_ADAPTER}
+)
+PINNED_CODEX_CLI_VERSION = "0.144.5"
+PINNED_CODEX_MODEL = "gpt-5.3-codex"
+PINNED_CODEX_EFFORT = "high"
+PINNED_CODEX_PERMISSION_PROFILE = ":workspace"
+PINNED_CODEX_SAFETY_STRATEGY = "drop-sudo"
 
 # The stable, verifier-owned Check Run context. The workflow publishes this
 # Check Run's conclusion solely from `verification.v1.passed`.
@@ -161,6 +173,10 @@ FAILURE_TERMINAL_REASON: Mapping[str, str] = {
     "execution_evidence_mismatch": "ref_history_unverifiable",
     "prohibited_tool_use": "scope_violation",
     "unscannable_executor_transcript": "missing_artifact",
+    "executor_adapter_unsupported": "adapter_error",
+    "executor_adapter_mismatch": "identity_unverifiable",
+    "executor_attempts_exhausted": "adapter_error",
+    "control_integrity_failed": "ref_history_unverifiable",
 }
 
 # Failure code -> the decisive registry predicate whose failure it records.
@@ -192,6 +208,10 @@ FAILURE_PREDICATE: Mapping[str, str] = {
     "execution_evidence_mismatch": "binding.execution_id.equals",
     "prohibited_tool_use": "acceptance.required.passed",
     "unscannable_executor_transcript": "artifact.exists",
+    "executor_adapter_unsupported": "schema.instance.valid",
+    "executor_adapter_mismatch": "binding.execution_id.equals",
+    "executor_attempts_exhausted": "acceptance.required.passed",
+    "control_integrity_failed": "binding.execution_id.equals",
 }
 
 # Issue #32 correction: every distinct terminal-rejection code the workflow's
@@ -229,6 +249,10 @@ MANIFEST_FAILURE_NORMALIZATION: Mapping[str, str] = {
     "unexpected_commit_count": "execution_evidence_mismatch",
     "prohibited_tool_use": "prohibited_tool_use",
     "unscannable_executor_transcript": "unscannable_executor_transcript",
+    "executor_adapter_mismatch": "executor_adapter_mismatch",
+    "executor_adapter_unsupported": "executor_adapter_unsupported",
+    "executor_attempts_exhausted": "executor_attempts_exhausted",
+    "control_integrity_failed": "control_integrity_failed",
 }
 
 
@@ -364,6 +388,37 @@ def validate_task_document(task: Any) -> Optional[str]:
     return None
 
 
+def task_executor_adapter(task: Mapping[str, Any]) -> Optional[str]:
+    """Return the immutable task's requested author adapter."""
+    executor = task.get("executor")
+    value = executor.get("adapter") if isinstance(executor, Mapping) else None
+    return value if isinstance(value, str) and value else None
+
+
+def validate_executor_adapter(task: Mapping[str, Any]) -> Optional[str]:
+    """Fail closed on unknown adapters and on any further Claude attempt for
+    Issue #39, whose three Claude iterations are already exhausted.
+
+    A future Issue #39 corrective task may explicitly select the Codex action;
+    an old immutable Claude task can therefore never be replayed as attempt 4.
+    """
+    requested = task_executor_adapter(task)
+    if requested not in SUPPORTED_EXECUTOR_ADAPTERS:
+        return "executor_adapter_unsupported"
+    if task.get("task_id") == "yurikuchumov-ux/ai-operating-system#39" and requested != CODEX_EXECUTOR_ADAPTER:
+        return "executor_attempts_exhausted"
+    return None
+
+
+def is_codex_executor(signal_or_task: Mapping[str, Any]) -> bool:
+    """Recognize Codex from a trusted signal or immutable task."""
+    return (
+        signal_or_task.get("adapter") == CODEX_EXECUTOR_ADAPTER
+        or signal_or_task.get("executor_adapter") == CODEX_EXECUTOR_ADAPTER
+        or task_executor_adapter(signal_or_task) == CODEX_EXECUTOR_ADAPTER
+    )
+
+
 # --------------------------------------------------------------------------
 # Path scoping (allowed / denied globs)
 # --------------------------------------------------------------------------
@@ -434,6 +489,20 @@ def resolve_execution_identity(
     real run facts is used and labelled `pipeline_derived` -- never a
     fabricated session id.
     """
+    if is_codex_executor(signal):
+        # codex-action does not expose a Claude-style session transcript/id.
+        # Bind a schema-valid UUID to the original Actions execution facts and
+        # label the source honestly; this is a run identity, not a session.
+        subject = signal.get("subject_sha") or signal.get("base_sha") or "0" * 40
+        return (
+            derive_pipeline_execution_id(
+                str(signal.get("execution_evidence_run_id") or "0"),
+                str(signal.get("execution_evidence_run_attempt") or "1"),
+                str(subject),
+            ),
+            "codex_action_run",
+        )
+
     execution_id = resolve_adapter_session_id(
         signal.get("execution_file_content"),
         signal.get("structured_output_raw"),
@@ -455,6 +524,19 @@ def executor_evidence_failure(signal: Mapping[str, Any]) -> Optional[str]:
     """Reject when the adapter claimed to run but no real run/session
     execution evidence can be preserved."""
     attempted = bool(signal.get("adapter_attempted"))
+    if is_codex_executor(signal):
+        run_id = signal.get("execution_evidence_run_id")
+        run_attempt = signal.get("execution_evidence_run_attempt")
+        if (
+            not attempted
+            or not isinstance(run_id, str)
+            or not run_id.isdigit()
+            or not isinstance(run_attempt, str)
+            or not run_attempt.isdigit()
+            or int(run_attempt) < 1
+        ):
+            return "missing_executor_evidence"
+        return codex_action_evidence_failure(signal)
     has_run_id = bool(signal.get("workflow_run_id"))
     has_real_session = resolve_adapter_session_id(
         signal.get("execution_file_content"),
@@ -462,6 +544,29 @@ def executor_evidence_failure(signal: Mapping[str, Any]) -> Optional[str]:
     ) is not None
     if attempted and not (has_real_session and has_run_id):
         return "missing_executor_evidence"
+    return None
+
+
+def codex_action_evidence_failure(signal: Mapping[str, Any]) -> Optional[str]:
+    """Validate the trusted, run-bound Codex invocation policy.
+
+    codex-action currently exposes only a final message, not a structural
+    tool transcript.  Success therefore depends on exact workflow-controlled
+    configuration plus real downstream diff/scope/check/ref observations;
+    neither the final message nor an Actions job conclusion is sufficient.
+    """
+    if not is_codex_executor(signal):
+        return None
+    expected = {
+        "adapter_action": PINNED_CODEX_ACTION,
+        "codex_cli_version": PINNED_CODEX_CLI_VERSION,
+        "codex_model": PINNED_CODEX_MODEL,
+        "codex_effort": PINNED_CODEX_EFFORT,
+        "codex_permission_profile": PINNED_CODEX_PERMISSION_PROFILE,
+        "codex_safety_strategy": PINNED_CODEX_SAFETY_STRATEGY,
+    }
+    if any(signal.get(key) != value for key, value in expected.items()):
+        return "executor_adapter_mismatch"
     return None
 
 
@@ -895,6 +1000,16 @@ def evaluate(
     if code:
         return fail(code, "fetched task does not satisfy task.v1")
 
+    code = validate_executor_adapter(task)
+    if code:
+        return fail(code, "task requests an unsupported or exhausted executor adapter")
+    requested_adapter = task_executor_adapter(task)
+    if signal.get("adapter") != requested_adapter:
+        return fail(
+            "executor_adapter_mismatch",
+            "trusted execution evidence does not match the immutable task adapter",
+        )
+
     # 5. Bind target branch to the validated task.
     if task.get("branch") != target_branch:
         return fail(
@@ -966,28 +1081,28 @@ def evaluate(
         return fail("execution_evidence_mismatch", "executor evidence run id is missing")
     if is_verification_only(inputs.get("mode")) and str(inputs.get("execution_run_id") or "") != evidence_run_id:
         return fail("execution_evidence_mismatch", "verify-only replay did not use the requested exact run")
-    if not isinstance(signal.get("transcript"), str) or not signal.get("transcript"):
-        return fail(
-            "missing_executor_transcript",
-            "the real bounded executor transcript was not preserved",
-        )
+    if is_codex_executor(signal):
+        # Do not invent a Claude transcript for Codex. The exact pinned
+        # action/sandbox/model policy was checked by executor_evidence_failure;
+        # real diff, scope, command exit, refs and review are checked below.
+        code = codex_action_evidence_failure(signal)
+        if code:
+            return fail(code, "Codex action policy evidence is incomplete or mismatched")
+    else:
+        if not isinstance(signal.get("transcript"), str) or not signal.get("transcript"):
+            return fail(
+                "missing_executor_transcript",
+                "the real bounded executor transcript was not preserved",
+            )
 
-    # 9b. Independently re-verify, from the trusted transcript's own
-    #     structural `tool_use.name` fields, that the executor invoked only
-    #     the declared edit-only tool surface. The workflow's own
-    #     `--tools`/`--disallowedTools` bound is defense-in-depth, never the
-    #     sole boundary; a Bash (or any other non-allowlisted) tool_use here
-    #     fails closed regardless of what the executor claims to have done.
-    #     A missing, oversized, malformed, non-array, or empty transcript is
-    #     never treated as "no violation found" -- resolving execution/
-    #     session identity from `structured_output_raw` above is never a
-    #     substitute for this independent, positive tool-policy verification.
-    code = transcript_tool_policy_failure(signal.get("execution_file_content"))
-    if code:
-        return fail(
-            code,
-            "trusted transcript tool-use policy could not be verified or was violated",
-        )
+        # Claude provides a structural transcript, so independently verify
+        # its real tool_use names rather than trusting provider prose.
+        code = transcript_tool_policy_failure(signal.get("execution_file_content"))
+        if code:
+            return fail(
+                code,
+                "trusted transcript tool-use policy could not be verified or was violated",
+            )
 
     authored_commits = list(signal.get("authored_commits") or [])
     changed_files = list(signal.get("changed_files") or [])
@@ -1120,6 +1235,14 @@ def build_documents(decision: Decision, invocation: Mapping[str, Any], workdir: 
         artifacts.append(_artifact_entry("executor-transcript", "text/plain", meta))
         artifact_ids.append("executor-transcript")
 
+    codex_final_message = signal.get("codex_final_message")
+    if isinstance(codex_final_message, str) and codex_final_message:
+        meta = _write_evidence(
+            workdir, "codex-final-message.txt", codex_final_message.encode("utf-8")
+        )
+        artifacts.append(_artifact_entry("codex-final-message", "text/plain", meta))
+        artifact_ids.append("codex-final-message")
+
     # Issue #32 correction: the executor's own real manifest bytes
     # (`p0-adapter-output/manifest.json` -- the primary/publication
     # failure code, `observed_changed_paths`, etc.) are preserved as their
@@ -1163,6 +1286,7 @@ def build_documents(decision: Decision, invocation: Mapping[str, Any], workdir: 
     verification_evidence: List[Dict[str, Any]] = []
     for artifact_id, evidence_type in (
         ("executor-transcript", "executor_transcript"),
+        ("codex-final-message", "executor_summary"),
         ("executor-manifest", "executor_manifest"),
         ("required-check-log", "required_check_log"),
         ("result-artifact", "result_artifact"),
@@ -1208,7 +1332,7 @@ def build_documents(decision: Decision, invocation: Mapping[str, Any], workdir: 
         "verification_passed": decision.accepted,
         "check_run_conclusion": decision.check_run_conclusion,
         "verifier_context": VERIFIER_CHECK_CONTEXT,
-        "pinned_action": PINNED_ADAPTER_ACTION,
+        "pinned_action": signal.get("adapter_action") or PINNED_ADAPTER_ACTION,
         "status": decision.status,
         "terminal_reason": decision.terminal_reason,
         "primary_terminal_reason": decision.terminal_reason,
