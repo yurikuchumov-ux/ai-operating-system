@@ -61,12 +61,33 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
       - run: python3 -m pip install --disable-pip-version-check --no-input -r requirements-p0-actions.txt
+      - name: Verify exact immutable Issue 40 task routing regression
+        run: python3 -m unittest tests.test_b3_p0_actions_adapter.CodexActionEvidenceTests.test_exact_issue_40_bootstrap_binding_resolves_to_codex_action -v
       - name: Run registered bootstrap command
         run: python3 -m unittest discover -s tests -p 'test_b3_*.py'
+      - name: Run full repository suite
+        run: python3 -m unittest discover -s tests
+      - name: Parse workflow YAML independently
+        run: |
+          ruby -e 'require "yaml"; d=YAML.safe_load(File.read(".github/workflows/p0-actions-adapter.yml"), aliases: true); abort "unexpected jobs" unless d.fetch("jobs").keys.sort == %w[admission bootstrap-tests execute finalize-and-verify publish-target].sort'
+      - name: Validate exact PR diff
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$HEAD_SHA"
+          git fetch --no-tags origin "$BASE_SHA" "$HEAD_SHA"
+          test "$(git merge-base "$BASE_SHA" "$HEAD_SHA")" = "$BASE_SHA"
+          git diff --check "$BASE_SHA..$HEAD_SHA"
 
   admission:
     name: Admission control

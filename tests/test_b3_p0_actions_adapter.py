@@ -1256,6 +1256,20 @@ class WorkflowInvariantTests(unittest.TestCase):
         self.assertIn("github.event_name == 'workflow_dispatch'", self.text)
         self.assertIn("github.event.inputs.mode == 'execute'", self.text)
 
+    def test_pr_bootstrap_emits_exact_head_review_evidence(self) -> None:
+        bootstrap = self.text.split("  bootstrap-tests:", 1)[1].split("  admission:", 1)[0]
+        self.assertIn("ref: ${{ github.event.pull_request.head.sha || github.sha }}", bootstrap)
+        self.assertIn("fetch-depth: 0", bootstrap)
+        self.assertIn("persist-credentials: false", bootstrap)
+        self.assertIn("Verify exact immutable Issue 40 task routing regression", bootstrap)
+        self.assertIn("Run full repository suite", bootstrap)
+        self.assertIn("Parse workflow YAML independently", bootstrap)
+        self.assertIn("Validate exact PR diff", bootstrap)
+        self.assertIn("BASE_SHA: ${{ github.event.pull_request.base.sha }}", bootstrap)
+        self.assertIn("HEAD_SHA: ${{ github.event.pull_request.head.sha }}", bootstrap)
+        self.assertIn('test "$(git rev-parse HEAD)" = "$HEAD_SHA"', bootstrap)
+        self.assertIn('git diff --check "$BASE_SHA..$HEAD_SHA"', bootstrap)
+
     def test_top_level_permissions_read_only(self) -> None:
         # The top-level permissions block grants only contents: read.
         top = self.text.split("jobs:", 1)[0]
