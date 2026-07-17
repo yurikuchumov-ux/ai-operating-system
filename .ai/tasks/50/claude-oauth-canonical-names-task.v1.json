@@ -1,0 +1,95 @@
+{
+  "schema_version": "1.0.0",
+  "task_id": "yurikuchumov-ux/ai-operating-system#50",
+  "repository": "yurikuchumov-ux/ai-operating-system",
+  "issue_number": 50,
+  "objective": "Using one human-supervised Claude Code subscription OAuth session and no metered API credential, complete canonical repository-name governance from Issue 42 attempt-3 evidence. Preserve exactly yurikuchumov-ux/ai-operating-system, yurikuchumov-ux/ai-development-studio-template, and yurikuchumov-ux/-ai-development-studio. In the two allowed files only, use token-aware legacy ai-development-studio alias matching so template suffix and leading-hyphen repository are not aliases. All regressions must be unittest.TestCase methods collected by registered discovery, increase the 292-test B3 base, and run directly through unittest. Reject unknown owners/repositories and canonical name/URL mutations; permit aliases only in explicitly historical, incorrect, or discrepancy contexts; do not require a legacy full-owner URL. Correct the canonical inventory false match and double-escaped discovery regex. Do not change other paths or weaken invariants.",
+  "change_policy": {
+    "change_required": true,
+    "policy_exception_id": null,
+    "no_change": {
+      "allowed": false,
+      "reason_codes": [],
+      "required_evidence_types": []
+    }
+  },
+  "base_ref": "main",
+  "base_sha": "9cd102ced47fa1ba5f2d844e43acf5ce7ec3e718",
+  "branch": "agent/issue-50-claude-oauth-canonical-names",
+  "allowed_paths": [
+    "docs/AI_DEVELOPMENT_STUDIO_EXECUTION_PLAN.md",
+    "tests/test_b3_canonical_repository_names.py"
+  ],
+  "denied_paths": [
+    ".ai/tasks/**",
+    ".github/**",
+    "AI_OS.md",
+    "README.md",
+    "CHANGELOG.md",
+    "contracts/**",
+    "fixtures/**",
+    "requirements-*.txt",
+    "standards/**",
+    "templates/**",
+    "tools/**",
+    "tests/test_b0_contracts.py",
+    "tests/test_b1_finalizer.py",
+    "tests/test_b2_verifier.py",
+    "tests/test_b3_p0_actions_adapter.py",
+    "tests/test_b3_terminal_propagation.py"
+  ],
+  "risk_class": "L2",
+  "executor": {
+    "adapter": "human-supervised-claude-code",
+    "version": "claude-code-oauth-issue-50-canonical-names-v1",
+    "max_attempts": 1,
+    "timeout_seconds": 1800
+  },
+  "acceptance_criteria": [
+    {
+      "id": "AC-NAME-CLAUDE-OAUTH-1",
+      "predicate_id": "process.exit_code.equals",
+      "parameters": {
+        "component": "issue-50-canonical-repository-name-suite",
+        "value": 0,
+        "trusted_evidence_source": "coordinator_observed_process_exit_code",
+        "forbidden_sources": [
+          "executor_self_report",
+          "actions_job_conclusion"
+        ]
+      },
+      "required": true,
+      "linked_checks": [
+        "issue-50-canonical-name-tests"
+      ]
+    }
+  ],
+  "required_checks": [
+    {
+      "id": "issue-50-canonical-name-tests",
+      "command_id": "repo.contracts.b3.tests",
+      "required": true,
+      "expected_postconditions": [
+        {
+          "predicate_id": "process.exit_code.equals",
+          "parameters": {
+            "value": 0
+          }
+        }
+      ]
+    }
+  ],
+  "review_policy": {
+    "reviewer_class": "independent-engineering",
+    "policy_id": "review-independence.v1",
+    "forbidden_lineage_overlaps": [
+      "agent_runtime_id",
+      "credential_principal",
+      "authored_commits"
+    ],
+    "minimum_distinct_human_operators": 1
+  },
+  "external_side_effects": "owner_approved",
+  "created_by": "github:yurikuchumov-ux/codex-control-plane",
+  "created_at": "2026-07-17T13:10:00Z"
+}
