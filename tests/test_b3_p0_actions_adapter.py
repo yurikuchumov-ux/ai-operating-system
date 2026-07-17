@@ -1181,7 +1181,9 @@ class WorkflowInvariantTests(unittest.TestCase):
             self.assertNotIn(token, claude_args_block)
         # The only --add-dir grant is the exact /tmp/p0-control path (no
         # trailing slash, no wildcard, no additional directories appended).
-        add_dir_matches = re.findall(r"--add-dir(?:\s+\S+)+", claude_args_block)
+        # Matched within a single line only: `\s` would otherwise cross the
+        # newline into the following `--permission-mode` flag.
+        add_dir_matches = re.findall(r"--add-dir(?:[ \t]+\S+)+", claude_args_block)
         for match in add_dir_matches:
             self.assertEqual("--add-dir /tmp/p0-control", match.strip())
 
@@ -1197,7 +1199,26 @@ class WorkflowInvariantTests(unittest.TestCase):
         disallowed_tools = {t.strip() for t in disallowed_match.group(1).split(",")}
         self.assertIn("Bash", disallowed_tools)
         self.assertNotIn("--allowedTools", self.text)
-        self.assertNotIn("--permission-mode", self.text)
+
+    def test_claude_args_declare_exactly_accept_edits_permission_mode(self) -> None:
+        # Issue #37 correction: the pinned Claude invocation must run under
+        # the supported non-interactive `acceptEdits` permission mode so
+        # bounded Read/Edit/Write/Glob/Grep operations are no longer denied
+        # for want of interactive approval, without widening the tool
+        # surface or granting a permission bypass.
+        claude_args_block = self._claude_args_block()
+        permission_mode_matches = re.findall(r"--permission-mode\s+(\S+)", claude_args_block)
+        self.assertEqual(["acceptEdits"], permission_mode_matches)
+
+    def test_claude_args_reject_any_other_or_duplicate_permission_mode(self) -> None:
+        claude_args_block = self._claude_args_block()
+        permission_mode_matches = re.findall(r"--permission-mode\s+(\S+)", claude_args_block)
+        # Exactly one declaration, and it must be exactly "acceptEdits" --
+        # never a duplicate, a different mode, or a bypass-equivalent value.
+        self.assertEqual(1, len(permission_mode_matches))
+        for forbidden_mode in ("bypassPermissions", "plan", "default", "acceptedits", "AcceptEdits"):
+            self.assertNotEqual(forbidden_mode, permission_mode_matches[0])
+        self.assertNotIn("bypassPermissions", claude_args_block)
 
 
 if __name__ == "__main__":
