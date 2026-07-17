@@ -1,0 +1,100 @@
+{
+  "schema_version": "1.0.0",
+  "task_id": "yurikuchumov-ux/ai-operating-system#51",
+  "repository": "yurikuchumov-ux/ai-operating-system",
+  "issue_number": 51,
+  "objective": "Implement the Issue 51 registry, schema, fail-closed validator and B3 tests from clean main. Enforce exact registry-to-section-3.1 equality for role, repository/link URL, visibility, SHA and boundary; one exact five-column table; three five-cell rows; one repository link with paired backticks or none; no links elsewhere. Reject substitutions, duplicates, shadows, malformed links and unreadable/Unicode/JSON inputs with deterministic JSON. Run 29602444147 failed only test_mutation_wrong_repository_order, test_table_has_five_columns and test_table_matches_registry_count: their fixtures hit schema_validation_failed before the intended table predicate. Make fixtures schema-valid or call the bounded table parser directly; never weaken assertions to accept unrelated schema failure. Positive real inputs and all adversarial mutations must pass. Use Claude Pro OAuth Actions only; no API keys or metered fallback. Change only allowed files.",
+  "change_policy": {
+    "change_required": true,
+    "policy_exception_id": null,
+    "no_change": {
+      "allowed": false,
+      "reason_codes": [],
+      "required_evidence_types": []
+    }
+  },
+  "base_ref": "main",
+  "base_sha": "9cd102ced47fa1ba5f2d844e43acf5ce7ec3e718",
+  "branch": "agent/issue-51-canonical-repository-registry-v4",
+  "allowed_paths": [
+    "contracts/canonical-repositories.v1.json",
+    "contracts/schemas/canonical-repositories.v1.schema.json",
+    "tools/validate_canonical_repositories.py",
+    "tests/test_b3_canonical_repository_registry.py",
+    "docs/AI_DEVELOPMENT_STUDIO_EXECUTION_PLAN.md"
+  ],
+  "denied_paths": [
+    ".ai/tasks/**",
+    ".github/**",
+    "AI_OS.md",
+    "README.md",
+    "CHANGELOG.md",
+    "fixtures/**",
+    "requirements-*.txt",
+    "standards/**",
+    "templates/**",
+    "tests/test_b0_contracts.py",
+    "tests/test_b1_finalizer.py",
+    "tests/test_b2_verifier.py",
+    "tests/test_b3_canonical_repository_names.py",
+    "tests/test_b3_p0_actions_adapter.py",
+    "tests/test_b3_terminal_propagation.py",
+    "tools/p0_actions_adapter.py",
+    "tools/validate_b0.py",
+    "tools/verify_b2.py"
+  ],
+  "risk_class": "L2",
+  "executor": {
+    "adapter": "human-supervised-claude-code",
+    "version": "claude-code-oauth-actions-issue-51-registry-v4-owner-authorized",
+    "max_attempts": 1,
+    "timeout_seconds": 1800
+  },
+  "acceptance_criteria": [
+    {
+      "id": "AC-CANONICAL-REGISTRY-1",
+      "predicate_id": "process.exit_code.equals",
+      "parameters": {
+        "component": "issue-51-canonical-repository-registry-suite",
+        "value": 0,
+        "trusted_evidence_source": "coordinator_observed_process_exit_code",
+        "forbidden_sources": [
+          "executor_self_report",
+          "actions_job_conclusion"
+        ]
+      },
+      "required": true,
+      "linked_checks": [
+        "issue-51-canonical-registry-tests"
+      ]
+    }
+  ],
+  "required_checks": [
+    {
+      "id": "issue-51-canonical-registry-tests",
+      "command_id": "repo.contracts.b3.tests",
+      "required": true,
+      "expected_postconditions": [
+        {
+          "predicate_id": "process.exit_code.equals",
+          "parameters": {
+            "value": 0
+          }
+        }
+      ]
+    }
+  ],
+  "review_policy": {
+    "reviewer_class": "independent-engineering",
+    "policy_id": "review-independence.v1",
+    "forbidden_lineage_overlaps": [
+      "agent_runtime_id",
+      "credential_principal",
+      "authored_commits"
+    ],
+    "minimum_distinct_human_operators": 1
+  },
+  "external_side_effects": "owner_approved",
+  "created_by": "github:yurikuchumov-ux/codex-control-plane",
+  "created_at": "2026-07-17T18:17:00Z"
+}
