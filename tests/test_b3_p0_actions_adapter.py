@@ -1199,6 +1199,34 @@ class WorkflowInvariantTests(unittest.TestCase):
         self.assertNotIn("claude-code-action@main", self.text)
         self.assertNotIn("claude-code-action@v", self.text)
 
+    def test_claude_authentication_is_subscription_oauth_only(self) -> None:
+        claude_step = self.text.split(
+            "- name: Claude edits files only", 1
+        )[1].split("- name: Codex edits the workspace", 1)[0]
+        oauth_binding = (
+            "claude_code_oauth_token: "
+            "${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}"
+        )
+        self.assertEqual(1, claude_step.count(oauth_binding))
+        self.assertNotIn("anthropic_api_key:", claude_step)
+        self.assertNotIn("ANTHROPIC_API_KEY", claude_step)
+
+    def test_claude_authentication_has_no_metered_provider_fallback(self) -> None:
+        claude_step = self.text.split(
+            "- name: Claude edits files only", 1
+        )[1].split("- name: Codex edits the workspace", 1)[0]
+        forbidden_provider_inputs = (
+            "anthropic_federation_rule_id:",
+            "anthropic_organization_id:",
+            "anthropic_service_account_id:",
+            "anthropic_workspace_id:",
+            "use_bedrock:",
+            "use_vertex:",
+            "use_foundry:",
+        )
+        for forbidden in forbidden_provider_inputs:
+            self.assertNotIn(forbidden, claude_step)
+
     def test_codex_action_and_cli_are_exactly_pinned(self) -> None:
         self.assertIn("uses: {}".format(PINNED_CODEX_ACTION), self.text)
         self.assertNotIn("openai/codex-action@v", self.text)
