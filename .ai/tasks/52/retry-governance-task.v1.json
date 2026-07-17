@@ -1,0 +1,89 @@
+{
+  "schema_version": "1.0.0",
+  "task_id": "yurikuchumov-ux/ai-operating-system#52",
+  "repository": "yurikuchumov-ux/ai-operating-system",
+  "issue_number": 52,
+  "objective": "Update only the execution plan so retry governance is explicit and internally consistent. After three failed attempts, automatic continuation must stop and TaskState must become BLOCKED pending an owner decision. A fourth or later bounded attempt is allowed only when new material evidence is recorded, the owner explicitly authorizes it in repository-backed evidence, and a new immutable task revision, execution ID, result artifact and exact-SHA independent review are required. The owner may retain the same executor or select a replacement; replacement is not mandatory. Preserve independent verifier/reviewer separation, the human merge decision, and the prohibition on executor self-approval. Do not change product implementation, workflow adapters, credentials, billing paths, merge behavior, readiness scoring, schemas or tests.",
+  "change_policy": {
+    "change_required": true,
+    "policy_exception_id": null,
+    "no_change": {
+      "allowed": false,
+      "reason_codes": [],
+      "required_evidence_types": []
+    }
+  },
+  "base_ref": "main",
+  "base_sha": "9cd102ced47fa1ba5f2d844e43acf5ce7ec3e718",
+  "branch": "agent/issue-52-retry-governance",
+  "allowed_paths": [
+    "docs/AI_DEVELOPMENT_STUDIO_EXECUTION_PLAN.md"
+  ],
+  "denied_paths": [
+    ".ai/tasks/**",
+    ".github/**",
+    "contracts/**",
+    "fixtures/**",
+    "requirements-*.txt",
+    "tests/**",
+    "tools/**",
+    "src/**",
+    "AI_OS.md",
+    "README.md",
+    "CHANGELOG.md"
+  ],
+  "risk_class": "L2",
+  "executor": {
+    "adapter": "human-supervised-claude-code",
+    "version": "claude-code-oauth-actions-issue-52-retry-governance-v1-owner-authorized",
+    "max_attempts": 1,
+    "timeout_seconds": 900
+  },
+  "acceptance_criteria": [
+    {
+      "id": "AC-RETRY-GOVERNANCE-1",
+      "predicate_id": "process.exit_code.equals",
+      "parameters": {
+        "component": "retry-governance-plan-update",
+        "value": 0,
+        "trusted_evidence_source": "coordinator_observed_process_exit_code",
+        "forbidden_sources": [
+          "executor_self_report",
+          "actions_job_conclusion"
+        ]
+      },
+      "required": true,
+      "linked_checks": [
+        "retry-governance-regression-tests"
+      ]
+    }
+  ],
+  "required_checks": [
+    {
+      "id": "retry-governance-regression-tests",
+      "command_id": "repo.contracts.b3.tests",
+      "required": true,
+      "expected_postconditions": [
+        {
+          "predicate_id": "process.exit_code.equals",
+          "parameters": {
+            "value": 0
+          }
+        }
+      ]
+    }
+  ],
+  "review_policy": {
+    "reviewer_class": "independent-engineering",
+    "policy_id": "review-independence.v1",
+    "forbidden_lineage_overlaps": [
+      "agent_runtime_id",
+      "credential_principal",
+      "authored_commits"
+    ],
+    "minimum_distinct_human_operators": 1
+  },
+  "external_side_effects": "owner_approved",
+  "created_by": "github:yurikuchumov-ux/codex-control-plane",
+  "created_at": "2026-07-17T18:31:04Z"
+}
