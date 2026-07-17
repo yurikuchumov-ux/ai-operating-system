@@ -104,6 +104,34 @@ branch rules. No production-readiness credit can be earned for actor separation
 until required reviews and checks are technically enforced, or an equivalent
 owner-approved control is proven for the private repository.
 
+### 3.3 Canonical name validation boundary
+
+**DECISION:** task contracts must use only the exact canonical repository names
+from section 3.1. Noncanonical URLs and genuinely unlabeled aliases are rejected
+at task validation.
+
+The B3 test suite `tests/test_b3_canonical_repository_names.py` validates that:
+
+- the three canonical repository names from section 3.1 are accepted;
+- `yurikuchumov-ux/ai-project-template` is rejected with guidance to use
+  `yurikuchumov-ux/ai-development-studio-template`;
+- `yurikuchumov-ux/ai-development-studio` (without leading hyphen) is rejected
+  with guidance to use `yurikuchumov-ux/-ai-development-studio`;
+- unknown repository names not in the explicit allowlist are rejected;
+- task contracts with noncanonical repository fields fail validation.
+
+**Boundary:** text explicitly marked as historical, incorrect, or appearing in
+comparison/discrepancy tables (such as section 5's "Verified discrepancies"
+table with column headers "Source claim" and "Repository evidence") is permitted
+because the table structure makes clear that noncanonical names are documented
+as incorrect claims, not specifications. VERIFIED FACT statements may reference
+noncanonical names when explicitly stating they "do not exist" and providing
+the correct canonical name.
+
+The test suite validates both rejection of unlabeled noncanonical names in
+task/contract contexts and acceptance of properly-labeled comparison contexts in
+documentation.
+
 ## 4. Issue, Pull Request, and workflow baseline
 
 ### 4.1 Operating-system Issues
