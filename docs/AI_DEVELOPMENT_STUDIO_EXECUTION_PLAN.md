@@ -623,6 +623,13 @@ enable enforceable protection on the public control repositories or prove an
 equivalent ruleset. The private voice repository requires an owner decision on
 plan/visibility or a different enforceable merge gate before production.
 
+### 10.3 Claude Actions authentication policy
+
+**DECISION:** Claude Actions defaults to subscription OAuth authentication
+through `CLAUDE_CODE_OAUTH_TOKEN`. Use of `ANTHROPIC_API_KEY`, AWS Bedrock,
+Google Vertex AI, Azure AI Foundry, or any other metered-provider fallback
+requires separate explicit Product Owner approval recorded before dispatch.
+
 ## 11. Voice-agent P0 security baseline
 
 The voice repository is an adversarial reference product and remains
