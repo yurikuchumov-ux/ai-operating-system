@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/yurikuchumov-ux/ai-operating-system/contracts/schemas/canonical-repositories.v1.schema.json",
+  "title": "AI OS Canonical Repositories Registry v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "registry_type", "repositories"],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "registry_type": {"const": "canonical_repositories"},
+    "repositories": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["role", "repository", "visibility", "main_sha", "boundary"],
+        "properties": {
+          "role": {"type": "string", "minLength": 1},
+          "repository": {"type": "string", "pattern": "^[a-zA-Z0-9_-]+/[a-zA-Z0-9_.-]+$"},
+          "visibility": {"enum": ["public", "private"]},
+          "main_sha": {"type": "string", "pattern": "^[a-f0-9]{40}$"},
+          "boundary": {"type": "string", "minLength": 1}
+        }
+      }
+    }
+  }
+}

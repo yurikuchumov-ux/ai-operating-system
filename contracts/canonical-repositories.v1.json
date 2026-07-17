@@ -1,0 +1,27 @@
+{
+  "schema_version": "1.0.0",
+  "registry_type": "canonical_repositories",
+  "repositories": [
+    {
+      "role": "Governance and shared contracts",
+      "repository": "yurikuchumov-ux/ai-operating-system",
+      "visibility": "public",
+      "main_sha": "a36a8eefcdd06c56edeec93057a90c58a239cf22",
+      "boundary": "owns governance, schemas, reusable workflows and evidence contracts"
+    },
+    {
+      "role": "Compliant repository fixture",
+      "repository": "yurikuchumov-ux/ai-development-studio-template",
+      "visibility": "public",
+      "main_sha": "ec088bf2e95e048ce1f5b69d969542b516afbc8b",
+      "boundary": "owns the minimal downstream skeleton and repeatability tests"
+    },
+    {
+      "role": "Voice reference product",
+      "repository": "yurikuchumov-ux/-ai-development-studio",
+      "visibility": "private",
+      "main_sha": "f6550d4078ffccc952db269081619fdfe57e598c",
+      "boundary": "owns product runtime, domain tests and product deployment"
+    }
+  ]
+}

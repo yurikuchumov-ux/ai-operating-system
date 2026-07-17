@@ -84,6 +84,20 @@ hyphen are not the canonical current GitHub name.
 Renaming `-ai-development-studio` is a separate owner-controlled migration and
 is not performed by this planning PR.
 
+**VERIFIED FACT:** the canonical repository registry
+(`contracts/canonical-repositories.v1.json`) with schema
+(`contracts/schemas/canonical-repositories.v1.schema.json`), offline validator
+(`tools/validate_canonical_repositories.py`) and B3 unit tests
+(`tests/test_b3_canonical_repository_registry.py`) enforce exactly these three
+owner-approved identities with exact field matching. The validator emits
+deterministic machine-readable failures for missing, extra, duplicate,
+substituted, malformed, unreadable, invalid-UTF-8 or invalid-JSON inputs, and
+validates the exact structure of this section 3.1 table (one section, the exact
+five-column header, a valid five-column separator, exactly five cells per data
+row, and repository cells containing exactly one Markdown link with paired
+backticks or none, rejecting unbalanced backticks, prefix/suffix text and
+multiple links).
+
 ### 3.2 Branch and protection baseline
 
 **VERIFIED FACT:** all three repositories use `main` as the default branch.
