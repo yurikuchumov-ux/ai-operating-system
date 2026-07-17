@@ -1,0 +1,95 @@
+{
+  "schema_version": "1.0.0",
+  "task_id": "yurikuchumov-ux/ai-operating-system#40",
+  "repository": "yurikuchumov-ux/ai-operating-system",
+  "issue_number": 40,
+  "objective": "Bootstrap a second truthful author path in the existing P0 Actions adapter after Sonnet exhausted Issue 39. Select Codex only when the immutable task declares executor.adapter openai-codex-action. Pin openai/codex-action at 52fe01ec70a42f454c9d2ebd47598f9fd6893d56, model gpt-5.3-codex, explicit effort, permission-profile :workspace, and safety-strategy drop-sudo. Keep the execute job read-only to GitHub and preserve exact-base checkout, scope enforcement, registered checks, binary patch, separate publisher, immutable evidence, independent review binding and human merge. Record truthful run-bound Codex identity without inventing a Claude transcript. Preserve the Claude path for unrelated tasks but never route Issue 39 to it again. Add deterministic false-success and security regression tests. Do not add an orchestrator service, deployment, product behavior, new secrets, automatic merge, or paths outside the declared scope.",
+  "change_policy": {
+    "change_required": true,
+    "policy_exception_id": null,
+    "no_change": {
+      "allowed": false,
+      "reason_codes": [],
+      "required_evidence_types": []
+    }
+  },
+  "base_ref": "main",
+  "base_sha": "5c295472d1c81e48888fe64bc1e2c9328bba03e8",
+  "branch": "agent/issue-40-codex-actions-bootstrap",
+  "allowed_paths": [
+    ".github/workflows/p0-actions-adapter.yml",
+    "tools/p0_actions_adapter.py",
+    "tests/test_b3_p0_actions_adapter.py"
+  ],
+  "denied_paths": [
+    ".ai/tasks/**",
+    "AI_OS.md",
+    "README.md",
+    "CHANGELOG.md",
+    "contracts/**",
+    "docs/**",
+    "fixtures/**",
+    "requirements-*.txt",
+    "standards/**",
+    "templates/**",
+    "tests/test_b0_contracts.py",
+    "tests/test_b1_finalizer.py",
+    "tests/test_b2_verifier.py",
+    "tests/test_b3_terminal_propagation.py",
+    "tools/propagate_b3.py"
+  ],
+  "risk_class": "L3",
+  "executor": {
+    "adapter": "openai-codex-local-bootstrap",
+    "version": "codex-app-019f55ba-98f5-70d2-833d-28fa75cc5658",
+    "max_attempts": 3,
+    "timeout_seconds": 3600
+  },
+  "acceptance_criteria": [
+    {
+      "id": "AC-CODEX-1",
+      "predicate_id": "process.exit_code.equals",
+      "parameters": {
+        "component": "issue-40-codex-actions-adapter-suite",
+        "value": 0,
+        "trusted_evidence_source": "independent_process_exit_code",
+        "forbidden_sources": [
+          "author_self_report",
+          "actions_job_conclusion"
+        ]
+      },
+      "required": true,
+      "linked_checks": [
+        "issue-40-codex-adapter-tests"
+      ]
+    }
+  ],
+  "required_checks": [
+    {
+      "id": "issue-40-codex-adapter-tests",
+      "command_id": "repo.contracts.b3.tests",
+      "required": true,
+      "expected_postconditions": [
+        {
+          "predicate_id": "process.exit_code.equals",
+          "parameters": {
+            "value": 0
+          }
+        }
+      ]
+    }
+  ],
+  "review_policy": {
+    "reviewer_class": "independent-engineering",
+    "policy_id": "review-independence.v1",
+    "forbidden_lineage_overlaps": [
+      "agent_runtime_id",
+      "credential_principal",
+      "authored_commits"
+    ],
+    "minimum_distinct_human_operators": 1
+  },
+  "external_side_effects": "owner_approved",
+  "created_by": "github:yurikuchumov-ux/codex-control-plane",
+  "created_at": "2026-07-17T08:36:39Z"
+}
