@@ -1,0 +1,88 @@
+{
+  "schema_version": "1.0.0",
+  "evidence_id": "codex-independent-exact-sha-issue-37-2131a8b-1",
+  "task_id": "yurikuchumov-ux/ai-operating-system#37",
+  "repository": "yurikuchumov-ux/ai-operating-system",
+  "base_sha": "76b3df78b55fd9caa4843fe68031110308a765a4",
+  "reviewed_sha": "2131a8b5d421c9c8624c10cd32a021484fc0f9ee",
+  "pr_number": 38,
+  "runner_identity": {
+    "operator_principal": "human:yurykuchumov",
+    "agent_runtime_id": "openai:codex:019f55ba-98f5-70d2-833d-28fa75cc5658",
+    "credential_principal": "github:cli:yurikuchumov-ux",
+    "delegation_parent": "owner:standing-p0-authorization",
+    "role": "verifier",
+    "authored_reviewed_commits": []
+  },
+  "environment": {
+    "python": "3.9.6",
+    "pyyaml": "6.0.3",
+    "working_tree_clean_before_and_after": true
+  },
+  "bindings": {
+    "binary_diff_sha256": "ba04959a1a85d4c0130ec2db0cc32c738f5d30cdf67867b65b1b2268b36b8ec3",
+    "workflow_file_sha256": "650963b0f318d544befd2662341dbc0f8be4d489e49c98191c72f24cabdea96d",
+    "adapter_test_file_sha256": "9d3b890afc7d5c6260c966e14736110010a4defbc7aa764aeb9dfc5197dad797"
+  },
+  "commands": [
+    {
+      "argv": [
+        "python3",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "tests",
+        "-p",
+        "test_b3_*.py"
+      ],
+      "exit_code": 0,
+      "observed_summary": "Ran 260 tests in 1.338s; OK"
+    },
+    {
+      "argv": [
+        "python3",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "tests"
+      ],
+      "exit_code": 0,
+      "observed_summary": "Ran 354 tests in 1.961s; OK"
+    },
+    {
+      "argv": [
+        "git",
+        "diff",
+        "--check",
+        "76b3df78b55fd9caa4843fe68031110308a765a4..2131a8b5d421c9c8624c10cd32a021484fc0f9ee"
+      ],
+      "exit_code": 0,
+      "observed_summary": "no output"
+    },
+    {
+      "argv": [
+        "python3",
+        "-c",
+        "parse workflow with yaml.safe_load and assert exact five-job set"
+      ],
+      "exit_code": 0,
+      "observed_summary": "YAML OK; bootstrap-tests, admission, execute, publish-target, finalize-and-verify"
+    }
+  ],
+  "scope_observation": {
+    "commit_count": 1,
+    "changed_paths": [
+      ".github/workflows/p0-actions-adapter.yml",
+      "tests/test_b3_p0_actions_adapter.py"
+    ],
+    "denied_path_hits": [],
+    "passed": true
+  },
+  "result": {
+    "passed": true,
+    "failure_codes": []
+  },
+  "observed_at": "2026-07-17T07:35:09Z"
+}
