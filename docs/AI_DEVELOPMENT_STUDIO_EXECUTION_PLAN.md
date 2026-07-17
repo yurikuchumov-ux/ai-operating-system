@@ -216,6 +216,8 @@ equivalent immutable workflow input generated from a validated Issue form.
   "$schema": "https://example.invalid/ai-os/task.v1.schema.json",
   "schema_version": "1.0.0",
   "task_id": "yurikuchumov-ux/ai-operating-system#123",
+  "revision_id": "rev-1",
+  "parent_revision_id": null,
   "repository": "yurikuchumov-ux/ai-operating-system",
   "issue_number": 123,
   "objective": "One testable outcome",
@@ -274,6 +276,8 @@ equivalent immutable workflow input generated from a validated Issue form.
     ],
     "minimum_distinct_human_operators": 0
   },
+  "resumption_evidence": null,
+  "owner_event_id": null,
   "external_side_effects": "forbidden",
   "created_by": "github-login",
   "created_at": "RFC3339 timestamp"
@@ -300,7 +304,14 @@ The validator fails before execution when:
 - workflow, security, deployment or governance paths are writable under an
   insufficient risk class;
 - the executor adapter or immutable version is unknown;
-- timeout or attempts exceed policy;
+- timeout or attempts exceed policy (maximum three per revision);
+- `revision_id` is absent, non-unique, or malformed;
+- `parent_revision_id` is non-null but the parent revision does not exist or did
+  not reach `BLOCKED` state;
+- `parent_revision_id` is non-null but `resumption_evidence` or `owner_event_id`
+  is absent;
+- `resumption_evidence` references a non-existent or unverifiable artifact;
+- `owner_event_id` does not resolve to an authenticated repository owner event;
 - external side effects are not explicitly forbidden or separately approved;
 - author and required reviewer lineage cannot satisfy `review_policy` for the
   declared risk class.
@@ -308,7 +319,25 @@ The validator fails before execution when:
 The Issue text is user input. It must never be interpolated into a shell command
 or granted authority to override workflow policy.
 
-### 6.2 Predicate and command registries
+### 6.2 Task revision requirements
+
+Initial task revisions have `revision_id="rev-1"` and `parent_revision_id=null`.
+
+Resumption revisions created from `BLOCKED` state must:
+
+1. Assign a new unique `revision_id` (e.g., `rev-2`, `rev-3`).
+2. Reference the previous revision in `parent_revision_id`.
+3. Bind new material evidence in `resumption_evidence` (artifact ID, hash, and
+   description).
+4. Reference an authenticated repository owner event in `owner_event_id` (e.g.,
+   Issue comment ID, workflow dispatch run ID).
+5. Reset the attempt counter to one while preserving aggregate history.
+
+The owner may update the executor adapter, version, timeout, or other task
+parameters in a resumption revision. Path restrictions, risk class, and review
+policy may only be changed with explicit governance approval.
+
+### 6.3 Predicate and command registries
 
 `predicate_id` and `command_id` values come from versioned, repository-owned
 registries. Free text cannot define pass conditions. Each predicate declares
@@ -332,6 +361,7 @@ never produce success.
   "$schema": "https://example.invalid/ai-os/result.v1.schema.json",
   "schema_version": "1.0.0",
   "task_id": "yurikuchumov-ux/ai-operating-system#123",
+  "revision_id": "rev-1",
   "execution_id": "uuid",
   "attempt": 1,
   "executor": {
@@ -425,17 +455,44 @@ artifact. Comments are projections only and are never authoritative state.
 | `REQUESTED` | validation fails | `REJECTED` | closed validation error codes |
 | `VALIDATED` | first execution is created | `ACTIVE` | new execution ID and attempt number |
 | `ACTIVE` | execution succeeds with verified change or allowed no-change | `REVIEW_REQUIRED` | execution check, verifier report, Draft PR or no-change review artifact |
-| `ACTIVE` | execution fails and retry policy permits a new attempt with material evidence | `ACTIVE` | terminal result plus a different execution ID |
-| `ACTIVE` | three attempts fail, or a non-retryable invariant fails | `BLOCKED` | aggregate attempt history and handoff requirement |
+| `ACTIVE` | execution fails and retry policy permits a new attempt within the same revision (up to three attempts) | `ACTIVE` | terminal result plus a different execution ID |
+| `ACTIVE` | three attempts fail within one revision, or a non-retryable invariant fails | `BLOCKED` | aggregate attempt history, immutable task revision ID and owner resumption requirement |
+| `BLOCKED` | owner authorizes resumption through a new immutable task revision binding new material evidence to an authenticated repository owner event | `ACTIVE` | new immutable task revision ID, authenticated owner event reference, new execution ID, material evidence artifact and optional executor selection; chat alone is insufficient |
 | `REVIEW_REQUIRED` | eligible reviewer approves exact verified SHA or no-change result | `OWNER_DECISION` | review attestation and reviewed subject hash |
 | `REVIEW_REQUIRED` | eligible reviewer requests changes | `CHANGES_REQUESTED` | review attestation and closed finding IDs |
 | `CHANGES_REQUESTED` | a new attempt is authorized within retry policy | `ACTIVE` | new execution ID, new material evidence and updated base/head binding |
-| `CHANGES_REQUESTED` | retry policy is exhausted | `BLOCKED` | aggregate attempt history and replacement-executor requirement |
+| `CHANGES_REQUESTED` | retry policy is exhausted | `BLOCKED` | aggregate attempt history, immutable task revision ID and owner resumption requirement |
 | `OWNER_DECISION` | owner merges exact reviewed SHA or accepts reviewed no-change | `DONE` | owner event and merge commit or accepted result hash |
 | `OWNER_DECISION` | owner declines or closes | `CANCELLED` | owner event |
 
-`DONE`, `CANCELLED`, `BLOCKED`, and `REJECTED` are terminal TaskStates. A failed
-execution never directly marks a task `DONE` or `REJECTED`.
+`DONE`, `CANCELLED`, and `REJECTED` are terminal TaskStates. `BLOCKED` is an
+owner-gated resumable pause state that requires an authenticated repository owner
+event to transition back to `ACTIVE`. A failed execution never directly marks a
+task `DONE` or `REJECTED`.
+
+### 8.1.1 Retry governance and revision boundaries
+
+Each immutable task revision permits a maximum of three execution attempts.
+When all three attempts within a revision fail, the task enters `BLOCKED` state.
+
+Resumption from `BLOCKED` requires:
+
+1. A new immutable task revision with a distinct revision identifier.
+2. New material evidence bound to the revision (e.g., diagnostic findings,
+   refined constraints, updated environment state).
+3. An authenticated repository owner event (e.g., Issue comment, label, or
+   workflow dispatch) authorizing the resumption.
+4. Optional executor retention or replacement at owner discretion.
+
+Chat messages, agent narrative, or unattributed handoff prose are insufficient
+for resumption. The owner event must be attributable through GitHub audit
+telemetry or a signed workflow dispatch.
+
+Conceptual fourth-or-later continuation starts a new bounded revision. The
+aggregate execution history across all revisions is retained for observability,
+but each revision maintains its own attempt counter starting from one. This
+prevents unbounded retries while preserving the ability to make progress with
+owner authorization and new evidence.
 
 ### 8.2 ExecutionState
 
@@ -457,9 +514,13 @@ execution never directly marks a task `DONE` or `REJECTED`.
 `SUCCEEDED`, `FAILED`, `CANCELLED`, and `BLOCKED` are terminal for one immutable
 execution ID. A retry always receives a new execution ID, result artifact and
 execution Check Run; prior checks are never overwritten. The task Check Run
-aggregates attempt checks and is the authoritative task projection. A fourth
-attempt is forbidden unless the owner records new material evidence and selects
-a replacement executor.
+aggregates attempt checks and is the authoritative task projection.
+
+A fourth or later attempt requires a new immutable task revision. The owner
+authorizes the new revision through an authenticated repository owner event,
+binds new material evidence to justify the continuation, and may retain or
+replace the executor. Each revision maintains an independent attempt counter
+limited to three attempts.
 
 ### 8.3 Result-to-state aggregation
 
@@ -467,9 +528,9 @@ a replacement executor.
 | --- | --- | --- |
 | `change_proposed` | `SUCCEEDED` | `REVIEW_REQUIRED` |
 | `no_change_required` | `SUCCEEDED` | `REVIEW_REQUIRED` |
-| `failed` | `FAILED` | `ACTIVE` when a policy-compliant retry exists; otherwise `BLOCKED` |
+| `failed` | `FAILED` | `ACTIVE` when fewer than three attempts exist in the current revision; `BLOCKED` when three attempts fail within the revision |
 | `cancelled` | `CANCELLED` | `CANCELLED` only for an authenticated owner cancellation; otherwise `ACTIVE` or `BLOCKED` |
-| `blocked` | `BLOCKED` | `BLOCKED` |
+| `blocked` | `BLOCKED` | `BLOCKED` until owner-authorized resumption with new revision |
 
 ## 9. Truthful verifier requirements
 
@@ -493,30 +554,34 @@ The verifier must independently prove:
 
 1. task and result schemas are supported and valid;
 2. execution ID is unique and belongs to the task;
-3. checkout started clean at the exact base SHA;
-4. candidate branch exists;
-5. result `base_sha` equals the validated base SHA;
-6. observed branch head equals result `head_sha`;
-7. a change task has a new commit and non-empty diff;
-8. a no-change task explicitly permits `no_change_required`, uses an allowed
-   reason code and supplies every required evidence type;
-9. every changed path is allowed and no denied path changed;
-10. branch history contains no merge commit or prohibited force push, proven
+3. task `revision_id` matches result `revision_id`;
+4. if `parent_revision_id` is non-null, the parent revision exists, reached
+   `BLOCKED` state, and `resumption_evidence` and `owner_event_id` are valid;
+5. attempt number is between one and three for the current revision;
+6. checkout started clean at the exact base SHA;
+7. candidate branch exists;
+8. result `base_sha` equals the validated base SHA;
+9. observed branch head equals result `head_sha`;
+10. a change task has a new commit and non-empty diff;
+11. a no-change task explicitly permits `no_change_required`, uses an allowed
+    reason code and supplies every required evidence type;
+12. every changed path is allowed and no denied path changed;
+13. branch history contains no merge commit or prohibited force push, proven
     from persisted event before/after SHAs, Git ancestry and GitHub audit/event
     telemetry when available;
-11. every required command ID ran through a repository-defined command map;
-12. every required check exited zero and its evidence hash matches;
-13. every required acceptance criterion has exactly one passing result linked to
+14. every required command ID ran through a repository-defined command map;
+15. every required check exited zero and its evidence hash matches;
+16. every required acceptance criterion has exactly one passing result linked to
     valid check or verifier-owned Git evidence;
-14. required artifacts exist, are non-empty, scanned, and hash-valid;
-15. no secret or prohibited personal data is present in diff or artifacts;
-16. max-turns, timeout, missing commit, missing artifact, empty required diff,
+17. required artifacts exist, are non-empty, scanned, and hash-valid;
+18. no secret or prohibited personal data is present in diff or artifacts;
+19. max-turns, timeout, missing commit, missing artifact, empty required diff,
     adapter error, and check failure produce a failed workflow conclusion;
-17. executor and reviewer identity records contain verifiable operator,
+20. executor and reviewer identity records contain verifiable operator,
     runtime, credential, delegation-parent and authored-commit lineage;
-18. the Draft PR, when created, points to the verified head SHA;
-19. reviewer eligibility passes the machine-readable policy for the risk class;
-20. owner merge is possible only for the exact reviewed SHA.
+21. the Draft PR, when created, points to the verified head SHA;
+22. reviewer eligibility passes the machine-readable policy for the risk class;
+23. owner merge is possible only for the exact reviewed SHA.
 
 The verifier writes `verification.v1.json` and fails the job on any violated
 invariant. It records the evaluated predicate IDs, observed values and evidence
@@ -544,6 +609,12 @@ At minimum, tests must cover:
 - unknown `terminal_reason`;
 - task retry where one failed execution is followed by a distinct successful
   execution without overwriting the first check;
+- three failed attempts within a revision leading to `BLOCKED` state;
+- resumption revision with valid `parent_revision_id`, `resumption_evidence`,
+  and `owner_event_id`;
+- resumption revision missing required owner event or material evidence;
+- attempt number exceeding three within a single revision;
+- mismatched `revision_id` between task and result;
 - author attempting to review its own head SHA;
 - reviewer with unverifiable credential or delegation lineage;
 - a new commit pushed after approval and before merge.
@@ -802,9 +873,23 @@ Delegation is confirmed only when all exist:
 A comment, prompt, assignment, reaction, or claimed handoff is not delegation.
 
 Success is confirmed only after independent deterministic verification. After
-three failed attempts, the current executor stops, produces a handoff artifact,
-and is replaced. A fourth attempt is forbidden without new material evidence
-recorded by the owner.
+three failed attempts within one immutable task revision, the task enters
+`BLOCKED` state and the current executor stops, producing a handoff artifact
+with aggregate attempt history.
+
+Resumption from `BLOCKED` requires:
+
+1. A new immutable task revision identifier.
+2. New material evidence bound to the revision (e.g., root-cause analysis,
+   environmental corrections, clarified requirements).
+3. An authenticated repository owner event authorizing the resumption.
+4. Owner decision to retain or replace the executor.
+
+The new revision starts with an attempt counter of one and permits up to three
+new attempts. Aggregate execution history across all revisions is preserved for
+audit and observability. Chat alone cannot authorize resumption; an
+authenticated Issue comment, label, workflow dispatch, or equivalent owner event
+is required.
 
 ## 14. Measurable readiness model
 
