@@ -1,0 +1,95 @@
+{
+  "schema_version": "1.0.0",
+  "task_id": "yurikuchumov-ux/ai-operating-system#39",
+  "repository": "yurikuchumov-ux/ai-operating-system",
+  "issue_number": 39,
+  "objective": "Execute a fresh bounded live canary through the corrected P0 Actions adapter. Preserve the three canonical repository identities yurikuchumov-ux/ai-operating-system, yurikuchumov-ux/ai-development-studio-template, and yurikuchumov-ux/-ai-development-studio in active governance. Add one deterministic test discovered by the existing test_b3_*.py registered command that scans governed active documents, rejects noncanonical owner/repository URLs and unlabeled legacy aliases, but permits only the execution plan's explicitly labeled historical/incorrect comparisons. Update that execution plan to name the check and its boundary. Do not rename any repository or change product, workflow, adapter, contract, fixture, deployment, readiness, or voice-agent behavior.",
+  "change_policy": {
+    "change_required": true,
+    "policy_exception_id": null,
+    "no_change": {
+      "allowed": false,
+      "reason_codes": [],
+      "required_evidence_types": []
+    }
+  },
+  "base_ref": "main",
+  "base_sha": "5c295472d1c81e48888fe64bc1e2c9328bba03e8",
+  "branch": "agent/issue-39-canonical-names-canary",
+  "allowed_paths": [
+    "docs/AI_DEVELOPMENT_STUDIO_EXECUTION_PLAN.md",
+    "tests/test_b3_canonical_repository_names.py"
+  ],
+  "denied_paths": [
+    ".ai/tasks/**",
+    ".github/**",
+    "AI_OS.md",
+    "README.md",
+    "CHANGELOG.md",
+    "contracts/**",
+    "fixtures/**",
+    "requirements-*.txt",
+    "standards/**",
+    "templates/**",
+    "tools/**",
+    "tests/test_b0_contracts.py",
+    "tests/test_b1_finalizer.py",
+    "tests/test_b2_verifier.py",
+    "tests/test_b3_p0_actions_adapter.py",
+    "tests/test_b3_terminal_propagation.py"
+  ],
+  "risk_class": "L2",
+  "executor": {
+    "adapter": "human-supervised-claude-code",
+    "version": "claude-code-action-6902c227-issue-39-canonical-names-canary",
+    "max_attempts": 3,
+    "timeout_seconds": 1800
+  },
+  "acceptance_criteria": [
+    {
+      "id": "AC-NAME-1",
+      "predicate_id": "process.exit_code.equals",
+      "parameters": {
+        "component": "issue-39-canonical-repository-name-suite",
+        "value": 0,
+        "trusted_evidence_source": "workflow_controlled_process_exit_code",
+        "forbidden_sources": [
+          "executor_self_report",
+          "actions_job_conclusion"
+        ]
+      },
+      "required": true,
+      "linked_checks": [
+        "issue-39-canonical-name-tests"
+      ]
+    }
+  ],
+  "required_checks": [
+    {
+      "id": "issue-39-canonical-name-tests",
+      "command_id": "repo.contracts.b3.tests",
+      "required": true,
+      "expected_postconditions": [
+        {
+          "predicate_id": "process.exit_code.equals",
+          "parameters": {
+            "value": 0
+          }
+        }
+      ]
+    }
+  ],
+  "review_policy": {
+    "reviewer_class": "independent-engineering",
+    "policy_id": "review-independence.v1",
+    "forbidden_lineage_overlaps": [
+      "agent_runtime_id",
+      "credential_principal",
+      "authored_commits"
+    ],
+    "minimum_distinct_human_operators": 1
+  },
+  "external_side_effects": "owner_approved",
+  "created_by": "github:yurikuchumov-ux/codex-control-plane",
+  "created_at": "2026-07-17T07:47:39Z"
+}
