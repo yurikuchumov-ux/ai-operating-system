@@ -300,7 +300,9 @@ The validator fails before execution when:
 - workflow, security, deployment or governance paths are writable under an
   insufficient risk class;
 - the executor adapter or immutable version is unknown;
-- timeout or attempts exceed policy;
+- timeout or `max_attempts` exceed policy (maximum three attempts for automatic
+  retry; fourth or later attempts require owner authorization and a new task
+  revision);
 - external side effects are not explicitly forbidden or separately approved;
 - author and required reviewer lineage cannot satisfy `review_policy` for the
   declared risk class.
@@ -425,17 +427,60 @@ artifact. Comments are projections only and are never authoritative state.
 | `REQUESTED` | validation fails | `REJECTED` | closed validation error codes |
 | `VALIDATED` | first execution is created | `ACTIVE` | new execution ID and attempt number |
 | `ACTIVE` | execution succeeds with verified change or allowed no-change | `REVIEW_REQUIRED` | execution check, verifier report, Draft PR or no-change review artifact |
-| `ACTIVE` | execution fails and retry policy permits a new attempt with material evidence | `ACTIVE` | terminal result plus a different execution ID |
-| `ACTIVE` | three attempts fail, or a non-retryable invariant fails | `BLOCKED` | aggregate attempt history and handoff requirement |
+| `ACTIVE` | execution fails and attempt count is less than three with material evidence | `ACTIVE` | terminal result plus a different execution ID |
+| `ACTIVE` | three attempts fail, or a non-retryable invariant fails | `BLOCKED` | aggregate attempt history and owner decision requirement |
 | `REVIEW_REQUIRED` | eligible reviewer approves exact verified SHA or no-change result | `OWNER_DECISION` | review attestation and reviewed subject hash |
 | `REVIEW_REQUIRED` | eligible reviewer requests changes | `CHANGES_REQUESTED` | review attestation and closed finding IDs |
-| `CHANGES_REQUESTED` | a new attempt is authorized within retry policy | `ACTIVE` | new execution ID, new material evidence and updated base/head binding |
-| `CHANGES_REQUESTED` | retry policy is exhausted | `BLOCKED` | aggregate attempt history and replacement-executor requirement |
+| `CHANGES_REQUESTED` | a new attempt is authorized and total attempts remain under three | `ACTIVE` | new execution ID, new material evidence and updated base/head binding |
+| `CHANGES_REQUESTED` | three total attempts are exhausted | `BLOCKED` | aggregate attempt history and owner decision requirement |
+| `BLOCKED` | owner records new material evidence and explicitly authorizes continuation | `ACTIVE` | new immutable task revision, new execution ID, owner authorization artifact and independent review requirement before merge |
 | `OWNER_DECISION` | owner merges exact reviewed SHA or accepts reviewed no-change | `DONE` | owner event and merge commit or accepted result hash |
 | `OWNER_DECISION` | owner declines or closes | `CANCELLED` | owner event |
 
 `DONE`, `CANCELLED`, `BLOCKED`, and `REJECTED` are terminal TaskStates. A failed
 execution never directly marks a task `DONE` or `REJECTED`.
+
+### 8.1a Retry governance and attempt limits
+
+**DECISION:** Automatic retry is bounded to prevent unbounded continuation without
+owner oversight. The retry governance policy is:
+
+1. **Attempts 1–3:** An executor may make up to three attempts on a single task
+   revision. Each failed attempt that is not terminal and non-retryable may
+   trigger an automatic retry if material evidence exists that justifies the new
+   attempt.
+
+2. **After three failed attempts:** Automatic continuation **must** stop. The task
+   transitions to `TaskState=BLOCKED` and requires an explicit owner decision.
+   The executor cannot proceed without owner intervention.
+
+3. **Fourth or later attempts:** A fourth or any subsequent attempt is allowed
+   **only when all** of the following conditions are satisfied:
+   - The owner records new material evidence in the repository;
+   - The owner explicitly authorizes the continuation in repository-backed
+     evidence (not a comment or chat message);
+   - A new immutable task revision is created with updated parameters or
+     constraints;
+   - A new execution ID is assigned;
+   - A new result artifact is produced;
+   - An exact-SHA independent review is required before merge.
+
+4. **Executor selection:** The owner may retain the same executor or select a
+   replacement executor for the fourth or later attempt. Replacement is not
+   mandatory; the owner decides based on the failure evidence and available
+   executor capabilities.
+
+5. **Preserved invariants:** All attempts, including fourth and later ones, must
+   preserve:
+   - Independent verifier/reviewer separation (the executor cannot approve its
+     own output);
+   - The human merge decision (no automatic merge);
+   - The prohibition on executor self-approval (author and reviewer identities
+     must be distinct per the risk-class separation rules in section 10.2).
+
+Material evidence includes diagnostic output showing a changed precondition,
+corrected configuration, dependency fix, or refined task parameters. Identical
+retry without changed preconditions is not permitted.
 
 ### 8.2 ExecutionState
 
@@ -458,8 +503,9 @@ execution never directly marks a task `DONE` or `REJECTED`.
 execution ID. A retry always receives a new execution ID, result artifact and
 execution Check Run; prior checks are never overwritten. The task Check Run
 aggregates attempt checks and is the authoritative task projection. A fourth
-attempt is forbidden unless the owner records new material evidence and selects
-a replacement executor.
+or later attempt requires owner authorization with new material evidence, a new
+immutable task revision, and mandatory independent review as specified in
+section 8.1a.
 
 ### 8.3 Result-to-state aggregation
 
@@ -544,6 +590,8 @@ At minimum, tests must cover:
 - unknown `terminal_reason`;
 - task retry where one failed execution is followed by a distinct successful
   execution without overwriting the first check;
+- three consecutive failed attempts correctly transition task to `BLOCKED` state
+  and prevent automatic fourth attempt without owner authorization;
 - author attempting to review its own head SHA;
 - reviewer with unverifiable credential or delegation lineage;
 - a new commit pushed after approval and before merge.
@@ -802,9 +850,21 @@ Delegation is confirmed only when all exist:
 A comment, prompt, assignment, reaction, or claimed handoff is not delegation.
 
 Success is confirmed only after independent deterministic verification. After
-three failed attempts, the current executor stops, produces a handoff artifact,
-and is replaced. A fourth attempt is forbidden without new material evidence
-recorded by the owner.
+three failed attempts, automatic continuation **must** stop and the task
+transitions to `TaskState=BLOCKED`. The coordinator produces an aggregate
+attempt-history artifact and awaits an owner decision.
+
+A fourth or later attempt requires:
+
+- owner-recorded new material evidence in the repository;
+- explicit owner authorization in repository-backed evidence;
+- a new immutable task revision;
+- a new execution ID and result artifact;
+- exact-SHA independent review before merge.
+
+The owner may retain the same executor or select a replacement. Replacement is
+not mandatory. All attempts preserve independent verifier/reviewer separation,
+the human merge decision, and the prohibition on executor self-approval.
 
 ## 14. Measurable readiness model
 
