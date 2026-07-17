@@ -389,20 +389,69 @@ jobs:
           codex_control = Path('.p0-codex-control')
           control_failure = None
           if is_codex:
-              import shutil
-              if codex_control.is_symlink():
+              import os as _os, stat as _stat
+              # Issue #43: Validate and remove .p0-codex-control with fail-closed
+              # semantics. Before removal, require:
+              #  1. a real non-symlink directory (not absent, substituted, symlinked)
+              #  2. exactly the expected three files (task.json, allowed-paths.json, required-check.json)
+              #  3. each file is a regular non-symlink file
+              #  4. byte-for-byte identity with its canonical /tmp/p0-control peer
+              # Missing, extra, substituted, symlinked, unreadable, or
+              # non-removable state fails closed as executor_adapter_mismatch.
+              if not codex_control.exists():
                   control_failure = 'executor_adapter_mismatch'
-                  codex_control.unlink()
-              elif codex_control.is_dir():
-                  try:
-                      shutil.rmtree(codex_control)
-                  except OSError:
-                      control_failure = 'executor_adapter_mismatch'
-              elif codex_control.exists():
+              elif codex_control.is_symlink():
                   control_failure = 'executor_adapter_mismatch'
-                  codex_control.unlink()
+              elif not codex_control.is_dir():
+                  control_failure = 'executor_adapter_mismatch'
               else:
-                  control_failure = 'executor_adapter_mismatch'
+                  # It is a real directory. Validate structure and content.
+                  expected_files = {'task.json', 'allowed-paths.json', 'required-check.json'}
+                  try:
+                      observed_files = set(_os.listdir(codex_control))
+                      if observed_files != expected_files:
+                          control_failure = 'executor_adapter_mismatch'
+                      else:
+                          # Exactly three expected files present. Validate each is
+                          # a regular non-symlink file with identical bytes.
+                          for name in expected_files:
+                              workspace_file = codex_control / name
+                              canonical_file = Path('/tmp/p0-control') / name
+                              if workspace_file.is_symlink():
+                                  control_failure = 'executor_adapter_mismatch'
+                                  break
+                              if not workspace_file.is_file():
+                                  control_failure = 'executor_adapter_mismatch'
+                                  break
+                              if not canonical_file.is_file():
+                                  control_failure = 'executor_adapter_mismatch'
+                                  break
+                              if canonical_file.is_symlink():
+                                  control_failure = 'executor_adapter_mismatch'
+                                  break
+                              workspace_bytes = workspace_file.read_bytes()
+                              canonical_bytes = canonical_file.read_bytes()
+                              if workspace_bytes != canonical_bytes:
+                                  control_failure = 'executor_adapter_mismatch'
+                                  break
+                  except (OSError, IOError):
+                      control_failure = 'executor_adapter_mismatch'
+              # Only after validation passes, restore owner write permission and
+              # remove the directory. Prove it is absent afterward.
+              if control_failure is None:
+                  try:
+                      # Restore write permission to owner for the directory and its files.
+                      for item in codex_control.iterdir():
+                          item.chmod(item.stat().st_mode | _stat.S_IWUSR)
+                      codex_control.chmod(codex_control.stat().st_mode | _stat.S_IWUSR)
+                      # Remove the directory and all its contents.
+                      import shutil
+                      shutil.rmtree(codex_control)
+                      # Prove the directory is absent.
+                      if codex_control.exists():
+                          control_failure = 'executor_adapter_mismatch'
+                  except (OSError, IOError):
+                      control_failure = 'executor_adapter_mismatch'
           manifest = {
               'executor_adapter': executor_adapter,
               'adapter_outcome': (os.environ.get('CODEX_OUTCOME') if is_codex else os.environ.get('CLAUDE_OUTCOME')) or None,

@@ -1459,5 +1459,207 @@ class WorkflowInvariantTests(unittest.TestCase):
         self.assertNotIn("bypassPermissions", claude_args_block)
 
 
+class CodexControlCleanupTests(unittest.TestCase):
+    """Issue #43 correction: .p0-codex-control cleanup validates structure,
+    byte-identity, non-symlink state, restores write permission, removes the
+    directory, and proves it is absent. Missing, extra, substituted,
+    symlinked, unreadable, or non-removable state fails closed as
+    executor_adapter_mismatch."""
+
+    def _setup_control_dirs(self, tmp_path: Path, workspace_path: Path):
+        """Create canonical /tmp/p0-control and workspace .p0-codex-control."""
+        import os as _os
+        canonical = tmp_path / "p0-control"
+        canonical.mkdir(parents=True, exist_ok=True)
+        task = canonical / "task.json"
+        task.write_text('{"task_id": "test"}', encoding="utf-8")
+        allowed = canonical / "allowed-paths.json"
+        allowed.write_text('{"allowed_paths": []}', encoding="utf-8")
+        required = canonical / "required-check.json"
+        required.write_text('{"command_id": "repo.contracts.b3.tests"}', encoding="utf-8")
+
+        workspace = workspace_path / ".p0-codex-control"
+        workspace.mkdir(parents=True, exist_ok=True)
+        (workspace / "task.json").write_bytes(task.read_bytes())
+        (workspace / "allowed-paths.json").write_bytes(allowed.read_bytes())
+        (workspace / "required-check.json").write_bytes(required.read_bytes())
+        # Simulate the workflow's chmod -R a-w step.
+        for item in workspace.iterdir():
+            item.chmod(item.stat().st_mode & ~0o222)
+        workspace.chmod(workspace.stat().st_mode & ~0o222)
+        return canonical, workspace
+
+    def _run_cleanup_logic(self, tmp_canonical: Path, workspace: Path) -> str | None:
+        """Execute the workflow's cleanup logic and return control_failure."""
+        import os as _os, stat as _stat, shutil
+        codex_control = workspace / ".p0-codex-control"
+        control_failure = None
+        # Inline the exact workflow cleanup logic (Issue #43 corrected).
+        if not codex_control.exists():
+            control_failure = 'executor_adapter_mismatch'
+        elif codex_control.is_symlink():
+            control_failure = 'executor_adapter_mismatch'
+        elif not codex_control.is_dir():
+            control_failure = 'executor_adapter_mismatch'
+        else:
+            expected_files = {'task.json', 'allowed-paths.json', 'required-check.json'}
+            try:
+                observed_files = set(_os.listdir(codex_control))
+                if observed_files != expected_files:
+                    control_failure = 'executor_adapter_mismatch'
+                else:
+                    for name in expected_files:
+                        workspace_file = codex_control / name
+                        canonical_file = tmp_canonical / "p0-control" / name
+                        if workspace_file.is_symlink():
+                            control_failure = 'executor_adapter_mismatch'
+                            break
+                        if not workspace_file.is_file():
+                            control_failure = 'executor_adapter_mismatch'
+                            break
+                        if not canonical_file.is_file():
+                            control_failure = 'executor_adapter_mismatch'
+                            break
+                        if canonical_file.is_symlink():
+                            control_failure = 'executor_adapter_mismatch'
+                            break
+                        workspace_bytes = workspace_file.read_bytes()
+                        canonical_bytes = canonical_file.read_bytes()
+                        if workspace_bytes != canonical_bytes:
+                            control_failure = 'executor_adapter_mismatch'
+                            break
+            except (OSError, IOError):
+                control_failure = 'executor_adapter_mismatch'
+        if control_failure is None:
+            try:
+                for item in codex_control.iterdir():
+                    item.chmod(item.stat().st_mode | _stat.S_IWUSR)
+                codex_control.chmod(codex_control.stat().st_mode | _stat.S_IWUSR)
+                shutil.rmtree(codex_control)
+                if codex_control.exists():
+                    control_failure = 'executor_adapter_mismatch'
+            except (OSError, IOError):
+                control_failure = 'executor_adapter_mismatch'
+        return control_failure
+
+    def test_valid_readonly_directory_is_removed_and_proven_absent(self) -> None:
+        """Positive case: a real non-empty read-only directory with exactly
+        the expected three files, each byte-identical to its canonical peer,
+        is successfully removed and proven absent."""
+        tmp = _tmp_dir()
+        workspace = _tmp_dir()
+        canonical, control_dir = self._setup_control_dirs(tmp, workspace)
+        self.assertTrue(control_dir.exists())
+        self.assertTrue(control_dir.is_dir())
+        failure = self._run_cleanup_logic(tmp, workspace)
+        self.assertIsNone(failure)
+        self.assertFalse(control_dir.exists())
+
+    def test_missing_directory_fails_closed(self) -> None:
+        """Negative: if .p0-codex-control is entirely absent, fail closed."""
+        tmp = _tmp_dir()
+        workspace = _tmp_dir()
+        failure = self._run_cleanup_logic(tmp, workspace)
+        self.assertEqual('executor_adapter_mismatch', failure)
+
+    def test_symlink_directory_fails_closed(self) -> None:
+        """Negative: if .p0-codex-control is a symlink, fail closed."""
+        tmp = _tmp_dir()
+        workspace = _tmp_dir()
+        target = workspace / "target"
+        target.mkdir()
+        symlink = workspace / ".p0-codex-control"
+        symlink.symlink_to(target)
+        failure = self._run_cleanup_logic(tmp, workspace)
+        self.assertEqual('executor_adapter_mismatch', failure)
+
+    def test_regular_file_instead_of_directory_fails_closed(self) -> None:
+        """Negative: if .p0-codex-control is a regular file, fail closed."""
+        tmp = _tmp_dir()
+        workspace = _tmp_dir()
+        (workspace / ".p0-codex-control").write_text("not a directory", encoding="utf-8")
+        failure = self._run_cleanup_logic(tmp, workspace)
+        self.assertEqual('executor_adapter_mismatch', failure)
+
+    def test_extra_file_in_directory_fails_closed(self) -> None:
+        """Negative: an extra file beyond the expected three fails closed."""
+        tmp = _tmp_dir()
+        workspace = _tmp_dir()
+        canonical, control_dir = self._setup_control_dirs(tmp, workspace)
+        # Restore write permission temporarily to add an extra file.
+        control_dir.chmod(control_dir.stat().st_mode | 0o200)
+        (control_dir / "extra.txt").write_text("unexpected", encoding="utf-8")
+        control_dir.chmod(control_dir.stat().st_mode & ~0o222)
+        failure = self._run_cleanup_logic(tmp, workspace)
+        self.assertEqual('executor_adapter_mismatch', failure)
+
+    def test_missing_expected_file_fails_closed(self) -> None:
+        """Negative: missing one of the three expected files fails closed."""
+        tmp = _tmp_dir()
+        workspace = _tmp_dir()
+        canonical, control_dir = self._setup_control_dirs(tmp, workspace)
+        task_file = control_dir / "task.json"
+        # Restore write permission temporarily to remove the file.
+        control_dir.chmod(control_dir.stat().st_mode | 0o200)
+        task_file.chmod(task_file.stat().st_mode | 0o200)
+        task_file.unlink()
+        control_dir.chmod(control_dir.stat().st_mode & ~0o222)
+        failure = self._run_cleanup_logic(tmp, workspace)
+        self.assertEqual('executor_adapter_mismatch', failure)
+
+    def test_symlinked_file_fails_closed(self) -> None:
+        """Negative: if any of the three files is a symlink, fail closed."""
+        tmp = _tmp_dir()
+        workspace = _tmp_dir()
+        canonical, control_dir = self._setup_control_dirs(tmp, workspace)
+        task_file = control_dir / "task.json"
+        # Restore write permission temporarily to replace with symlink.
+        control_dir.chmod(control_dir.stat().st_mode | 0o200)
+        task_file.chmod(task_file.stat().st_mode | 0o200)
+        task_file.unlink()
+        target = workspace / "target.json"
+        target.write_text('{"task_id": "test"}', encoding="utf-8")
+        task_file.symlink_to(target)
+        control_dir.chmod(control_dir.stat().st_mode & ~0o222)
+        failure = self._run_cleanup_logic(tmp, workspace)
+        self.assertEqual('executor_adapter_mismatch', failure)
+
+    def test_modified_file_bytes_fail_closed(self) -> None:
+        """Negative: if workspace file bytes differ from canonical, fail closed."""
+        tmp = _tmp_dir()
+        workspace = _tmp_dir()
+        canonical, control_dir = self._setup_control_dirs(tmp, workspace)
+        task_file = control_dir / "task.json"
+        # Restore write permission temporarily to modify content.
+        control_dir.chmod(control_dir.stat().st_mode | 0o200)
+        task_file.chmod(task_file.stat().st_mode | 0o200)
+        task_file.write_text('{"task_id": "modified"}', encoding="utf-8")
+        task_file.chmod(task_file.stat().st_mode & ~0o222)
+        control_dir.chmod(control_dir.stat().st_mode & ~0o222)
+        failure = self._run_cleanup_logic(tmp, workspace)
+        self.assertEqual('executor_adapter_mismatch', failure)
+
+    def test_workflow_has_exact_codex_control_cleanup_logic(self) -> None:
+        """Meta-test: the workflow contains the exact Issue #43 cleanup logic."""
+        text = WORKFLOW_PATH.read_text(encoding="utf-8")
+        self.assertIn("Issue #43: Validate and remove .p0-codex-control", text)
+        self.assertIn("expected_files = {'task.json', 'allowed-paths.json', 'required-check.json'}", text)
+        self.assertIn("observed_files = set(_os.listdir(codex_control))", text)
+        self.assertIn("if observed_files != expected_files:", text)
+        self.assertIn("workspace_bytes = workspace_file.read_bytes()", text)
+        self.assertIn("canonical_bytes = canonical_file.read_bytes()", text)
+        self.assertIn("if workspace_bytes != canonical_bytes:", text)
+        self.assertIn("item.chmod(item.stat().st_mode | _stat.S_IWUSR)", text)
+        self.assertIn("codex_control.chmod(codex_control.stat().st_mode | _stat.S_IWUSR)", text)
+        self.assertIn("shutil.rmtree(codex_control)", text)
+        self.assertIn("if codex_control.exists():", text)
+        # Ensure the old naive shutil.rmtree without validation is replaced.
+        cleanup_section = text.split("# The workspace-readable copies", 1)[1].split("manifest = {", 1)[0]
+        # The new logic validates before removal; count that shutil.rmtree
+        # appears exactly once in the cleanup section, and only after
+        # validation and chmod restoration.
+        self.assertEqual(1, cleanup_section.count("shutil.rmtree(codex_control)"))
+
+
 if __name__ == "__main__":
     unittest.main()
