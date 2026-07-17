@@ -1,0 +1,95 @@
+{
+  "schema_version": "1.0.0",
+  "task_id": "yurikuchumov-ux/ai-operating-system#43",
+  "repository": "yurikuchumov-ux/ai-operating-system",
+  "issue_number": 43,
+  "objective": "Correct the read-only Codex workspace-control cleanup failure proven by Issue 42 run 29571660539. Before removing .p0-codex-control, require a real non-symlink directory containing exactly task.json, allowed-paths.json, and required-check.json; require every workspace file and canonical /tmp/p0-control peer to be a regular non-symlink file with identical bytes. Only after validation, restore owner write permission to the directory, remove it, and prove it is absent. Missing, extra, substituted, symlinked, unreadable, or non-removable state must fail closed as executor_adapter_mismatch. Add deterministic positive and negative regressions, including removal of the actual non-empty read-only directory. Do not weaken control hashes, scope, credentials, action pins, required checks, publisher/verifier separation, or human merge.",
+  "change_policy": {
+    "change_required": true,
+    "policy_exception_id": null,
+    "no_change": {
+      "allowed": false,
+      "reason_codes": [],
+      "required_evidence_types": []
+    }
+  },
+  "base_ref": "main",
+  "base_sha": "567874755fbbca351b740b07ca03e25b6f384d22",
+  "branch": "agent/issue-43-codex-control-cleanup",
+  "allowed_paths": [
+    ".github/workflows/p0-actions-adapter.yml",
+    "tests/test_b3_p0_actions_adapter.py"
+  ],
+  "denied_paths": [
+    ".ai/tasks/**",
+    "AI_OS.md",
+    "README.md",
+    "CHANGELOG.md",
+    "contracts/**",
+    "docs/**",
+    "fixtures/**",
+    "requirements-*.txt",
+    "standards/**",
+    "templates/**",
+    "tools/**",
+    "tests/test_b0_contracts.py",
+    "tests/test_b1_finalizer.py",
+    "tests/test_b2_verifier.py",
+    "tests/test_b3_canonical_repository_names.py",
+    "tests/test_b3_terminal_propagation.py"
+  ],
+  "risk_class": "L3",
+  "executor": {
+    "adapter": "human-supervised-claude-code",
+    "version": "claude-code-action-6902c227-issue-43-codex-control-cleanup-v1",
+    "max_attempts": 3,
+    "timeout_seconds": 1800
+  },
+  "acceptance_criteria": [
+    {
+      "id": "AC-CONTROL-CLEANUP-1",
+      "predicate_id": "process.exit_code.equals",
+      "parameters": {
+        "component": "issue-43-codex-control-cleanup-suite",
+        "value": 0,
+        "trusted_evidence_source": "workflow_controlled_process_exit_code",
+        "forbidden_sources": [
+          "executor_self_report",
+          "actions_job_conclusion"
+        ]
+      },
+      "required": true,
+      "linked_checks": [
+        "issue-43-codex-control-cleanup-tests"
+      ]
+    }
+  ],
+  "required_checks": [
+    {
+      "id": "issue-43-codex-control-cleanup-tests",
+      "command_id": "repo.contracts.b3.tests",
+      "required": true,
+      "expected_postconditions": [
+        {
+          "predicate_id": "process.exit_code.equals",
+          "parameters": {
+            "value": 0
+          }
+        }
+      ]
+    }
+  ],
+  "review_policy": {
+    "reviewer_class": "independent-engineering",
+    "policy_id": "review-independence.v1",
+    "forbidden_lineage_overlaps": [
+      "agent_runtime_id",
+      "credential_principal",
+      "authored_commits"
+    ],
+    "minimum_distinct_human_operators": 1
+  },
+  "external_side_effects": "owner_approved",
+  "created_by": "github:yurikuchumov-ux/codex-control-plane",
+  "created_at": "2026-07-17T10:01:07Z"
+}
