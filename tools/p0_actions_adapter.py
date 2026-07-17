@@ -84,9 +84,16 @@ PINNED_ADAPTER_ACTION = PINNED_CLAUDE_ACTION
 
 CLAUDE_EXECUTOR_ADAPTER = "human-supervised-claude-code"
 CODEX_EXECUTOR_ADAPTER = "openai-codex-action"
-SUPPORTED_EXECUTOR_ADAPTERS = frozenset(
-    {CLAUDE_EXECUTOR_ADAPTER, CODEX_EXECUTOR_ADAPTER}
+CODEX_LOCAL_BOOTSTRAP_ADAPTER = "openai-codex-local-bootstrap"
+SUPPORTED_TASK_EXECUTOR_ADAPTERS = frozenset(
+    {
+        CLAUDE_EXECUTOR_ADAPTER,
+        CODEX_EXECUTOR_ADAPTER,
+        CODEX_LOCAL_BOOTSTRAP_ADAPTER,
+    }
 )
+ISSUE_40_TASK_ID = "yurikuchumov-ux/ai-operating-system#40"
+ISSUE_40_TASK_COMMIT = "636748bb06c5efbc21ecbeda38ee2e43e20da00d"
 PINNED_CODEX_CLI_VERSION = "0.144.5"
 PINNED_CODEX_MODEL = "gpt-5.3-codex"
 PINNED_CODEX_EFFORT = "high"
@@ -395,6 +402,24 @@ def task_executor_adapter(task: Mapping[str, Any]) -> Optional[str]:
     return value if isinstance(value, str) and value else None
 
 
+def resolve_workflow_executor_adapter(task: Mapping[str, Any]) -> Optional[str]:
+    """Resolve a task-level executor declaration to the concrete workflow
+    author path.
+
+    Issue #40 is a local-bootstrap control contract: its immutable adapter id
+    records who authored the bootstrap implementation, while the concrete
+    path it bootstraps is the pinned Codex Action.  Keep that distinction
+    explicit and narrowly bound to the exact Issue #40 task identity; never
+    rewrite the immutable contract or treat arbitrary aliases as Codex.
+    """
+    requested = task_executor_adapter(task)
+    if requested in {CLAUDE_EXECUTOR_ADAPTER, CODEX_EXECUTOR_ADAPTER}:
+        return requested
+    if requested == CODEX_LOCAL_BOOTSTRAP_ADAPTER and task.get("task_id") == ISSUE_40_TASK_ID:
+        return CODEX_EXECUTOR_ADAPTER
+    return None
+
+
 def validate_executor_adapter(task: Mapping[str, Any]) -> Optional[str]:
     """Fail closed on unknown adapters and on any further Claude attempt for
     Issue #39, whose three Claude iterations are already exhausted.
@@ -403,9 +428,10 @@ def validate_executor_adapter(task: Mapping[str, Any]) -> Optional[str]:
     an old immutable Claude task can therefore never be replayed as attempt 4.
     """
     requested = task_executor_adapter(task)
-    if requested not in SUPPORTED_EXECUTOR_ADAPTERS:
+    resolved = resolve_workflow_executor_adapter(task)
+    if requested not in SUPPORTED_TASK_EXECUTOR_ADAPTERS or resolved is None:
         return "executor_adapter_unsupported"
-    if task.get("task_id") == "yurikuchumov-ux/ai-operating-system#39" and requested != CODEX_EXECUTOR_ADAPTER:
+    if task.get("task_id") == "yurikuchumov-ux/ai-operating-system#39" and resolved != CODEX_EXECUTOR_ADAPTER:
         return "executor_attempts_exhausted"
     return None
 
@@ -415,7 +441,7 @@ def is_codex_executor(signal_or_task: Mapping[str, Any]) -> bool:
     return (
         signal_or_task.get("adapter") == CODEX_EXECUTOR_ADAPTER
         or signal_or_task.get("executor_adapter") == CODEX_EXECUTOR_ADAPTER
-        or task_executor_adapter(signal_or_task) == CODEX_EXECUTOR_ADAPTER
+        or resolve_workflow_executor_adapter(signal_or_task) == CODEX_EXECUTOR_ADAPTER
     )
 
 
@@ -1003,7 +1029,7 @@ def evaluate(
     code = validate_executor_adapter(task)
     if code:
         return fail(code, "task requests an unsupported or exhausted executor adapter")
-    requested_adapter = task_executor_adapter(task)
+    requested_adapter = resolve_workflow_executor_adapter(task)
     if signal.get("adapter") != requested_adapter:
         return fail(
             "executor_adapter_mismatch",

@@ -193,7 +193,7 @@ jobs:
                   adapter.sha256_file(Path("tools/p0_actions_adapter.py")),
                   adapter.sha256_file(Path("contracts/registries/commands.v1.json")),
                   adapter.sha256_file(Path("tools/propagate_b3.py")),
-                  adapter.task_executor_adapter(task),
+                  adapter.resolve_workflow_executor_adapter(task),
               ), encoding="utf-8"
           )
           PY
@@ -444,7 +444,7 @@ jobs:
               save()
               raise SystemExit(reason)
 
-          if manifest.get('executor_adapter') != adapter.task_executor_adapter(task):
+          if manifest.get('executor_adapter') != adapter.resolve_workflow_executor_adapter(task):
               reject('executor_adapter_mismatch')
           if manifest.get('postcondition_failure'):
               reject(manifest['postcondition_failure'])
@@ -603,7 +603,7 @@ jobs:
               (out / 'manifest.json').write_text(json.dumps(manifest, sort_keys=True), encoding='utf-8')
               raise SystemExit(reason)
 
-          if manifest.get('executor_adapter') != adapter.task_executor_adapter(task):
+          if manifest.get('executor_adapter') != adapter.resolve_workflow_executor_adapter(task):
               reject('executor_adapter_mismatch')
           if manifest.get('postconditions_passed') is not True or manifest.get('adapter_outcome') != 'success':
               reject('unverified_executor_evidence')
@@ -837,6 +837,7 @@ jobs:
           python3 - <<'PY'
           import json, os, subprocess
           from pathlib import Path
+          from tools import p0_actions_adapter as adapter
           def read(path):
               p = Path(path)
               return p.read_text(encoding='utf-8', errors='replace') if p.is_file() else None
@@ -847,7 +848,7 @@ jobs:
           manifest = load('p0-adapter-output/manifest.json')
           manifest_raw = read('p0-adapter-output/manifest.json')
           task = load('p0-output/task.json')
-          executor_adapter = manifest.get('executor_adapter') or (task.get('executor') or {}).get('adapter')
+          executor_adapter = manifest.get('executor_adapter') or adapter.resolve_workflow_executor_adapter(task)
           is_codex = executor_adapter == 'openai-codex-action'
           check = load('p0-output/required-check.json')
           check['log'] = read('p0-output/required-check.log')

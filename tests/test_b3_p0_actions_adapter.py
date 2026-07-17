@@ -22,6 +22,8 @@ Coverage maps to the task's acceptance criteria:
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 import re
 import tempfile
@@ -32,8 +34,11 @@ from jsonschema import Draft202012Validator, FormatChecker
 
 from tools import p0_actions_adapter as adapter
 from tools.p0_actions_adapter import (
+    CODEX_LOCAL_BOOTSTRAP_ADAPTER,
     CODEX_EXECUTOR_ADAPTER,
     Decision,
+    ISSUE_40_TASK_COMMIT,
+    ISSUE_40_TASK_ID,
     PINNED_ADAPTER_ACTION,
     PINNED_CODEX_ACTION,
     PINNED_CODEX_CLI_VERSION,
@@ -49,6 +54,7 @@ from tools.p0_actions_adapter import (
     is_verification_only,
     prohibited_transcript_tool_use,
     resolve_registered_check,
+    resolve_workflow_executor_adapter,
     run_suite,
     transcript_tool_policy_failure,
     transcript_tool_use_names,
@@ -65,6 +71,22 @@ DOCUMENTS_DIR = REPO_ROOT / "fixtures/p0/documents"
 WORKFLOW_PATH = REPO_ROOT / ".github/workflows/p0-actions-adapter.yml"
 RESULT_SCHEMA_PATH = REPO_ROOT / "contracts/schemas/result.v1.schema.json"
 VERIFICATION_SCHEMA_PATH = REPO_ROOT / "contracts/schemas/verification.v1.schema.json"
+EXACT_ISSUE_40_TASK_SHA256 = "9bc65a850a53808d66042e726762d4ca15651c00196d8e11ed0fad7d3e04a286"
+EXACT_ISSUE_40_TASK_B64 = "ewogICJzY2hlbWFfdmVyc2lvbiI6ICIxLjAuMCIsCiAgInRhc2tfaWQiOiAieXVyaWt1Y2h1bW92LXV4L2FpLW9wZXJhdGluZy1zeXN0ZW0jNDAiLAogICJyZXBvc2l0b3J5IjogInl1cmlrdWNodW1vdi11eC9haS1vcGVyYXRpbmctc3lzdGVtIiwKICAiaXNzdWVfbnVtYmVyIjogNDAsCiAgIm9iamVjdGl2ZSI6ICJCb290c3RyYXAgYSBzZWNvbmQgdHJ1dGhmdWwgYXV0aG9yIHBhdGggaW4gdGhlIGV4aXN0aW5nIFAwIEFjdGlvbnMgYWRhcHRlciBhZnRlciBTb25uZXQgZXhoYXVzdGVkIElzc3VlIDM5LiBTZWxlY3QgQ29kZXggb25seSB3aGVuIHRoZSBpbW11dGFibGUgdGFzayBkZWNsYXJlcyBleGVjdXRvci5hZGFwdGVyIG9wZW5haS1jb2RleC1hY3Rpb24uIFBpbiBvcGVuYWkvY29kZXgtYWN0aW9uIGF0IDUyZmUwMWVjNzBhNDJmNDU0YzlkMmViZDQ3NTk4ZjlmZDY4OTNkNTYsIG1vZGVsIGdwdC01LjMtY29kZXgsIGV4cGxpY2l0IGVmZm9ydCwgcGVybWlzc2lvbi1wcm9maWxlIDp3b3Jrc3BhY2UsIGFuZCBzYWZldHktc3RyYXRlZ3kgZHJvcC1zdWRvLiBLZWVwIHRoZSBleGVjdXRlIGpvYiByZWFkLW9ubHkgdG8gR2l0SHViIGFuZCBwcmVzZXJ2ZSBleGFjdC1iYXNlIGNoZWNrb3V0LCBzY29wZSBlbmZvcmNlbWVudCwgcmVnaXN0ZXJlZCBjaGVja3MsIGJpbmFyeSBwYXRjaCwgc2VwYXJhdGUgcHVibGlzaGVyLCBpbW11dGFibGUgZXZpZGVuY2UsIGluZGVwZW5kZW50IHJldmlldyBiaW5kaW5nIGFuZCBodW1hbiBtZXJnZS4gUmVjb3JkIHRydXRoZnVsIHJ1bi1ib3VuZCBDb2RleCBpZGVudGl0eSB3aXRob3V0IGludmVudGluZyBhIENsYXVkZSB0cmFuc2NyaXB0LiBQcmVzZXJ2ZSB0aGUgQ2xhdWRlIHBhdGggZm9yIHVucmVsYXRlZCB0YXNrcyBidXQgbmV2ZXIgcm91dGUgSXNzdWUgMzkgdG8gaXQgYWdhaW4uIEFkZCBkZXRlcm1pbmlzdGljIGZhbHNlLXN1Y2Nlc3MgYW5kIHNlY3VyaXR5IHJlZ3Jlc3Npb24gdGVzdHMuIERvIG5vdCBhZGQgYW4gb3JjaGVzdHJhdG9yIHNlcnZpY2UsIGRlcGxveW1lbnQsIHByb2R1Y3QgYmVoYXZpb3IsIG5ldyBzZWNyZXRzLCBhdXRvbWF0aWMgbWVyZ2UsIG9yIHBhdGhzIG91dHNpZGUgdGhlIGRlY2xhcmVkIHNjb3BlLiIsCiAgImNoYW5nZV9wb2xpY3kiOiB7CiAgICAiY2hhbmdlX3JlcXVpcmVkIjogdHJ1ZSwKICAgICJwb2xpY3lfZXhjZXB0aW9uX2lkIjogbnVsbCwKICAgICJub19jaGFuZ2UiOiB7CiAgICAgICJhbGxvd2VkIjogZmFsc2UsCiAgICAgICJyZWFzb25fY29kZXMiOiBbXSwKICAgICAgInJlcXVpcmVkX2V2aWRlbmNlX3R5cGVzIjogW10KICAgIH0KICB9LAogICJiYXNlX3JlZiI6ICJtYWluIiwKICAiYmFzZV9zaGEiOiAiNWMyOTU0NzJkMWM4MWU0ODg4OGZlNjRiYzFlMmM5MzI4YmJhMDNlOCIsCiAgImJyYW5jaCI6ICJhZ2VudC9pc3N1ZS00MC1jb2RleC1hY3Rpb25zLWJvb3RzdHJhcCIsCiAgImFsbG93ZWRfcGF0aHMiOiBbCiAgICAiLmdpdGh1Yi93b3JrZmxvd3MvcDAtYWN0aW9ucy1hZGFwdGVyLnltbCIsCiAgICAidG9vbHMvcDBfYWN0aW9uc19hZGFwdGVyLnB5IiwKICAgICJ0ZXN0cy90ZXN0X2IzX3AwX2FjdGlvbnNfYWRhcHRlci5weSIKICBdLAogICJkZW5pZWRfcGF0aHMiOiBbCiAgICAiLmFpL3Rhc2tzLyoqIiwKICAgICJBSV9PUy5tZCIsCiAgICAiUkVBRE1FLm1kIiwKICAgICJDSEFOR0VMT0cubWQiLAogICAgImNvbnRyYWN0cy8qKiIsCiAgICAiZG9jcy8qKiIsCiAgICAiZml4dHVyZXMvKioiLAogICAgInJlcXVpcmVtZW50cy0qLnR4dCIsCiAgICAic3RhbmRhcmRzLyoqIiwKICAgICJ0ZW1wbGF0ZXMvKioiLAogICAgInRlc3RzL3Rlc3RfYjBfY29udHJhY3RzLnB5IiwKICAgICJ0ZXN0cy90ZXN0X2IxX2ZpbmFsaXplci5weSIsCiAgICAidGVzdHMvdGVzdF9iMl92ZXJpZmllci5weSIsCiAgICAidGVzdHMvdGVzdF9iM190ZXJtaW5hbF9wcm9wYWdhdGlvbi5weSIsCiAgICAidG9vbHMvcHJvcGFnYXRlX2IzLnB5IgogIF0sCiAgInJpc2tfY2xhc3MiOiAiTDMiLAogICJleGVjdXRvciI6IHsKICAgICJhZGFwdGVyIjogIm9wZW5haS1jb2RleC1sb2NhbC1ib290c3RyYXAiLAogICAgInZlcnNpb24iOiAiY29kZXgtYXBwLTAxOWY1NWJhLTk4ZjUtNzBkMi04MzNkLTI4ZmE3NWNjNTY1OCIsCiAgICAibWF4X2F0dGVtcHRzIjogMywKICAgICJ0aW1lb3V0X3NlY29uZHMiOiAzNjAwCiAgfSwKICAiYWNjZXB0YW5jZV9jcml0ZXJpYSI6IFsKICAgIHsKICAgICAgImlkIjogIkFDLUNPREVYLTEiLAogICAgICAicHJlZGljYXRlX2lkIjogInByb2Nlc3MuZXhpdF9jb2RlLmVxdWFscyIsCiAgICAgICJwYXJhbWV0ZXJzIjogewogICAgICAgICJjb21wb25lbnQiOiAiaXNzdWUtNDAtY29kZXgtYWN0aW9ucy1hZGFwdGVyLXN1aXRlIiwKICAgICAgICAidmFsdWUiOiAwLAogICAgICAgICJ0cnVzdGVkX2V2aWRlbmNlX3NvdXJjZSI6ICJpbmRlcGVuZGVudF9wcm9jZXNzX2V4aXRfY29kZSIsCiAgICAgICAgImZvcmJpZGRlbl9zb3VyY2VzIjogWwogICAgICAgICAgImF1dGhvcl9zZWxmX3JlcG9ydCIsCiAgICAgICAgICAiYWN0aW9uc19qb2JfY29uY2x1c2lvbiIKICAgICAgICBdCiAgICAgIH0sCiAgICAgICJyZXF1aXJlZCI6IHRydWUsCiAgICAgICJsaW5rZWRfY2hlY2tzIjogWwogICAgICAgICJpc3N1ZS00MC1jb2RleC1hZGFwdGVyLXRlc3RzIgogICAgICBdCiAgICB9CiAgXSwKICAicmVxdWlyZWRfY2hlY2tzIjogWwogICAgewogICAgICAiaWQiOiAiaXNzdWUtNDAtY29kZXgtYWRhcHRlci10ZXN0cyIsCiAgICAgICJjb21tYW5kX2lkIjogInJlcG8uY29udHJhY3RzLmIzLnRlc3RzIiwKICAgICAgInJlcXVpcmVkIjogdHJ1ZSwKICAgICAgImV4cGVjdGVkX3Bvc3Rjb25kaXRpb25zIjogWwogICAgICAgIHsKICAgICAgICAgICJwcmVkaWNhdGVfaWQiOiAicHJvY2Vzcy5leGl0X2NvZGUuZXF1YWxzIiwKICAgICAgICAgICJwYXJhbWV0ZXJzIjogewogICAgICAgICAgICAidmFsdWUiOiAwCiAgICAgICAgICB9CiAgICAgICAgfQogICAgICBdCiAgICB9CiAgXSwKICAicmV2aWV3X3BvbGljeSI6IHsKICAgICJyZXZpZXdlcl9jbGFzcyI6ICJpbmRlcGVuZGVudC1lbmdpbmVlcmluZyIsCiAgICAicG9saWN5X2lkIjogInJldmlldy1pbmRlcGVuZGVuY2UudjEiLAogICAgImZvcmJpZGRlbl9saW5lYWdlX292ZXJsYXBzIjogWwogICAgICAiYWdlbnRfcnVudGltZV9pZCIsCiAgICAgICJjcmVkZW50aWFsX3ByaW5jaXBhbCIsCiAgICAgICJhdXRob3JlZF9jb21taXRzIgogICAgXSwKICAgICJtaW5pbXVtX2Rpc3RpbmN0X2h1bWFuX29wZXJhdG9ycyI6IDEKICB9LAogICJleHRlcm5hbF9zaWRlX2VmZmVjdHMiOiAib3duZXJfYXBwcm92ZWQiLAogICJjcmVhdGVkX2J5IjogImdpdGh1Yjp5dXJpa3VjaHVtb3YtdXgvY29kZXgtY29udHJvbC1wbGFuZSIsCiAgImNyZWF0ZWRfYXQiOiAiMjAyNi0wNy0xN1QwODozNjozOVoiCn0K"
+
+
+def _load_exact_issue_40_task():
+    """Offline byte-for-byte snapshot of immutable task commit 636748bb.
+
+    The task lives on its control commit rather than the implementation
+    branch, so the PR-triggered shallow checkout cannot git-show it. Keep the
+    exact bytes and their SHA-256 here to make admission compatibility a
+    deterministic, network-free regression rather than a source-token test.
+    """
+    raw = base64.b64decode(EXACT_ISSUE_40_TASK_B64)
+    if hashlib.sha256(raw).hexdigest() != EXACT_ISSUE_40_TASK_SHA256:
+        raise AssertionError("embedded Issue #40 task bytes do not match the immutable snapshot")
+    return json.loads(raw)
 
 # The original eight scenarios AC-A2 requires by name.
 REQUIRED_SCENARIOS = {
@@ -329,6 +351,42 @@ class CodexActionEvidenceTests(unittest.TestCase):
         self.assertEqual("codex_action_run", decision.execution_id_source)
         import uuid as _uuid
         _uuid.UUID(decision.execution_id)
+
+    def test_exact_issue_40_bootstrap_binding_resolves_to_codex_action(self) -> None:
+        inputs, _, signal, review = self._codex_case()
+        task = _load_exact_issue_40_task()
+        self.assertEqual(ISSUE_40_TASK_ID, task["task_id"])
+        self.assertEqual(CODEX_LOCAL_BOOTSTRAP_ADAPTER, task["executor"]["adapter"])
+        signal["base_sha"] = task["base_sha"]
+        signal["target_branch"] = task["branch"]
+        signal["default_branch_head_before"] = task["base_sha"]
+        signal["default_branch_head_after"] = task["base_sha"]
+        signal["changed_files"] = ["tools/p0_actions_adapter.py"]
+        signal["executor_task_commit"] = ISSUE_40_TASK_COMMIT
+        signal["executor_task_path"] = ".ai/tasks/40/codex-actions-bootstrap-task.v1.json"
+        inputs["task_commit"] = ISSUE_40_TASK_COMMIT
+        inputs["task_path"] = signal["executor_task_path"]
+        inputs["target_branch"] = task["branch"]
+        review["task_id"] = ISSUE_40_TASK_ID
+        review["eligibility"]["risk_class"] = "L3"
+
+        self.assertIsNone(adapter.validate_task_document(task))
+        self.assertIsNone(validate_executor_adapter(task))
+        self.assertEqual(CODEX_EXECUTOR_ADAPTER, resolve_workflow_executor_adapter(task))
+        decision = evaluate(inputs, task, signal, review)
+        self.assertTrue(decision.accepted, decision.failure_code)
+
+    def test_unknown_or_cross_issue_local_bootstrap_adapter_fails_closed(self) -> None:
+        _, task, _, _ = self._codex_case()
+        task["executor"]["adapter"] = "openai-codex-unknown"
+        self.assertEqual("executor_adapter_unsupported", validate_executor_adapter(task))
+        self.assertIsNone(resolve_workflow_executor_adapter(task))
+
+        task["executor"]["adapter"] = CODEX_LOCAL_BOOTSTRAP_ADAPTER
+        task["task_id"] = "yurikuchumov-ux/ai-operating-system#41"
+        task["issue_number"] = 41
+        self.assertEqual("executor_adapter_unsupported", validate_executor_adapter(task))
+        self.assertIsNone(resolve_workflow_executor_adapter(task))
 
     def test_codex_policy_mismatch_fails_closed(self) -> None:
         inputs, task, signal, review = self._codex_case()
@@ -1163,7 +1221,7 @@ class WorkflowInvariantTests(unittest.TestCase):
 
     def test_codex_is_selected_only_from_immutable_task_adapter(self) -> None:
         self.assertIn("executor_adapter: ${{ steps.bind.outputs.executor_adapter }}", self.text)
-        self.assertIn("adapter.task_executor_adapter(task)", self.text)
+        self.assertIn("adapter.resolve_workflow_executor_adapter(task)", self.text)
         self.assertIn(
             "if: needs.admission.outputs.executor_adapter == 'openai-codex-action'",
             self.text,
