@@ -1208,8 +1208,8 @@ class WorkflowInvariantTests(unittest.TestCase):
             "${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}"
         )
         self.assertEqual(1, claude_step.count(oauth_binding))
-        self.assertNotIn("anthropic_api_key:", claude_step)
-        self.assertNotIn("ANTHROPIC_API_KEY", claude_step)
+        self.assertNotIn("anthropic_api_key:", self.functional)
+        self.assertNotIn("ANTHROPIC_API_KEY", self.functional)
 
     def test_claude_authentication_has_no_metered_provider_fallback(self) -> None:
         claude_step = self.text.split(
