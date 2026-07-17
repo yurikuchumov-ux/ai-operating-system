@@ -22,6 +22,8 @@ Coverage maps to the task's acceptance criteria:
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 import re
 import tempfile
@@ -32,8 +34,18 @@ from jsonschema import Draft202012Validator, FormatChecker
 
 from tools import p0_actions_adapter as adapter
 from tools.p0_actions_adapter import (
+    CODEX_LOCAL_BOOTSTRAP_ADAPTER,
+    CODEX_EXECUTOR_ADAPTER,
     Decision,
+    ISSUE_40_TASK_COMMIT,
+    ISSUE_40_TASK_ID,
     PINNED_ADAPTER_ACTION,
+    PINNED_CODEX_ACTION,
+    PINNED_CODEX_CLI_VERSION,
+    PINNED_CODEX_EFFORT,
+    PINNED_CODEX_MODEL,
+    PINNED_CODEX_PERMISSION_PROFILE,
+    PINNED_CODEX_SAFETY_STRATEGY,
     PROVIDER_TRANSIENT_OUTPUT_PATH,
     VERIFIER_CHECK_CONTEXT,
     build_documents,
@@ -42,9 +54,11 @@ from tools.p0_actions_adapter import (
     is_verification_only,
     prohibited_transcript_tool_use,
     resolve_registered_check,
+    resolve_workflow_executor_adapter,
     run_suite,
     transcript_tool_policy_failure,
     transcript_tool_use_names,
+    validate_executor_adapter,
     validate_target_branch,
     validate_task_path,
     validate_task_ref,
@@ -57,6 +71,22 @@ DOCUMENTS_DIR = REPO_ROOT / "fixtures/p0/documents"
 WORKFLOW_PATH = REPO_ROOT / ".github/workflows/p0-actions-adapter.yml"
 RESULT_SCHEMA_PATH = REPO_ROOT / "contracts/schemas/result.v1.schema.json"
 VERIFICATION_SCHEMA_PATH = REPO_ROOT / "contracts/schemas/verification.v1.schema.json"
+EXACT_ISSUE_40_TASK_SHA256 = "9bc65a850a53808d66042e726762d4ca15651c00196d8e11ed0fad7d3e04a286"
+EXACT_ISSUE_40_TASK_B64 = "ewogICJzY2hlbWFfdmVyc2lvbiI6ICIxLjAuMCIsCiAgInRhc2tfaWQiOiAieXVyaWt1Y2h1bW92LXV4L2FpLW9wZXJhdGluZy1zeXN0ZW0jNDAiLAogICJyZXBvc2l0b3J5IjogInl1cmlrdWNodW1vdi11eC9haS1vcGVyYXRpbmctc3lzdGVtIiwKICAiaXNzdWVfbnVtYmVyIjogNDAsCiAgIm9iamVjdGl2ZSI6ICJCb290c3RyYXAgYSBzZWNvbmQgdHJ1dGhmdWwgYXV0aG9yIHBhdGggaW4gdGhlIGV4aXN0aW5nIFAwIEFjdGlvbnMgYWRhcHRlciBhZnRlciBTb25uZXQgZXhoYXVzdGVkIElzc3VlIDM5LiBTZWxlY3QgQ29kZXggb25seSB3aGVuIHRoZSBpbW11dGFibGUgdGFzayBkZWNsYXJlcyBleGVjdXRvci5hZGFwdGVyIG9wZW5haS1jb2RleC1hY3Rpb24uIFBpbiBvcGVuYWkvY29kZXgtYWN0aW9uIGF0IDUyZmUwMWVjNzBhNDJmNDU0YzlkMmViZDQ3NTk4ZjlmZDY4OTNkNTYsIG1vZGVsIGdwdC01LjMtY29kZXgsIGV4cGxpY2l0IGVmZm9ydCwgcGVybWlzc2lvbi1wcm9maWxlIDp3b3Jrc3BhY2UsIGFuZCBzYWZldHktc3RyYXRlZ3kgZHJvcC1zdWRvLiBLZWVwIHRoZSBleGVjdXRlIGpvYiByZWFkLW9ubHkgdG8gR2l0SHViIGFuZCBwcmVzZXJ2ZSBleGFjdC1iYXNlIGNoZWNrb3V0LCBzY29wZSBlbmZvcmNlbWVudCwgcmVnaXN0ZXJlZCBjaGVja3MsIGJpbmFyeSBwYXRjaCwgc2VwYXJhdGUgcHVibGlzaGVyLCBpbW11dGFibGUgZXZpZGVuY2UsIGluZGVwZW5kZW50IHJldmlldyBiaW5kaW5nIGFuZCBodW1hbiBtZXJnZS4gUmVjb3JkIHRydXRoZnVsIHJ1bi1ib3VuZCBDb2RleCBpZGVudGl0eSB3aXRob3V0IGludmVudGluZyBhIENsYXVkZSB0cmFuc2NyaXB0LiBQcmVzZXJ2ZSB0aGUgQ2xhdWRlIHBhdGggZm9yIHVucmVsYXRlZCB0YXNrcyBidXQgbmV2ZXIgcm91dGUgSXNzdWUgMzkgdG8gaXQgYWdhaW4uIEFkZCBkZXRlcm1pbmlzdGljIGZhbHNlLXN1Y2Nlc3MgYW5kIHNlY3VyaXR5IHJlZ3Jlc3Npb24gdGVzdHMuIERvIG5vdCBhZGQgYW4gb3JjaGVzdHJhdG9yIHNlcnZpY2UsIGRlcGxveW1lbnQsIHByb2R1Y3QgYmVoYXZpb3IsIG5ldyBzZWNyZXRzLCBhdXRvbWF0aWMgbWVyZ2UsIG9yIHBhdGhzIG91dHNpZGUgdGhlIGRlY2xhcmVkIHNjb3BlLiIsCiAgImNoYW5nZV9wb2xpY3kiOiB7CiAgICAiY2hhbmdlX3JlcXVpcmVkIjogdHJ1ZSwKICAgICJwb2xpY3lfZXhjZXB0aW9uX2lkIjogbnVsbCwKICAgICJub19jaGFuZ2UiOiB7CiAgICAgICJhbGxvd2VkIjogZmFsc2UsCiAgICAgICJyZWFzb25fY29kZXMiOiBbXSwKICAgICAgInJlcXVpcmVkX2V2aWRlbmNlX3R5cGVzIjogW10KICAgIH0KICB9LAogICJiYXNlX3JlZiI6ICJtYWluIiwKICAiYmFzZV9zaGEiOiAiNWMyOTU0NzJkMWM4MWU0ODg4OGZlNjRiYzFlMmM5MzI4YmJhMDNlOCIsCiAgImJyYW5jaCI6ICJhZ2VudC9pc3N1ZS00MC1jb2RleC1hY3Rpb25zLWJvb3RzdHJhcCIsCiAgImFsbG93ZWRfcGF0aHMiOiBbCiAgICAiLmdpdGh1Yi93b3JrZmxvd3MvcDAtYWN0aW9ucy1hZGFwdGVyLnltbCIsCiAgICAidG9vbHMvcDBfYWN0aW9uc19hZGFwdGVyLnB5IiwKICAgICJ0ZXN0cy90ZXN0X2IzX3AwX2FjdGlvbnNfYWRhcHRlci5weSIKICBdLAogICJkZW5pZWRfcGF0aHMiOiBbCiAgICAiLmFpL3Rhc2tzLyoqIiwKICAgICJBSV9PUy5tZCIsCiAgICAiUkVBRE1FLm1kIiwKICAgICJDSEFOR0VMT0cubWQiLAogICAgImNvbnRyYWN0cy8qKiIsCiAgICAiZG9jcy8qKiIsCiAgICAiZml4dHVyZXMvKioiLAogICAgInJlcXVpcmVtZW50cy0qLnR4dCIsCiAgICAic3RhbmRhcmRzLyoqIiwKICAgICJ0ZW1wbGF0ZXMvKioiLAogICAgInRlc3RzL3Rlc3RfYjBfY29udHJhY3RzLnB5IiwKICAgICJ0ZXN0cy90ZXN0X2IxX2ZpbmFsaXplci5weSIsCiAgICAidGVzdHMvdGVzdF9iMl92ZXJpZmllci5weSIsCiAgICAidGVzdHMvdGVzdF9iM190ZXJtaW5hbF9wcm9wYWdhdGlvbi5weSIsCiAgICAidG9vbHMvcHJvcGFnYXRlX2IzLnB5IgogIF0sCiAgInJpc2tfY2xhc3MiOiAiTDMiLAogICJleGVjdXRvciI6IHsKICAgICJhZGFwdGVyIjogIm9wZW5haS1jb2RleC1sb2NhbC1ib290c3RyYXAiLAogICAgInZlcnNpb24iOiAiY29kZXgtYXBwLTAxOWY1NWJhLTk4ZjUtNzBkMi04MzNkLTI4ZmE3NWNjNTY1OCIsCiAgICAibWF4X2F0dGVtcHRzIjogMywKICAgICJ0aW1lb3V0X3NlY29uZHMiOiAzNjAwCiAgfSwKICAiYWNjZXB0YW5jZV9jcml0ZXJpYSI6IFsKICAgIHsKICAgICAgImlkIjogIkFDLUNPREVYLTEiLAogICAgICAicHJlZGljYXRlX2lkIjogInByb2Nlc3MuZXhpdF9jb2RlLmVxdWFscyIsCiAgICAgICJwYXJhbWV0ZXJzIjogewogICAgICAgICJjb21wb25lbnQiOiAiaXNzdWUtNDAtY29kZXgtYWN0aW9ucy1hZGFwdGVyLXN1aXRlIiwKICAgICAgICAidmFsdWUiOiAwLAogICAgICAgICJ0cnVzdGVkX2V2aWRlbmNlX3NvdXJjZSI6ICJpbmRlcGVuZGVudF9wcm9jZXNzX2V4aXRfY29kZSIsCiAgICAgICAgImZvcmJpZGRlbl9zb3VyY2VzIjogWwogICAgICAgICAgImF1dGhvcl9zZWxmX3JlcG9ydCIsCiAgICAgICAgICAiYWN0aW9uc19qb2JfY29uY2x1c2lvbiIKICAgICAgICBdCiAgICAgIH0sCiAgICAgICJyZXF1aXJlZCI6IHRydWUsCiAgICAgICJsaW5rZWRfY2hlY2tzIjogWwogICAgICAgICJpc3N1ZS00MC1jb2RleC1hZGFwdGVyLXRlc3RzIgogICAgICBdCiAgICB9CiAgXSwKICAicmVxdWlyZWRfY2hlY2tzIjogWwogICAgewogICAgICAiaWQiOiAiaXNzdWUtNDAtY29kZXgtYWRhcHRlci10ZXN0cyIsCiAgICAgICJjb21tYW5kX2lkIjogInJlcG8uY29udHJhY3RzLmIzLnRlc3RzIiwKICAgICAgInJlcXVpcmVkIjogdHJ1ZSwKICAgICAgImV4cGVjdGVkX3Bvc3Rjb25kaXRpb25zIjogWwogICAgICAgIHsKICAgICAgICAgICJwcmVkaWNhdGVfaWQiOiAicHJvY2Vzcy5leGl0X2NvZGUuZXF1YWxzIiwKICAgICAgICAgICJwYXJhbWV0ZXJzIjogewogICAgICAgICAgICAidmFsdWUiOiAwCiAgICAgICAgICB9CiAgICAgICAgfQogICAgICBdCiAgICB9CiAgXSwKICAicmV2aWV3X3BvbGljeSI6IHsKICAgICJyZXZpZXdlcl9jbGFzcyI6ICJpbmRlcGVuZGVudC1lbmdpbmVlcmluZyIsCiAgICAicG9saWN5X2lkIjogInJldmlldy1pbmRlcGVuZGVuY2UudjEiLAogICAgImZvcmJpZGRlbl9saW5lYWdlX292ZXJsYXBzIjogWwogICAgICAiYWdlbnRfcnVudGltZV9pZCIsCiAgICAgICJjcmVkZW50aWFsX3ByaW5jaXBhbCIsCiAgICAgICJhdXRob3JlZF9jb21taXRzIgogICAgXSwKICAgICJtaW5pbXVtX2Rpc3RpbmN0X2h1bWFuX29wZXJhdG9ycyI6IDEKICB9LAogICJleHRlcm5hbF9zaWRlX2VmZmVjdHMiOiAib3duZXJfYXBwcm92ZWQiLAogICJjcmVhdGVkX2J5IjogImdpdGh1Yjp5dXJpa3VjaHVtb3YtdXgvY29kZXgtY29udHJvbC1wbGFuZSIsCiAgImNyZWF0ZWRfYXQiOiAiMjAyNi0wNy0xN1QwODozNjozOVoiCn0K"
+
+
+def _load_exact_issue_40_task():
+    """Offline byte-for-byte snapshot of immutable task commit 636748bb.
+
+    The task lives on its control commit rather than the implementation
+    branch, so the PR-triggered shallow checkout cannot git-show it. Keep the
+    exact bytes and their SHA-256 here to make admission compatibility a
+    deterministic, network-free regression rather than a source-token test.
+    """
+    raw = base64.b64decode(EXACT_ISSUE_40_TASK_B64)
+    if hashlib.sha256(raw).hexdigest() != EXACT_ISSUE_40_TASK_SHA256:
+        raise AssertionError("embedded Issue #40 task bytes do not match the immutable snapshot")
+    return json.loads(raw)
 
 # The original eight scenarios AC-A2 requires by name.
 REQUIRED_SCENARIOS = {
@@ -263,6 +293,141 @@ class ExecutionIdentityTests(unittest.TestCase):
         self.assertEqual(
             "missing_executor_evidence", adapter.executor_evidence_failure(signal)
         )
+
+
+class CodexActionEvidenceTests(unittest.TestCase):
+    """Issue #40: Codex has truthful run-bound evidence, never a fabricated
+    Claude session or transcript."""
+
+    def _codex_case(self):
+        task = _load(DOCUMENTS_DIR / "task-issue-20-canary.json")
+        task["executor"]["adapter"] = CODEX_EXECUTOR_ADAPTER
+        task["executor"]["version"] = PINNED_CODEX_CLI_VERSION
+        signal = _load(DOCUMENTS_DIR / "executor-signal-accept.json")
+        signal.update(
+            {
+                "adapter": CODEX_EXECUTOR_ADAPTER,
+                "adapter_version": "codex-cli-{}".format(PINNED_CODEX_CLI_VERSION),
+                "adapter_action": PINNED_CODEX_ACTION,
+                "codex_cli_version": PINNED_CODEX_CLI_VERSION,
+                "codex_model": PINNED_CODEX_MODEL,
+                "codex_effort": PINNED_CODEX_EFFORT,
+                "codex_permission_profile": PINNED_CODEX_PERMISSION_PROFILE,
+                "codex_safety_strategy": PINNED_CODEX_SAFETY_STRATEGY,
+                "execution_evidence_run_attempt": "1",
+                "execution_file_content": None,
+                "structured_output_raw": None,
+                "transcript": None,
+                "codex_final_message": "Implemented the bounded task.",
+                "executor_identity": {
+                    "operator_principal": "github:yurikuchumov-ux",
+                    "agent_runtime_id": "openai-codex-action:run-9000000001",
+                    "credential_principal": "openai:api-key:github-secret:OPENAI_API_KEY",
+                    "delegation_parent": "issue-20-owner-decision",
+                    "role": "author",
+                },
+            }
+        )
+        review = _load(DOCUMENTS_DIR / "review-accept.json")
+        for overlap in review["eligibility"]["overlap_results"]:
+            if overlap["field"] == "agent_runtime_id":
+                overlap["author_values"] = [signal["executor_identity"]["agent_runtime_id"]]
+            elif overlap["field"] == "credential_principal":
+                overlap["author_values"] = [signal["executor_identity"]["credential_principal"]]
+        inputs = {
+            "task_commit": signal["executor_task_commit"],
+            "task_path": signal["executor_task_path"],
+            "target_branch": task["branch"],
+            "default_branch": "main",
+            "attempt": 1,
+            "mode": "execute",
+        }
+        return inputs, task, signal, review
+
+    def test_codex_run_is_accepted_without_claude_transcript(self) -> None:
+        inputs, task, signal, review = self._codex_case()
+        decision = evaluate(inputs, task, signal, review)
+        self.assertTrue(decision.accepted, decision.failure_code)
+        self.assertEqual("codex_action_run", decision.execution_id_source)
+        import uuid as _uuid
+        _uuid.UUID(decision.execution_id)
+
+    def test_exact_issue_40_bootstrap_binding_resolves_to_codex_action(self) -> None:
+        inputs, _, signal, review = self._codex_case()
+        task = _load_exact_issue_40_task()
+        self.assertEqual(ISSUE_40_TASK_ID, task["task_id"])
+        self.assertEqual(CODEX_LOCAL_BOOTSTRAP_ADAPTER, task["executor"]["adapter"])
+        signal["base_sha"] = task["base_sha"]
+        signal["target_branch"] = task["branch"]
+        signal["default_branch_head_before"] = task["base_sha"]
+        signal["default_branch_head_after"] = task["base_sha"]
+        signal["changed_files"] = ["tools/p0_actions_adapter.py"]
+        signal["executor_task_commit"] = ISSUE_40_TASK_COMMIT
+        signal["executor_task_path"] = ".ai/tasks/40/codex-actions-bootstrap-task.v1.json"
+        inputs["task_commit"] = ISSUE_40_TASK_COMMIT
+        inputs["task_path"] = signal["executor_task_path"]
+        inputs["target_branch"] = task["branch"]
+        review["task_id"] = ISSUE_40_TASK_ID
+        review["eligibility"]["risk_class"] = "L3"
+
+        self.assertIsNone(adapter.validate_task_document(task))
+        self.assertIsNone(validate_executor_adapter(task))
+        self.assertEqual(CODEX_EXECUTOR_ADAPTER, resolve_workflow_executor_adapter(task))
+        decision = evaluate(inputs, task, signal, review)
+        self.assertTrue(decision.accepted, decision.failure_code)
+
+    def test_unknown_or_cross_issue_local_bootstrap_adapter_fails_closed(self) -> None:
+        _, task, _, _ = self._codex_case()
+        task["executor"]["adapter"] = "openai-codex-unknown"
+        self.assertEqual("executor_adapter_unsupported", validate_executor_adapter(task))
+        self.assertIsNone(resolve_workflow_executor_adapter(task))
+
+        task["executor"]["adapter"] = CODEX_LOCAL_BOOTSTRAP_ADAPTER
+        task["task_id"] = "yurikuchumov-ux/ai-operating-system#41"
+        task["issue_number"] = 41
+        self.assertEqual("executor_adapter_unsupported", validate_executor_adapter(task))
+        self.assertIsNone(resolve_workflow_executor_adapter(task))
+
+    def test_codex_policy_mismatch_fails_closed(self) -> None:
+        inputs, task, signal, review = self._codex_case()
+        signal["codex_safety_strategy"] = "unsafe"
+        decision = evaluate(inputs, task, signal, review)
+        self.assertFalse(decision.accepted)
+        self.assertEqual("executor_adapter_mismatch", decision.failure_code)
+
+    def test_manifest_executor_adapter_shape_uses_codex_policy(self) -> None:
+        _, _, signal, _ = self._codex_case()
+        manifest = dict(signal)
+        manifest["executor_adapter"] = manifest.pop("adapter")
+        self.assertIsNone(adapter.codex_action_evidence_failure(manifest))
+        manifest["codex_model"] = "some-default-model"
+        self.assertEqual(
+            "executor_adapter_mismatch",
+            adapter.codex_action_evidence_failure(manifest),
+        )
+
+    def test_codex_requires_positive_run_attempt_and_real_invocation(self) -> None:
+        _, _, signal, _ = self._codex_case()
+        signal["adapter_attempted"] = False
+        self.assertEqual("missing_executor_evidence", adapter.executor_evidence_failure(signal))
+        signal["adapter_attempted"] = True
+        signal["execution_evidence_run_attempt"] = "0"
+        self.assertEqual("missing_executor_evidence", adapter.executor_evidence_failure(signal))
+
+    def test_task_and_signal_adapter_must_match(self) -> None:
+        inputs, task, signal, review = self._codex_case()
+        task["executor"]["adapter"] = "human-supervised-claude-code"
+        decision = evaluate(inputs, task, signal, review)
+        self.assertEqual("executor_adapter_mismatch", decision.failure_code)
+
+    def test_issue_39_cannot_replay_a_fourth_claude_attempt(self) -> None:
+        _, task, _, _ = self._codex_case()
+        task["task_id"] = "yurikuchumov-ux/ai-operating-system#39"
+        task["issue_number"] = 39
+        task["executor"]["adapter"] = "human-supervised-claude-code"
+        self.assertEqual("executor_attempts_exhausted", validate_executor_adapter(task))
+        task["executor"]["adapter"] = CODEX_EXECUTOR_ADAPTER
+        self.assertIsNone(validate_executor_adapter(task))
 
 
 class TruthfulLiveSignalTests(unittest.TestCase):
@@ -912,6 +1077,15 @@ class ExecutorManifestPrimaryFailurePrecedenceTests(unittest.TestCase):
         self.assertFalse(decision.accepted)
         self.assertEqual("adapter_outcome_not_success", decision.failure_code)
 
+    def test_control_integrity_failure_keeps_its_primary_reason(self) -> None:
+        task = _load(DOCUMENTS_DIR / "task-issue-20-canary.json")
+        signal = self._base_signal()
+        signal["executor_manifest_primary_failure"] = "control_integrity_failed"
+        decision = evaluate(self._inputs(), task, signal, None)
+        self.assertFalse(decision.accepted)
+        self.assertEqual("control_integrity_failed", decision.failure_code)
+        self.assertEqual("ref_history_unverifiable", decision.terminal_reason)
+
     def test_success_path_is_unaffected_and_still_requires_branch_and_review(self) -> None:
         """No manifest primary failure recorded: the ordinary success path,
         including the exact target branch and an independent review, is
@@ -1025,6 +1199,54 @@ class WorkflowInvariantTests(unittest.TestCase):
         self.assertNotIn("claude-code-action@main", self.text)
         self.assertNotIn("claude-code-action@v", self.text)
 
+    def test_codex_action_and_cli_are_exactly_pinned(self) -> None:
+        self.assertIn("uses: {}".format(PINNED_CODEX_ACTION), self.text)
+        self.assertNotIn("openai/codex-action@v", self.text)
+        self.assertIn('codex-version: "{}"'.format(PINNED_CODEX_CLI_VERSION), self.text)
+        self.assertIn("model: {}".format(PINNED_CODEX_MODEL), self.text)
+        self.assertIn("effort: {}".format(PINNED_CODEX_EFFORT), self.text)
+
+    def test_codex_security_profile_and_secret_boundary_are_exact(self) -> None:
+        codex_step = self.text.split("- name: Codex edits the workspace", 1)[1].split(
+            "- name: Preserve real adapter output", 1
+        )[0]
+        self.assertIn('permission-profile: "{}"'.format(PINNED_CODEX_PERMISSION_PROFILE), codex_step)
+        self.assertIn("safety-strategy: {}".format(PINNED_CODEX_SAFETY_STRATEGY), codex_step)
+        self.assertIn("openai-api-key: ${{ secrets.OPENAI_API_KEY }}", codex_step)
+        self.assertNotIn("github-token:", codex_step)
+        self.assertNotIn("github_token:", codex_step)
+        self.assertNotIn("sandbox:", codex_step)
+        execute_checkout = self.text.split("  execute:", 1)[1].split("  publish-target:", 1)[0]
+        self.assertIn("persist-credentials: false", execute_checkout)
+
+    def test_codex_is_selected_only_from_immutable_task_adapter(self) -> None:
+        self.assertIn("executor_adapter: ${{ steps.bind.outputs.executor_adapter }}", self.text)
+        self.assertIn("adapter.resolve_workflow_executor_adapter(task)", self.text)
+        self.assertIn(
+            "if: needs.admission.outputs.executor_adapter == 'openai-codex-action'",
+            self.text,
+        )
+        self.assertIn(
+            "if: needs.admission.outputs.executor_adapter == 'human-supervised-claude-code'",
+            self.text,
+        )
+
+    def test_codex_has_run_evidence_without_fabricated_claude_transcript(self) -> None:
+        self.assertIn("codex-final-message.txt", self.text)
+        self.assertIn("adapter.codex_action_evidence_failure(manifest)", self.text)
+        self.assertIn("execution_evidence_run_attempt", self.text)
+        self.assertIn("openai-codex-action:run-", self.text)
+        self.assertNotIn("executor-transcript.txt').write_text(codex_final", self.text)
+        self.assertIn("shutil.rmtree(codex_control)", self.text)
+        # output.txt is a known Claude action byproduct only. A Codex-created
+        # output.txt must remain visible to the ordinary scope rejection.
+        self.assertIn("if not is_codex and provider_transient.is_file():", self.text)
+
+    def test_control_hash_failure_is_preserved_before_python_import(self) -> None:
+        self.assertIn("control_integrity_failed=false", self.text)
+        self.assertIn('d["postcondition_failure"]="control_integrity_failed"', self.text)
+        self.assertIn('manifest.get(\'postcondition_failure\')', self.text)
+
     def test_workflow_dispatch_inputs_present(self) -> None:
         for token in ("workflow_dispatch", "task_commit", "task_path", "target_branch", "mode"):
             self.assertIn(token, self.text)
@@ -1033,6 +1255,22 @@ class WorkflowInvariantTests(unittest.TestCase):
         # The executor job must be gated to workflow_dispatch only.
         self.assertIn("github.event_name == 'workflow_dispatch'", self.text)
         self.assertIn("github.event.inputs.mode == 'execute'", self.text)
+
+    def test_pr_bootstrap_emits_exact_head_review_evidence(self) -> None:
+        bootstrap = self.text.split("  bootstrap-tests:", 1)[1].split("  admission:", 1)[0]
+        self.assertIn("ref: ${{ github.event.pull_request.head.sha || github.sha }}", bootstrap)
+        self.assertIn("fetch-depth: 0", bootstrap)
+        self.assertIn("persist-credentials: false", bootstrap)
+        self.assertIn("Prepare cross-platform private temp root", bootstrap)
+        self.assertIn("sudo install -d -m 1777 /private/tmp", bootstrap)
+        self.assertIn("Verify exact immutable Issue 40 task routing regression", bootstrap)
+        self.assertIn("Run full repository suite", bootstrap)
+        self.assertIn("Parse workflow YAML independently", bootstrap)
+        self.assertIn("Validate exact PR diff", bootstrap)
+        self.assertIn("BASE_SHA: ${{ github.event.pull_request.base.sha }}", bootstrap)
+        self.assertIn("HEAD_SHA: ${{ github.event.pull_request.head.sha }}", bootstrap)
+        self.assertIn('test "$(git rev-parse HEAD)" = "$HEAD_SHA"', bootstrap)
+        self.assertIn('git diff --check "$BASE_SHA..$HEAD_SHA"', bootstrap)
 
     def test_top_level_permissions_read_only(self) -> None:
         # The top-level permissions block grants only contents: read.

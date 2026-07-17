@@ -48,7 +48,8 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  PINNED_ADAPTER_ACTION: anthropics/claude-code-action@6902c227aaa9536481b99d56f3014bbbad6c6da8
+  PINNED_CLAUDE_ACTION: anthropics/claude-code-action@6902c227aaa9536481b99d56f3014bbbad6c6da8
+  PINNED_CODEX_ACTION: openai/codex-action@52fe01ec70a42f454c9d2ebd47598f9fd6893d56
   VERIFIER_CHECK_CONTEXT: p0-actions-verifier
 
 jobs:
@@ -60,12 +61,35 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
       - run: python3 -m pip install --disable-pip-version-check --no-input -r requirements-p0-actions.txt
+      - name: Prepare cross-platform private temp root
+        run: sudo install -d -m 1777 /private/tmp
+      - name: Verify exact immutable Issue 40 task routing regression
+        run: python3 -m unittest tests.test_b3_p0_actions_adapter.CodexActionEvidenceTests.test_exact_issue_40_bootstrap_binding_resolves_to_codex_action -v
       - name: Run registered bootstrap command
         run: python3 -m unittest discover -s tests -p 'test_b3_*.py'
+      - name: Run full repository suite
+        run: python3 -m unittest discover -s tests
+      - name: Parse workflow YAML independently
+        run: |
+          ruby -e 'require "yaml"; d=YAML.safe_load(File.read(".github/workflows/p0-actions-adapter.yml"), aliases: true); abort "unexpected jobs" unless d.fetch("jobs").keys.sort == %w[admission bootstrap-tests execute finalize-and-verify publish-target].sort'
+      - name: Validate exact PR diff
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$HEAD_SHA"
+          git fetch --no-tags origin "$BASE_SHA" "$HEAD_SHA"
+          test "$(git merge-base "$BASE_SHA" "$HEAD_SHA")" = "$BASE_SHA"
+          git diff --check "$BASE_SHA..$HEAD_SHA"
 
   admission:
     name: Admission control
@@ -82,6 +106,7 @@ jobs:
       adapter_sha256: ${{ steps.bind.outputs.adapter_sha256 }}
       registry_sha256: ${{ steps.bind.outputs.registry_sha256 }}
       session_parser_sha256: ${{ steps.bind.outputs.session_parser_sha256 }}
+      executor_adapter: ${{ steps.bind.outputs.executor_adapter }}
     steps:
       - name: Clean ephemeral checkout of protected default branch
         uses: actions/checkout@v4
@@ -159,6 +184,7 @@ jobs:
               adapter.validate_task_path(os.environ["TASK_PATH"]),
               adapter.validate_target_branch(os.environ["TARGET_BRANCH"], os.environ["DEFAULT_BRANCH"]),
               adapter.validate_task_document(task),
+              adapter.validate_executor_adapter(task),
           ):
               if reason:
                   reject(reason)
@@ -184,12 +210,13 @@ jobs:
               reject("missing_execution_run_id")
           out = Path(os.environ["GITHUB_OUTPUT"])
           out.write_text(
-              "admitted=true\nbase_sha={}\ncommand_id={}\ntask_sha256={}\nadapter_sha256={}\nregistry_sha256={}\nsession_parser_sha256={}\n".format(
+              "admitted=true\nbase_sha={}\ncommand_id={}\ntask_sha256={}\nadapter_sha256={}\nregistry_sha256={}\nsession_parser_sha256={}\nexecutor_adapter={}\n".format(
                   task["base_sha"], check["command_id"],
                   adapter.sha256_file(Path("p0-control/task.json")),
                   adapter.sha256_file(Path("tools/p0_actions_adapter.py")),
                   adapter.sha256_file(Path("contracts/registries/commands.v1.json")),
                   adapter.sha256_file(Path("tools/propagate_b3.py")),
+                  adapter.resolve_workflow_executor_adapter(task),
               ), encoding="utf-8"
           )
           PY
@@ -211,6 +238,7 @@ jobs:
         with:
           ref: ${{ needs.admission.outputs.base_sha }}
           fetch-depth: 0
+          persist-credentials: false
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -223,6 +251,7 @@ jobs:
           TARGET_BRANCH: ${{ github.event.inputs.target_branch }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           BASE_SHA: ${{ needs.admission.outputs.base_sha }}
+          EXECUTOR_ADAPTER: ${{ needs.admission.outputs.executor_adapter }}
         run: |
           git fetch --no-tags origin "+refs/heads/$DEFAULT_BRANCH:refs/remotes/origin/$DEFAULT_BRANCH"
           test "$(git rev-parse "refs/remotes/origin/$DEFAULT_BRANCH")" = "$BASE_SHA"
@@ -251,11 +280,20 @@ jobs:
               'denied_paths': task['denied_paths'],
           }, sort_keys=True), encoding='utf-8')
           PY
+          if [ "$EXECUTOR_ADAPTER" = "openai-codex-action" ]; then
+            test ! -e .p0-codex-control
+            mkdir .p0-codex-control
+            cp /tmp/p0-control/task.json .p0-codex-control/task.json
+            cp /tmp/p0-control/allowed-paths.json .p0-codex-control/allowed-paths.json
+            cp /tmp/p0-control/required-check.json .p0-codex-control/required-check.json
+            chmod -R a-w .p0-codex-control
+          fi
           echo "started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
       - name: Assert provider-owned transient output.txt is absent before invocation
         run: test ! -e output.txt
       - name: Claude edits files only (Read, Edit, Write, Glob, Grep -- no Bash, no GitHub API, no commit/push)
-        id: adapter
+        id: claude_adapter
+        if: needs.admission.outputs.executor_adapter == 'human-supervised-claude-code'
         continue-on-error: true
         uses: anthropics/claude-code-action@6902c227aaa9536481b99d56f3014bbbad6c6da8
         with:
@@ -274,13 +312,35 @@ jobs:
             --disallowedTools "Bash,BashOutput,KillShell,WebFetch,WebSearch,Task,NotebookEdit,ExitPlanMode"
             --add-dir /tmp/p0-control
             --permission-mode acceptEdits
+      - name: Codex edits the workspace under pinned no-sudo, no-network policy
+        id: codex_adapter
+        if: needs.admission.outputs.executor_adapter == 'openai-codex-action'
+        continue-on-error: true
+        uses: openai/codex-action@52fe01ec70a42f454c9d2ebd47598f9fd6893d56
+        with:
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          codex-version: "0.144.5"
+          model: gpt-5.3-codex
+          effort: high
+          permission-profile: ":workspace"
+          safety-strategy: drop-sudo
+          prompt: |
+            Implement the immutable task in .p0-codex-control/task.json.
+            Read .p0-codex-control/allowed-paths.json and edit only those
+            allowed task files. The workflow owns the registered check,
+            scope validation, commit, push, verification and review binding.
+            Do not use Git remotes, GitHub APIs, network, secrets, deployment,
+            merge, commit or push. Do not claim that workflow checks passed.
       - name: Preserve real adapter output before any postcondition decision
         if: always()
         env:
-          ADAPTER_OUTCOME: ${{ steps.adapter.outcome }}
-          EXECUTION_FILE: ${{ steps.adapter.outputs.execution_file }}
-          STRUCTURED_OUTPUT: ${{ steps.adapter.outputs.structured_output }}
-          BRANCH_OUTPUT: ${{ steps.adapter.outputs.branch_name }}
+          EXECUTOR_ADAPTER: ${{ needs.admission.outputs.executor_adapter }}
+          CLAUDE_OUTCOME: ${{ steps.claude_adapter.outcome }}
+          CLAUDE_EXECUTION_FILE: ${{ steps.claude_adapter.outputs.execution_file }}
+          CLAUDE_STRUCTURED_OUTPUT: ${{ steps.claude_adapter.outputs.structured_output }}
+          CLAUDE_BRANCH_OUTPUT: ${{ steps.claude_adapter.outputs.branch_name }}
+          CODEX_OUTCOME: ${{ steps.codex_adapter.outcome }}
+          CODEX_FINAL_MESSAGE: ${{ steps.codex_adapter.outputs.final-message }}
           TASK_COMMIT: ${{ github.event.inputs.task_commit }}
           TASK_PATH: ${{ github.event.inputs.task_path }}
           EXECUTION_RUN_ID: ${{ github.run_id }}
@@ -292,18 +352,23 @@ jobs:
           from pathlib import Path
           from tools.p0_actions_adapter import PROVIDER_TRANSIENT_OUTPUT_PATH
           out = Path('p0-adapter-output'); out.mkdir(exist_ok=True)
-          execution_path = os.environ.get('EXECUTION_FILE') or ''
+          executor_adapter = os.environ.get('EXECUTOR_ADAPTER') or ''
+          is_codex = executor_adapter == 'openai-codex-action'
+          execution_path = os.environ.get('CLAUDE_EXECUTION_FILE') or ''
           if execution_path:
               candidate = Path(execution_path)
               if candidate.is_file() and candidate.stat().st_size <= 1024 * 1024:
                   raw = candidate.read_bytes()
                   (out / 'execution-file.txt').write_bytes(raw)
                   (out / 'executor-transcript.txt').write_bytes(raw)
-          structured = os.environ.get('STRUCTURED_OUTPUT') or ''
+          structured = os.environ.get('CLAUDE_STRUCTURED_OUTPUT') or ''
           if structured and len(structured.encode('utf-8')) <= 1024 * 1024:
               (out / 'structured-output.txt').write_text(structured, encoding='utf-8')
               if not (out / 'executor-transcript.txt').is_file():
                   (out / 'executor-transcript.txt').write_text(structured, encoding='utf-8')
+          codex_final = os.environ.get('CODEX_FINAL_MESSAGE') or ''
+          if is_codex and codex_final and len(codex_final.encode('utf-8')) <= 1024 * 1024:
+              (out / 'codex-final-message.txt').write_text(codex_final, encoding='utf-8')
           # Issue #32 correction: the pinned action writes its own untracked
           # repository-root output.txt as a byproduct of serializing execution
           # output. It was asserted absent before invocation, so any bytes
@@ -313,21 +378,52 @@ jobs:
           # path is ever touched, and allowed_paths/denied_paths are never
           # weakened.
           provider_transient = Path(PROVIDER_TRANSIENT_OUTPUT_PATH)
-          if provider_transient.is_file():
+          if not is_codex and provider_transient.is_file():
               raw = provider_transient.read_bytes()
               if len(raw) <= 1024 * 1024:
                   (out / 'provider-transient-output.txt').write_bytes(raw)
               provider_transient.unlink()
+          # The workspace-readable copies are workflow-created control input,
+          # never deliverables. Canonical hash-bound copies remain under
+          # /tmp/p0-control and are verified by the next trusted step.
+          codex_control = Path('.p0-codex-control')
+          control_failure = None
+          if is_codex:
+              import shutil
+              if codex_control.is_symlink():
+                  control_failure = 'executor_adapter_mismatch'
+                  codex_control.unlink()
+              elif codex_control.is_dir():
+                  try:
+                      shutil.rmtree(codex_control)
+                  except OSError:
+                      control_failure = 'executor_adapter_mismatch'
+              elif codex_control.exists():
+                  control_failure = 'executor_adapter_mismatch'
+                  codex_control.unlink()
+              else:
+                  control_failure = 'executor_adapter_mismatch'
           manifest = {
-              'adapter_outcome': os.environ.get('ADAPTER_OUTCOME') or None,
-              'adapter_branch_name': os.environ.get('BRANCH_OUTPUT') or None,
+              'executor_adapter': executor_adapter,
+              'adapter_outcome': (os.environ.get('CODEX_OUTCOME') if is_codex else os.environ.get('CLAUDE_OUTCOME')) or None,
+              'adapter_branch_name': None if is_codex else (os.environ.get('CLAUDE_BRANCH_OUTPUT') or None),
+              'adapter_action': 'openai/codex-action@52fe01ec70a42f454c9d2ebd47598f9fd6893d56' if is_codex else 'anthropics/claude-code-action@6902c227aaa9536481b99d56f3014bbbad6c6da8',
+              'adapter_version': 'codex-cli-0.144.5' if is_codex else 'claude-code-2.1.197-p0-actions',
+              'codex_cli_version': '0.144.5' if is_codex else None,
+              'codex_model': 'gpt-5.3-codex' if is_codex else None,
+              'codex_effort': 'high' if is_codex else None,
+              'codex_permission_profile': ':workspace' if is_codex else None,
+              'codex_safety_strategy': 'drop-sudo' if is_codex else None,
               'postconditions_passed': False,
               'executor_task_commit': os.environ.get('TASK_COMMIT'),
               'executor_task_path': os.environ.get('TASK_PATH'),
               'execution_evidence_run_id': os.environ.get('EXECUTION_RUN_ID'),
+              'execution_evidence_run_attempt': '${{ github.run_attempt }}',
               'started_at': os.environ.get('STARTED_AT'),
               'finished_at': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
           }
+          if control_failure:
+              manifest['postcondition_failure'] = control_failure
           (out / 'manifest.json').write_text(json.dumps(manifest, sort_keys=True), encoding='utf-8')
           PY
       - name: Enforce scope, run registered argv, and emit exact binary patch
@@ -341,10 +437,15 @@ jobs:
           EXPECTED_REGISTRY_SHA256: ${{ needs.admission.outputs.registry_sha256 }}
           EXPECTED_SESSION_PARSER_SHA256: ${{ needs.admission.outputs.session_parser_sha256 }}
         run: |
-          test "$(shasum -a 256 /tmp/p0-control/task.json | awk '{print $1}')" = "$EXPECTED_TASK_SHA256"
-          test "$(shasum -a 256 tools/p0_actions_adapter.py | awk '{print $1}')" = "$EXPECTED_ADAPTER_SHA256"
-          test "$(shasum -a 256 contracts/registries/commands.v1.json | awk '{print $1}')" = "$EXPECTED_REGISTRY_SHA256"
-          test "$(shasum -a 256 tools/propagate_b3.py | awk '{print $1}')" = "$EXPECTED_SESSION_PARSER_SHA256"
+          control_integrity_failed=false
+          test "$(shasum -a 256 /tmp/p0-control/task.json | awk '{print $1}')" = "$EXPECTED_TASK_SHA256" || control_integrity_failed=true
+          test "$(shasum -a 256 tools/p0_actions_adapter.py | awk '{print $1}')" = "$EXPECTED_ADAPTER_SHA256" || control_integrity_failed=true
+          test "$(shasum -a 256 contracts/registries/commands.v1.json | awk '{print $1}')" = "$EXPECTED_REGISTRY_SHA256" || control_integrity_failed=true
+          test "$(shasum -a 256 tools/propagate_b3.py | awk '{print $1}')" = "$EXPECTED_SESSION_PARSER_SHA256" || control_integrity_failed=true
+          if [ "$control_integrity_failed" = true ]; then
+            python3 -I -c 'import json,pathlib; p=pathlib.Path("p0-adapter-output/manifest.json"); d=json.loads(p.read_text()); d["postcondition_failure"]="control_integrity_failed"; p.write_text(json.dumps(d,sort_keys=True))'
+            exit 1
+          fi
           python3 -I - <<'PY'
           import json, os, subprocess, sys
           from pathlib import Path
@@ -366,21 +467,24 @@ jobs:
               save()
               raise SystemExit(reason)
 
+          if manifest.get('executor_adapter') != adapter.resolve_workflow_executor_adapter(task):
+              reject('executor_adapter_mismatch')
+          if manifest.get('postcondition_failure'):
+              reject(manifest['postcondition_failure'])
           if manifest.get('adapter_outcome') != 'success':
               reject('adapter_outcome_not_success')
           execution = (out / 'execution-file.txt').read_text(encoding='utf-8', errors='replace') if (out / 'execution-file.txt').is_file() else None
           structured = (out / 'structured-output.txt').read_text(encoding='utf-8', errors='replace') if (out / 'structured-output.txt').is_file() else None
-          if adapter.resolve_adapter_session_id(execution, structured) is None:
-              reject('adapter_session_unresolvable')
-          # Trusted-transcript defense-in-depth: independently re-verify, from
-          # the real preserved transcript bytes, that the executor invoked
-          # only the declared edit-only tool surface -- never trust the
-          # provider's own claimed outcome for this. A missing, malformed,
-          # non-array, or empty transcript is itself a terminal failure, not
-          # "no violation found".
-          tool_policy_failure = adapter.transcript_tool_policy_failure(execution)
-          if tool_policy_failure:
-              reject(tool_policy_failure)
+          if adapter.is_codex_executor(manifest):
+              codex_failure = adapter.codex_action_evidence_failure(manifest)
+              if codex_failure:
+                  reject(codex_failure)
+          else:
+              if adapter.resolve_adapter_session_id(execution, structured) is None:
+                  reject('adapter_session_unresolvable')
+              tool_policy_failure = adapter.transcript_tool_policy_failure(execution)
+              if tool_policy_failure:
+                  reject(tool_policy_failure)
           if git('branch', '--show-current').stdout.strip() != target:
               reject('target_branch_mismatch')
           expected_check = adapter.bounded_required_check(task)
@@ -522,15 +626,22 @@ jobs:
               (out / 'manifest.json').write_text(json.dumps(manifest, sort_keys=True), encoding='utf-8')
               raise SystemExit(reason)
 
+          if manifest.get('executor_adapter') != adapter.resolve_workflow_executor_adapter(task):
+              reject('executor_adapter_mismatch')
           if manifest.get('postconditions_passed') is not True or manifest.get('adapter_outcome') != 'success':
               reject('unverified_executor_evidence')
           execution = (out / 'execution-file.txt').read_text(encoding='utf-8', errors='replace') if (out / 'execution-file.txt').is_file() else None
           structured = (out / 'structured-output.txt').read_text(encoding='utf-8', errors='replace') if (out / 'structured-output.txt').is_file() else None
-          if adapter.resolve_adapter_session_id(execution, structured) is None:
-              reject('adapter_session_unresolvable')
-          tool_policy_failure = adapter.transcript_tool_policy_failure(execution)
-          if tool_policy_failure:
-              reject(tool_policy_failure)
+          if adapter.is_codex_executor(manifest):
+              codex_failure = adapter.codex_action_evidence_failure(manifest)
+              if codex_failure:
+                  reject(codex_failure)
+          else:
+              if adapter.resolve_adapter_session_id(execution, structured) is None:
+                  reject('adapter_session_unresolvable')
+              tool_policy_failure = adapter.transcript_tool_policy_failure(execution)
+              if tool_policy_failure:
+                  reject(tool_policy_failure)
           if task.get('base_sha') != base or task.get('branch') != target:
               reject('task_ref_binding_mismatch')
           check = adapter.bounded_required_check(task)
@@ -749,6 +860,7 @@ jobs:
           python3 - <<'PY'
           import json, os, subprocess
           from pathlib import Path
+          from tools import p0_actions_adapter as adapter
           def read(path):
               p = Path(path)
               return p.read_text(encoding='utf-8', errors='replace') if p.is_file() else None
@@ -758,6 +870,9 @@ jobs:
           base = os.environ['BASE_SHA']; subject = os.environ.get('SUBJECT_SHA') or base
           manifest = load('p0-adapter-output/manifest.json')
           manifest_raw = read('p0-adapter-output/manifest.json')
+          task = load('p0-output/task.json')
+          executor_adapter = manifest.get('executor_adapter') or adapter.resolve_workflow_executor_adapter(task)
+          is_codex = executor_adapter == 'openai-codex-action'
           check = load('p0-output/required-check.json')
           check['log'] = read('p0-output/required-check.log')
           review_binding = load('p0-output/review-binding.json')
@@ -770,14 +885,22 @@ jobs:
           # `evaluate()` would otherwise apply.
           primary_failure = manifest.get('postcondition_failure') or manifest.get('publication_failure')
           signal = {
-              'adapter': 'human-supervised-claude-code',
-              'adapter_version': 'claude-code-2.1.197-p0-actions',
-              'adapter_attempted': True,
+              'adapter': executor_adapter,
+              'adapter_version': manifest.get('adapter_version'),
+              'adapter_action': manifest.get('adapter_action'),
+              'adapter_attempted': bool(manifest.get('executor_adapter')),
               'adapter_outcome': manifest.get('adapter_outcome'),
               'publication_passed': manifest.get('publication_passed'),
               'executor_task_commit': manifest.get('executor_task_commit'),
               'executor_task_path': manifest.get('executor_task_path'),
               'execution_evidence_run_id': manifest.get('execution_evidence_run_id'),
+              'execution_evidence_run_attempt': manifest.get('execution_evidence_run_attempt'),
+              'codex_cli_version': manifest.get('codex_cli_version'),
+              'codex_model': manifest.get('codex_model'),
+              'codex_effort': manifest.get('codex_effort'),
+              'codex_permission_profile': manifest.get('codex_permission_profile'),
+              'codex_safety_strategy': manifest.get('codex_safety_strategy'),
+              'codex_final_message': read('p0-adapter-output/codex-final-message.txt'),
               'started_at': manifest.get('started_at'),
               'finished_at': manifest.get('finished_at'),
               'execution_file_content': read('p0-adapter-output/execution-file.txt'),
@@ -802,8 +925,8 @@ jobs:
               'executor_manifest_primary_failure': primary_failure,
               'executor_identity': {
                   'operator_principal': 'github:${{ github.repository_owner }}',
-                  'agent_runtime_id': 'claude-code:p0-executor-session',
-                  'credential_principal': 'github:actions:p0-executor',
+                  'agent_runtime_id': ('openai-codex-action:run-' + str(manifest.get('execution_evidence_run_id'))) if is_codex else 'claude-code:p0-executor-session',
+                  'credential_principal': 'openai:api-key:github-secret:OPENAI_API_KEY' if is_codex else 'github:actions:p0-executor',
                   'delegation_parent': 'owner:immutable-task',
                   'role': 'author',
               },
