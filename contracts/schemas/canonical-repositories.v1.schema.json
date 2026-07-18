@@ -1,0 +1,70 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://example.invalid/ai-os/canonical-repositories.v1.schema.json",
+  "title": "Canonical Repository Registry",
+  "description": "Schema for the canonical repository registry defining the three authoritative repositories",
+  "type": "object",
+  "required": ["schema_version", "owner", "repositories"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1.0.0",
+      "description": "Schema version identifier"
+    },
+    "owner": {
+      "type": "string",
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9-]*[a-zA-Z0-9]$",
+      "description": "GitHub owner (user or organization)"
+    },
+    "repositories": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "description": "Exactly three canonical repositories",
+      "items": {
+        "type": "object",
+        "required": ["role", "name", "full_name", "url", "visibility", "main_sha", "boundary"],
+        "additionalProperties": false,
+        "properties": {
+          "role": {
+            "type": "string",
+            "enum": ["governance", "template", "voice"],
+            "description": "Repository role in the system"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Repository name (without owner)"
+          },
+          "full_name": {
+            "type": "string",
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9-]*/[a-zA-Z0-9_-]+$",
+            "description": "Full repository name (owner/repo)"
+          },
+          "url": {
+            "type": "string",
+            "format": "uri",
+            "pattern": "^https://github\\.com/[a-zA-Z0-9][a-zA-Z0-9-]*/[a-zA-Z0-9_-]+$",
+            "description": "GitHub repository URL"
+          },
+          "visibility": {
+            "type": "string",
+            "enum": ["public", "private"],
+            "description": "Repository visibility"
+          },
+          "main_sha": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{40}$",
+            "description": "40-character lowercase Git SHA of main branch"
+          },
+          "boundary": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Responsibility boundary description"
+          }
+        }
+      }
+    }
+  }
+}

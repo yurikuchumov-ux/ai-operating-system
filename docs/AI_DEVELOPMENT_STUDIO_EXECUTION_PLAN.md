@@ -64,6 +64,8 @@ document:
 
 ## 3. Canonical repository inventory
 
+The canonical repository registry is maintained in [`contracts/canonical-repositories.v1.json`](../contracts/canonical-repositories.v1.json) and validated against [`contracts/schemas/canonical-repositories.v1.schema.json`](../contracts/schemas/canonical-repositories.v1.schema.json).
+
 ### 3.1 Verified names and boundaries
 
 | Role | Canonical repository | Visibility | `main` SHA | Boundary |
