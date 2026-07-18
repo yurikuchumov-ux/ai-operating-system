@@ -426,16 +426,15 @@ artifact. Comments are projections only and are never authoritative state.
 | `VALIDATED` | first execution is created | `ACTIVE` | new execution ID and attempt number |
 | `ACTIVE` | execution succeeds with verified change or allowed no-change | `REVIEW_REQUIRED` | execution check, verifier report, Draft PR or no-change review artifact |
 | `ACTIVE` | execution fails and retry policy permits a new attempt with material evidence | `ACTIVE` | terminal result plus a different execution ID |
-| `ACTIVE` | three attempts fail, or a non-retryable invariant fails | `BLOCKED` | aggregate attempt history and handoff requirement |
+| `ACTIVE` | three attempts fail, or a non-retryable invariant fails | `BLOCKED` | aggregate attempt history, authenticated repository owner authorization, new immutable task artifact/commit, execution ID, result artifact and exact-SHA review requirement |
 | `REVIEW_REQUIRED` | eligible reviewer approves exact verified SHA or no-change result | `OWNER_DECISION` | review attestation and reviewed subject hash |
 | `REVIEW_REQUIRED` | eligible reviewer requests changes | `CHANGES_REQUESTED` | review attestation and closed finding IDs |
 | `CHANGES_REQUESTED` | a new attempt is authorized within retry policy | `ACTIVE` | new execution ID, new material evidence and updated base/head binding |
-| `CHANGES_REQUESTED` | retry policy is exhausted | `BLOCKED` | aggregate attempt history and replacement-executor requirement |
+| `CHANGES_REQUESTED` | retry policy is exhausted | `BLOCKED` | aggregate attempt history, authenticated repository owner authorization, new immutable task artifact/commit, execution ID, result artifact and exact-SHA review requirement |
 | `OWNER_DECISION` | owner merges exact reviewed SHA or accepts reviewed no-change | `DONE` | owner event and merge commit or accepted result hash |
 | `OWNER_DECISION` | owner declines or closes | `CANCELLED` | owner event |
 
-`DONE`, `CANCELLED`, `BLOCKED`, and `REJECTED` are terminal TaskStates. A failed
-execution never directly marks a task `DONE` or `REJECTED`.
+`DONE`, `CANCELLED`, and `REJECTED` are terminal TaskStates. `BLOCKED` is owner-gated and resumable only with authenticated repository owner authorization, new material evidence, a new immutable task artifact/commit, execution ID, result artifact and exact-SHA review. A failed execution never directly marks a task `DONE` or `REJECTED`.
 
 ### 8.2 ExecutionState
 
@@ -457,9 +456,11 @@ execution never directly marks a task `DONE` or `REJECTED`.
 `SUCCEEDED`, `FAILED`, `CANCELLED`, and `BLOCKED` are terminal for one immutable
 execution ID. A retry always receives a new execution ID, result artifact and
 execution Check Run; prior checks are never overwritten. The task Check Run
-aggregates attempt checks and is the authoritative task projection. A fourth
-attempt is forbidden unless the owner records new material evidence and selects
-a replacement executor.
+aggregates attempt checks and is the authoritative task projection. After three
+failures, automatic continuation stops. Later continuation requires new material
+evidence, authenticated repository owner authorization, a new immutable task
+artifact/commit, execution ID, result artifact and exact-SHA review. Same or
+replacement executor is owner choice.
 
 ### 8.3 Result-to-state aggregation
 
@@ -802,9 +803,10 @@ Delegation is confirmed only when all exist:
 A comment, prompt, assignment, reaction, or claimed handoff is not delegation.
 
 Success is confirmed only after independent deterministic verification. After
-three failed attempts, the current executor stops, produces a handoff artifact,
-and is replaced. A fourth attempt is forbidden without new material evidence
-recorded by the owner.
+three failures, automatic continuation stops. Later continuation requires new
+material evidence, authenticated repository owner authorization, a new immutable
+task artifact/commit, execution ID, result artifact and exact-SHA review. Same
+or replacement executor is owner choice.
 
 ## 14. Measurable readiness model
 
