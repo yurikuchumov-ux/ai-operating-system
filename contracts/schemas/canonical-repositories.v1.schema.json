@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/ai-os/canonical-repositories.v1.schema.json",
+  "title": "Canonical Repository Registry v1",
+  "description": "Machine-readable registry of authoritative repositories in the AI Operating System project.",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1.0.0",
+      "description": "Schema version for this registry format."
+    },
+    "canonical_repositories": {
+      "type": "array",
+      "description": "List of canonical repositories in the AI Operating System ecosystem.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Repository name without owner."
+          },
+          "owner": {
+            "type": "string",
+            "minLength": 1,
+            "description": "GitHub owner (user or organization)."
+          },
+          "full_name": {
+            "type": "string",
+            "pattern": "^[^/]+/[^/]+$",
+            "description": "Full repository name in owner/name format."
+          },
+          "label": {
+            "type": "string",
+            "enum": ["governance", "template", "voice"],
+            "description": "Canonical label for this repository's role."
+          },
+          "main_sha": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{40}$",
+            "description": "40-character lowercase hex SHA of the verified main branch HEAD."
+          }
+        },
+        "required": ["name", "owner", "full_name", "label", "main_sha"],
+        "additionalProperties": false
+      },
+      "minItems": 1
+    }
+  },
+  "required": ["schema_version", "canonical_repositories"],
+  "additionalProperties": false
+}

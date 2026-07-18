@@ -1,0 +1,26 @@
+{
+  "schema_version": "1.0.0",
+  "canonical_repositories": [
+    {
+      "name": "ai-operating-system",
+      "owner": "yurikuchumov-ux",
+      "full_name": "yurikuchumov-ux/ai-operating-system",
+      "label": "governance",
+      "main_sha": "a36a8eefcdd06c56edeec93057a90c58a239cf22"
+    },
+    {
+      "name": "ai-development-studio-template",
+      "owner": "yurikuchumov-ux",
+      "full_name": "yurikuchumov-ux/ai-development-studio-template",
+      "label": "template",
+      "main_sha": "ec088bf2e95e048ce1f5b69d969542b516afbc8b"
+    },
+    {
+      "name": "-ai-development-studio",
+      "owner": "yurikuchumov-ux",
+      "full_name": "yurikuchumov-ux/-ai-development-studio",
+      "label": "voice",
+      "main_sha": "f6550d4078ffccc952db269081619fdfe57e598c"
+    }
+  ]
+}
