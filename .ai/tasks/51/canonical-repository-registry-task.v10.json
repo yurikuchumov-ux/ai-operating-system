@@ -1,0 +1,100 @@
+{
+  "schema_version": "1.0.0",
+  "task_id": "yurikuchumov-ux/ai-operating-system#51",
+  "repository": "yurikuchumov-ux/ai-operating-system",
+  "issue_number": 51,
+  "objective": "Implement Issue 51 from clean main. Owner yurikuchumov-ux; exact role/name/SHA triples: governance/ai-operating-system/a36a8eefcdd06c56edeec93057a90c58a239cf22; template/ai-development-studio-template/ec088bf2e95e048ce1f5b69d969542b516afbc8b; voice/-ai-development-studio/f6550d4078ffccc952db269081619fdfe57e598c. Include exact 3.1 labels/visibility/boundary and derived full_name/url; schema exactly 3 unique entries. MUST define validate_execution_plan(plan_text, registry); main reads fixed registry/schema/plan and emits JSON only. Require one exact 3.1 5-column table, 3 rows, one repository link and every cell equal registry. No prose scan, added section or schema fallback. Tests MUST include plan_registry_equality, plan_missing_row, plan_extra_row, plan_url_mismatch, plan_duplicate_section, plan_header_mutation, unreadable_input_json plus deterministic mutations. OAuth only; no API billing.",
+  "change_policy": {
+    "change_required": true,
+    "policy_exception_id": null,
+    "no_change": {
+      "allowed": false,
+      "reason_codes": [],
+      "required_evidence_types": []
+    }
+  },
+  "base_ref": "main",
+  "base_sha": "e81cec593e7387cbf4aa6cc1f89b00b9cb82b008",
+  "branch": "agent/issue-51-canonical-repository-registry-v10",
+  "allowed_paths": [
+    "contracts/canonical-repositories.v1.json",
+    "contracts/schemas/canonical-repositories.v1.schema.json",
+    "tools/validate_canonical_repositories.py",
+    "tests/test_b3_canonical_repository_registry.py",
+    "docs/AI_DEVELOPMENT_STUDIO_EXECUTION_PLAN.md"
+  ],
+  "denied_paths": [
+    ".ai/tasks/**",
+    ".github/**",
+    "AI_OS.md",
+    "README.md",
+    "CHANGELOG.md",
+    "fixtures/**",
+    "requirements-*.txt",
+    "standards/**",
+    "templates/**",
+    "tests/test_b0_contracts.py",
+    "tests/test_b1_finalizer.py",
+    "tests/test_b2_verifier.py",
+    "tests/test_b3_canonical_repository_names.py",
+    "tests/test_b3_p0_actions_adapter.py",
+    "tests/test_b3_terminal_propagation.py",
+    "tools/p0_actions_adapter.py",
+    "tools/validate_b0.py",
+    "tools/verify_b2.py"
+  ],
+  "risk_class": "L2",
+  "executor": {
+    "adapter": "human-supervised-claude-code",
+    "version": "claude-code-oauth-actions-issue-51-registry-v10-coordinator-approved",
+    "max_attempts": 1,
+    "timeout_seconds": 1800
+  },
+  "acceptance_criteria": [
+    {
+      "id": "AC-CANONICAL-REGISTRY-1",
+      "predicate_id": "process.exit_code.equals",
+      "parameters": {
+        "component": "issue-51-canonical-repository-registry-suite",
+        "value": 0,
+        "trusted_evidence_source": "coordinator_observed_process_exit_code",
+        "forbidden_sources": [
+          "executor_self_report",
+          "actions_job_conclusion"
+        ]
+      },
+      "required": true,
+      "linked_checks": [
+        "issue-51-canonical-registry-tests"
+      ]
+    }
+  ],
+  "required_checks": [
+    {
+      "id": "issue-51-canonical-registry-tests",
+      "command_id": "repo.contracts.b3.tests",
+      "required": true,
+      "expected_postconditions": [
+        {
+          "predicate_id": "process.exit_code.equals",
+          "parameters": {
+            "value": 0
+          }
+        }
+      ]
+    }
+  ],
+  "review_policy": {
+    "reviewer_class": "independent-engineering",
+    "policy_id": "review-independence.v1",
+    "forbidden_lineage_overlaps": [
+      "agent_runtime_id",
+      "credential_principal",
+      "authored_commits"
+    ],
+    "minimum_distinct_human_operators": 1
+  },
+  "external_side_effects": "owner_approved",
+  "created_by": "github:yurikuchumov-ux/codex-control-plane",
+  "created_at": "2026-07-18T11:14:35Z"
+}
