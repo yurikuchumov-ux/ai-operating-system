@@ -1,0 +1,223 @@
+{
+  "schema_version": "1.0.0",
+  "task_id": "yurikuchumov-ux/ai-operating-system#51",
+  "repository": "yurikuchumov-ux/ai-operating-system",
+  "issue_number": 51,
+  "objective": "Implement the exact structured specification in AC-CANONICAL-REGISTRY-1.parameters.specification from clean main. Treat every field, constraint, error code, CLI flag and test name as required. Do not simplify, substitute internal roles for human labels, scan prose, add fallback validation, use positional input overrides, or edit the correct plan. Default CLI validates fixed inputs; named --registry/--schema/--plan override each path independently. Mutation tests override exactly one input and exercise production behavior. JSON only on every path. Claude Code OAuth only; no API billing.",
+  "change_policy": {
+    "change_required": true,
+    "policy_exception_id": null,
+    "no_change": {
+      "allowed": false,
+      "reason_codes": [],
+      "required_evidence_types": []
+    }
+  },
+  "base_ref": "main",
+  "base_sha": "e81cec593e7387cbf4aa6cc1f89b00b9cb82b008",
+  "branch": "agent/issue-51-canonical-repository-registry-v15",
+  "allowed_paths": [
+    "contracts/canonical-repositories.v1.json",
+    "contracts/schemas/canonical-repositories.v1.schema.json",
+    "tools/validate_canonical_repositories.py",
+    "tests/test_b3_canonical_repository_registry.py",
+    "docs/AI_DEVELOPMENT_STUDIO_EXECUTION_PLAN.md"
+  ],
+  "denied_paths": [
+    ".ai/tasks/**",
+    ".github/**",
+    "AI_OS.md",
+    "README.md",
+    "CHANGELOG.md",
+    "fixtures/**",
+    "requirements-*.txt",
+    "standards/**",
+    "templates/**",
+    "tests/test_b0_contracts.py",
+    "tests/test_b1_finalizer.py",
+    "tests/test_b2_verifier.py",
+    "tests/test_b3_canonical_repository_names.py",
+    "tests/test_b3_p0_actions_adapter.py",
+    "tests/test_b3_terminal_propagation.py",
+    "tools/p0_actions_adapter.py",
+    "tools/validate_b0.py",
+    "tools/verify_b2.py"
+  ],
+  "risk_class": "L2",
+  "executor": {
+    "adapter": "human-supervised-claude-code",
+    "version": "claude-code-oauth-actions-issue-51-registry-v15-named-inputs",
+    "max_attempts": 1,
+    "timeout_seconds": 1800
+  },
+  "acceptance_criteria": [
+    {
+      "id": "AC-CANONICAL-REGISTRY-1",
+      "predicate_id": "process.exit_code.equals",
+      "parameters": {
+        "component": "issue-51-canonical-repository-registry-suite",
+        "value": 0,
+        "trusted_evidence_source": "coordinator_observed_process_exit_code",
+        "forbidden_sources": [
+          "executor_self_report",
+          "actions_job_conclusion"
+        ],
+        "specification": {
+          "registry_top_level_keys": [
+            "schema_version",
+            "canonical_repositories"
+          ],
+          "registry_schema_version": "1.0.0",
+          "registry_entries": [
+            {
+              "role": "governance",
+              "label": "Governance and shared contracts",
+              "owner": "yurikuchumov-ux",
+              "name": "ai-operating-system",
+              "full_name": "yurikuchumov-ux/ai-operating-system",
+              "url": "https://github.com/yurikuchumov-ux/ai-operating-system",
+              "visibility": "public",
+              "main_sha": "a36a8eefcdd06c56edeec93057a90c58a239cf22",
+              "boundary": "owns governance, schemas, reusable workflows and evidence contracts"
+            },
+            {
+              "role": "template",
+              "label": "Compliant repository fixture",
+              "owner": "yurikuchumov-ux",
+              "name": "ai-development-studio-template",
+              "full_name": "yurikuchumov-ux/ai-development-studio-template",
+              "url": "https://github.com/yurikuchumov-ux/ai-development-studio-template",
+              "visibility": "public",
+              "main_sha": "ec088bf2e95e048ce1f5b69d969542b516afbc8b",
+              "boundary": "owns the minimal downstream skeleton and repeatability tests"
+            },
+            {
+              "role": "voice",
+              "label": "Voice reference product",
+              "owner": "yurikuchumov-ux",
+              "name": "-ai-development-studio",
+              "full_name": "yurikuchumov-ux/-ai-development-studio",
+              "url": "https://github.com/yurikuchumov-ux/-ai-development-studio",
+              "visibility": "private",
+              "main_sha": "f6550d4078ffccc952db269081619fdfe57e598c",
+              "boundary": "owns product runtime, domain tests and product deployment"
+            }
+          ],
+          "schema_constraints": {
+            "draft": "2020-12",
+            "additional_properties": false,
+            "required_entry_fields": [
+              "role",
+              "label",
+              "owner",
+              "name",
+              "full_name",
+              "url",
+              "visibility",
+              "main_sha",
+              "boundary"
+            ],
+            "min_items": 3,
+            "max_items": 3,
+            "unique_items": true,
+            "roles_unique": true,
+            "labels_unique": true,
+            "full_names_unique": true
+          },
+          "plan_contract": {
+            "function_signature": "validate_execution_plan(plan_text, registry)",
+            "section_heading": "### 3.1 Verified names and boundaries",
+            "section_count": 1,
+            "header": "| Role | Canonical repository | Visibility | `main` SHA | Boundary |",
+            "row_count": 3,
+            "join_key": "exact first-column label equals registry label",
+            "normalization_forbidden": true,
+            "repository_links_per_row": 1,
+            "compared_fields": [
+              "label",
+              "full_name",
+              "url",
+              "visibility",
+              "main_sha",
+              "boundary"
+            ],
+            "error_codes": [
+              "plan_duplicate_section",
+              "plan_header_mutation",
+              "plan_missing_row",
+              "plan_extra_row",
+              "plan_full_name_mismatch",
+              "plan_url_mismatch",
+              "plan_visibility_mismatch",
+              "plan_main_sha_mismatch",
+              "plan_boundary_mismatch"
+            ]
+          },
+          "cli_contract": {
+            "default_inputs": [
+              "contracts/canonical-repositories.v1.json",
+              "contracts/schemas/canonical-repositories.v1.schema.json",
+              "docs/AI_DEVELOPMENT_STUDIO_EXECUTION_PLAN.md"
+            ],
+            "named_independent_overrides": [
+              "--registry PATH",
+              "--schema PATH",
+              "--plan PATH"
+            ],
+            "positional_overrides_forbidden": true,
+            "output": "one JSON document only",
+            "missing_jsonschema": "nonzero JSON failure; no fallback",
+            "missing_unreadable_malformed_input": "nonzero JSON failure"
+          },
+          "required_production_tests": [
+            "test_plan_registry_equality",
+            "test_plan_missing_row",
+            "test_plan_extra_row",
+            "test_plan_url_mismatch",
+            "test_plan_duplicate_section",
+            "test_plan_header_mutation",
+            "test_unreadable_input_json"
+          ],
+          "test_helper_contract": "Use named options; a plan mutation passes only --plan temp while registry/schema stay canonical; a registry mutation passes only --registry temp.",
+          "test_prohibitions": [
+            "copied validator algorithm",
+            "source-token assertion",
+            "whitespace assertion"
+          ]
+        }
+      },
+      "required": true,
+      "linked_checks": [
+        "issue-51-canonical-registry-tests"
+      ]
+    }
+  ],
+  "required_checks": [
+    {
+      "id": "issue-51-canonical-registry-tests",
+      "command_id": "repo.contracts.b3.tests",
+      "required": true,
+      "expected_postconditions": [
+        {
+          "predicate_id": "process.exit_code.equals",
+          "parameters": {
+            "value": 0
+          }
+        }
+      ]
+    }
+  ],
+  "review_policy": {
+    "reviewer_class": "independent-engineering",
+    "policy_id": "review-independence.v1",
+    "forbidden_lineage_overlaps": [
+      "agent_runtime_id",
+      "credential_principal",
+      "authored_commits"
+    ],
+    "minimum_distinct_human_operators": 1
+  },
+  "external_side_effects": "owner_approved",
+  "created_by": "github:yurikuchumov-ux/codex-control-plane",
+  "created_at": "2026-07-18T12:05:00Z"
+}
