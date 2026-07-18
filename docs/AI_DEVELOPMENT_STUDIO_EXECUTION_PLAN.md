@@ -935,3 +935,102 @@ exception cannot be used to represent `B0`–`B2` as automated delegation.
 
 Until that evidence exists, the project remains in planning/P0 bootstrap and
 must not claim a working autonomous delivery pipeline.
+
+## 18. Issue 51: Canonical Repository Registry
+
+### 18.1 Overview
+Issue 51 implements a canonical repository registry architecture to provide a contract-based system for managing trusted repository references with strict validation and fail-closed security properties.
+
+### 18.2 Architecture Components
+
+#### Schema Contract (`contracts/schemas/canonical-repositories.v1.schema.json`)
+The JSON Schema defines the structure and validation rules for the canonical repository registry:
+
+- **Required top-level fields:**
+  - `schema_version`: Must be exactly "1.0.0"
+  - `registry_type`: Must be exactly "canonical_repository"
+  - `entries`: Array of repository entries (minimum 1 entry required)
+
+- **Entry structure:**
+  - `id`: Registry identifier following pattern `^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)+$`
+  - `repository_owner`: GitHub repository owner (alphanumeric with dots, dashes, underscores)
+  - `repository_name`: GitHub repository name (alphanumeric with dots, dashes, underscores)
+  - `repository_sha`: Git commit SHA (exactly 40 lowercase hexadecimal characters)
+
+- **Schema validation properties:**
+  - No additional properties allowed (fail-closed)
+  - SHA pattern enforces lowercase hexadecimal: `^[0-9a-f]{40}$`
+  - This ensures uppercase/mixed-case SHAs are rejected at schema validation (earliest check)
+
+#### Registry Data Contract (`contracts/canonical-repositories.v1.json`)
+The concrete registry instance containing:
+- Schema version metadata
+- Registry type declaration
+- List of canonical repository entries with pinned SHAs
+
+#### Validator Tool (`tools/validate_canonical_repositories.py`)
+Python validator implementing:
+- JSON Schema validation using Draft 2020-12
+- Semantic validation rules:
+  - Unique entry IDs
+  - Unique repository specifications (owner/name pairs)
+  - Lowercase SHA enforcement (defense-in-depth, though schema already enforces this)
+- Exit code 0 for valid, 1 for invalid
+- Structured JSON output with findings
+
+#### Test Suite (`tests/test_b3_canonical_repository_registry.py`)
+Comprehensive test coverage including:
+
+**Schema validation tests:**
+- Valid JSON Schema Draft 2020-12
+- Required top-level `schema_version` metadata
+- Registry type constraints
+
+**Registry validation tests:**
+- Valid JSON structure
+- Schema compliance
+- Unique IDs and repository specifications
+
+**Validator tests:**
+- Valid registries pass
+- Invalid schema versions fail
+- Duplicate detection
+
+**Critical regression tests (Issue 51 requirements):**
+- `test_uppercase_sha_rejected_by_schema_validation`: Proves uppercase SHAs are rejected by `schema_validation_failed` (earliest check), not `repository_sha_not_lowercase`
+- `test_mixed_case_sha_rejected_by_schema_validation`: Proves mixed-case SHAs are rejected by `schema_validation_failed`
+- `test_semantic_lowercase_check_still_exists`: Verifies defense-in-depth semantic check exists for completeness
+
+**Adversarial mutation tests:**
+- Null value mutations
+- Empty string mutations
+- Invalid character mutations
+- Real-world valid inputs
+
+### 18.3 Security Invariants
+
+1. **Fail-closed validation**: Schema uses `additionalProperties: false` throughout
+2. **Deterministic error codes**: Schema validation fails before semantic checks for case violations
+3. **Defense-in-depth**: Semantic lowercase check provides additional safety layer
+4. **Bounded resources**: Registry requires at least one entry, no empty registries
+5. **Strong typing**: All fields required, no optional fields that could lead to ambiguity
+
+### 18.4 Test Execution
+
+Tests are run as part of the B3 test suite:
+```bash
+python3 -m unittest discover -s tests -p test_b3_*.py
+```
+
+All tests pass, including the three critical tests that address the Issue 51 requirements:
+1. Schema includes required `schema_version` 1.0.0 metadata (was missing)
+2. Uppercase SHA mutations are deterministically rejected by `schema_validation_failed` (was previously reaching unreachable `repository_sha_not_lowercase` code)
+3. Mixed-case SHA mutations are deterministically rejected by `schema_validation_failed` (same regression fix)
+
+### 18.5 Implementation Notes
+
+- Only Claude Pro OAuth Actions are used; no API keys or metered fallback
+- All security invariants from Issue 51 are preserved
+- No arbitrary exceptions are accepted
+- All positive real inputs and adversarial mutations are tested
+- The implementation is strictly scoped to the five allowed files

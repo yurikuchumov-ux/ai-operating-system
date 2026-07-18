@@ -1,0 +1,12 @@
+{
+  "schema_version": "1.0.0",
+  "registry_type": "canonical_repository",
+  "entries": [
+    {
+      "id": "canonical.anthropic_claude_code",
+      "repository_owner": "anthropics",
+      "repository_name": "claude-code",
+      "repository_sha": "0000000000000000000000000000000000000000"
+    }
+  ]
+}
