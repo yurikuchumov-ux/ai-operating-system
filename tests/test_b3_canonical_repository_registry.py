@@ -306,6 +306,94 @@ class TestCanonicalRepositoryRegistry(unittest.TestCase):
         self.assertFalse(output['valid'])
         self.assertIn('file_not_found', output['errors'])
 
+    def _run_plan_mutation(self, old, new):
+        """Run one exact mutation of the canonical plan."""
+        plan_text = self.plan_path.read_text(encoding='utf-8')
+        self.assertIn(old, plan_text)
+        with tempfile.NamedTemporaryFile(
+            mode='w', suffix='.md', delete=False, encoding='utf-8'
+        ) as f:
+            f.write(plan_text.replace(old, new, 1))
+            plan_path = Path(f.name)
+
+        try:
+            return self._run_validator(plan=plan_path)
+        finally:
+            plan_path.unlink()
+
+    def test_plan_wrong_heading_level(self):
+        """A level-four heading must not satisfy the exact section contract."""
+        exit_code, output = self._run_plan_mutation(
+            '### 3.1 Verified names and boundaries',
+            '#### 3.1 Verified names and boundaries',
+        )
+        self.assertNotEqual(exit_code, 0)
+        self.assertEqual(output['errors'], ['plan_missing_section'])
+
+    def test_plan_heading_suffix(self):
+        """A suffixed heading must not satisfy the exact section contract."""
+        exit_code, output = self._run_plan_mutation(
+            '### 3.1 Verified names and boundaries',
+            '### 3.1 Verified names and boundaries EXTRA',
+        )
+        self.assertNotEqual(exit_code, 0)
+        self.assertEqual(output['errors'], ['plan_missing_section'])
+
+    def test_plan_header_extra_column(self):
+        """An extra header column must fail exact full-line matching."""
+        exit_code, output = self._run_plan_mutation(
+            '| Role | Canonical repository | Visibility | `main` SHA | Boundary |',
+            '| Role | Canonical repository | Visibility | `main` SHA | Boundary | EXTRA |',
+        )
+        self.assertNotEqual(exit_code, 0)
+        self.assertEqual(output['errors'], ['plan_header_mutation'])
+
+    def _assert_cli_json_failure(self, *args, expected_error):
+        result = subprocess.run(
+            ['python3', 'tools/validate_canonical_repositories.py', *args],
+            capture_output=True,
+            text=True,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.stderr, '')
+        self.assertEqual(
+            json.loads(result.stdout),
+            {'valid': False, 'errors': [expected_error]},
+        )
+
+    def test_positional_argument_json_failure(self):
+        """A forbidden positional override fails with JSON and no usage text."""
+        self._assert_cli_json_failure(
+            'positional.json', expected_error='argparse_error'
+        )
+
+    def test_unknown_option_json_failure(self):
+        """An unknown option fails with JSON and no usage text."""
+        self._assert_cli_json_failure(
+            '--unknown-option', expected_error='argparse_error'
+        )
+
+    def test_named_registry_override_value_not_positional(self):
+        """The registry option consumes its value before positional checks."""
+        self._assert_cli_json_failure(
+            '--registry', '/nonexistent/registry.json',
+            expected_error='file_not_found',
+        )
+
+    def test_named_schema_override_value_not_positional(self):
+        """The schema option consumes its value before positional checks."""
+        self._assert_cli_json_failure(
+            '--schema', '/nonexistent/schema.json',
+            expected_error='file_not_found',
+        )
+
+    def test_named_plan_override_value_not_positional(self):
+        """The plan option consumes its value before positional checks."""
+        self._assert_cli_json_failure(
+            '--plan', '/nonexistent/plan.md',
+            expected_error='plan_not_found',
+        )
+
     def test_missing_jsonschema_json(self):
         """Test that missing jsonschema dependency produces error."""
         # Create a test script that runs the validator in an environment without jsonschema

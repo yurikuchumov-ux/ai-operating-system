@@ -14,6 +14,14 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 
+class JSONArgumentParser(argparse.ArgumentParser):
+    """Fail closed with the validator's machine-readable output contract."""
+
+    def error(self, message: str) -> None:
+        print(json.dumps({"valid": False, "errors": ["argparse_error"]}))
+        raise SystemExit(2)
+
+
 def load_json_file(path: Path) -> Dict[str, Any]:
     """Load and parse a JSON file."""
     try:
@@ -114,8 +122,8 @@ def validate_execution_plan(plan_text: str, registry: Dict[str, Any]) -> List[st
     errors = []
 
     # Find the section "### 3.1 Verified names and boundaries"
-    section_pattern = r'### 3\.1 Verified names and boundaries'
-    sections = list(re.finditer(section_pattern, plan_text))
+    section_pattern = r'^### 3\.1 Verified names and boundaries$'
+    sections = list(re.finditer(section_pattern, plan_text, re.MULTILINE))
 
     if len(sections) == 0:
         errors.append("plan_missing_section")
@@ -138,8 +146,8 @@ def validate_execution_plan(plan_text: str, registry: Dict[str, Any]) -> List[st
     section_text = plan_text[section_start:section_end]
 
     # Find table header
-    header_pattern = r'\| Role \| Canonical repository \| Visibility \| `main` SHA \| Boundary \|'
-    header_match = re.search(header_pattern, section_text)
+    header_pattern = r'^\| Role \| Canonical repository \| Visibility \| `main` SHA \| Boundary \|$'
+    header_match = re.search(header_pattern, section_text, re.MULTILINE)
 
     if not header_match:
         errors.append("plan_header_mutation")
@@ -256,8 +264,9 @@ def validate_execution_plan(plan_text: str, registry: Dict[str, Any]) -> List[st
 
 def main() -> int:
     """Main entry point."""
-    parser = argparse.ArgumentParser(
-        description='Validate canonical repository registry'
+    parser = JSONArgumentParser(
+        description='Validate canonical repository registry',
+        add_help=False,
     )
     parser.add_argument(
         '--registry',
