@@ -1,0 +1,198 @@
+{
+  "schema_version": "1.0.0",
+  "task_id": "yurikuchumov-ux/ai-operating-system#54",
+  "repository": "yurikuchumov-ux/ai-operating-system",
+  "issue_number": 54,
+  "objective": "Extend the existing Actions-first adapter so a scope-valid executor candidate patch is hash-bound and uploaded before the trusted required check, including when that check fails, and a later immutable task can optionally bind and safely apply exactly one same-repository failed-candidate seed before bounded correction. Keep clean exact-main checkout, fail-closed verification, actor lineage, no credentials during seed validation/application, and no success/publication implication from the seed. Do not build an orchestrator service. Claude Code OAuth only; no API billing.",
+  "change_policy": {"change_required": true, "policy_exception_id": null, "no_change": {"allowed": false, "reason_codes": [], "required_evidence_types": []}},
+  "base_ref": "main",
+  "base_sha": "e81cec593e7387cbf4aa6cc1f89b00b9cb82b008",
+  "branch": "agent/issue-54-failed-candidate-seed-v1",
+  "allowed_paths": [
+    ".github/workflows/p0-actions-adapter.yml",
+    "contracts/schemas/task.v1.schema.json",
+    "tools/p0_actions_adapter.py",
+    "tests/test_b3_p0_actions_adapter.py"
+  ],
+  "denied_paths": [
+    ".ai/tasks/**", "AI_OS.md", "README.md", "CHANGELOG.md", "contracts/README.md",
+    "contracts/registries/**", "contracts/schemas/result.v1.schema.json",
+    "contracts/schemas/verification.v1.schema.json", "docs/**", "fixtures/**",
+    "requirements-*.txt", "standards/**", "templates/**", "tests/documents/**",
+    "tests/test_b0_contracts.py", "tests/test_b1_finalizer.py", "tests/test_b2_verifier.py",
+    "tests/test_b3_terminal_propagation.py", "tools/propagate_b3.py", "tools/validate_b0.py",
+    "tools/verify_b2.py"
+  ],
+  "risk_class": "L3",
+  "executor": {"adapter": "human-supervised-claude-code", "version": "claude-code-oauth-actions-issue-54-failed-candidate-seed-v1", "max_attempts": 1, "timeout_seconds": 1800},
+  "acceptance_criteria": [
+    {
+      "id": "AC-FAILED-CANDIDATE-SEED-1",
+      "predicate_id": "process.exit_code.equals",
+      "parameters": {
+        "component": "p0-failed-candidate-seed-suite",
+        "value": 0,
+        "trusted_evidence_source": "coordinator_observed_process_exit_code",
+        "forbidden_sources": ["executor_self_report", "actions_job_conclusion"],
+        "specification": {
+          "problem_evidence": {
+            "issue": 51,
+            "near_candidate_run": "29645564349",
+            "near_candidate_result": "316 of 317 B3 tests passed but failed artifact omitted reusable patch",
+            "regenerated_run": "29645890541",
+            "regenerated_result": "fresh clean-main generation regressed to 10 B3 failures",
+            "conclusion": "preserve failed candidate evidence and seed corrections; do not repeat prompt generation from scratch"
+          },
+          "architecture_boundary": {
+            "implementation_surface": "existing p0-actions-adapter workflow and helper only",
+            "standalone_service_forbidden": true,
+            "automatic_merge_forbidden": true,
+            "default_branch_write_forbidden": true,
+            "paid_api_fallback_forbidden": true
+          },
+          "task_contract_extension": {
+            "property": "correction_seed",
+            "required": false,
+            "value_when_absent": null,
+            "additional_properties": false,
+            "required_fields": [
+              "repository", "run_id", "run_attempt", "task_commit", "task_path",
+              "base_sha", "execution_id", "patch_sha256", "changed_paths"
+            ],
+            "field_constraints": {
+              "repository": "existing repository pattern",
+              "run_id": "non-zero decimal string",
+              "run_attempt": "integer 1 or greater",
+              "task_commit": "exact lowercase 40-hex SHA",
+              "task_path": "existing allowlisted immutable task path shape",
+              "base_sha": "exact lowercase 40-hex SHA",
+              "execution_id": "non-empty bounded string",
+              "patch_sha256": "exact lowercase 64-hex digest",
+              "changed_paths": "non-empty unique repository-relative path array using existing safe path rules"
+            },
+            "relations": [
+              "seed.repository equals current task.repository and github.repository",
+              "seed.base_sha equals current task.base_sha",
+              "every seed.changed_paths entry is within the current task allowed paths and outside denied paths"
+            ]
+          },
+          "failed_candidate_capture": {
+            "phase": "after real executor/session/tool-policy and changed-path scope validation, before registered required check",
+            "files": ["candidate.patch", "candidate-evidence.json"],
+            "patch": "exact git binary diff from immutable base to complete executor workspace, excluding p0-adapter-output",
+            "must_stage_for_exact_diff": true,
+            "artifact": "existing p0-adapter-output artifact uploaded with if: always",
+            "retention": "existing retention policy",
+            "evidence_fields": [
+              "schema_version", "repository", "base_sha", "task_commit", "task_path",
+              "workflow_run_id", "workflow_run_attempt", "execution_id", "executor_adapter",
+              "changed_paths", "patch_sha256", "captured_before_required_check"
+            ],
+            "bindings": [
+              "repository equals github.repository",
+              "base/task/run/attempt/execution/adapter come from trusted workflow observations and real transcript",
+              "changed_paths equal independently observed staged diff paths",
+              "patch_sha256 equals candidate.patch bytes"
+            ],
+            "on_required_check_failure": [
+              "manifest remains postcondition_failure=required_check_failed",
+              "candidate.patch and candidate-evidence.json remain evidence only",
+              "result.patch is absent",
+              "postconditions_passed is false",
+              "publisher is skipped and no branch/commit is published"
+            ]
+          },
+          "seed_retrieval": {
+            "workflow_permission": "execute job may add actions: read; contents stays read",
+            "repository_scope": "current repository only",
+            "artifact_name": "p0-adapter-output",
+            "artifact_run": "exact correction_seed.run_id",
+            "download_tool": "pinned actions/download-artifact v4 with github.token and exact run-id",
+            "download_before_provider": true,
+            "provider_secret_not_available_to_validation_step": true,
+            "missing_or_expired_artifact": "terminal fail closed before provider invocation"
+          },
+          "seed_validation_and_application": {
+            "start_state": "clean detached/current target branch created at exact protected-main base",
+            "required_files": ["candidate.patch", "candidate-evidence.json"],
+            "evidence_must_exactly_match_task_seed": true,
+            "digest_check_before_apply": true,
+            "patch_paths_observed_before_apply": true,
+            "path_policy": "all patch paths exactly equal seed.changed_paths, are within current allowed paths and outside denied paths",
+            "forbid": [
+              "absolute path", "path traversal", "rename", "copy", "symlink mode 120000",
+              "gitlink/submodule mode 160000", "control files", "empty patch", "binary patch unless explicitly proven safe"
+            ],
+            "apply_check": "git apply --check against exact base before application",
+            "apply": "apply without network, contents write token, provider OAuth secret or GitHub API credential",
+            "post_apply": [
+              "re-observe exact changed paths and file modes",
+              "paths equal seed.changed_paths",
+              "record seed binding in executor manifest",
+              "invoke current executor only after every validation passes"
+            ]
+          },
+          "lineage": {
+            "preserve_prior": ["source run ID", "source execution ID", "source task commit/path", "source executor adapter"],
+            "preserve_current": ["current run ID", "current execution ID", "current task commit/path", "current executor adapter"],
+            "collapse_forbidden": true,
+            "final_candidate_authored_commits": "still exactly one publisher-owned commit; executor lineage is evidence metadata, not invented Git authorship"
+          },
+          "normal_execution_compatibility": {
+            "tasks_without_correction_seed": "byte-for-byte-equivalent control flow until new pre-check candidate capture",
+            "existing_verify_only": "unchanged",
+            "existing_result_patch": "created only after successful required check as today",
+            "all_existing_gates_preserved": [
+              "clean checkout", "control hashes", "provider tool policy", "scope", "empty diff",
+              "timeout", "required check", "credential-separated publisher", "exact ref checks",
+              "independent verifier", "review attestation", "human merge"
+            ]
+          },
+          "deterministic_failure_codes": [
+            "correction_seed_invalid", "correction_seed_artifact_missing", "correction_seed_evidence_mismatch",
+            "correction_seed_digest_mismatch", "correction_seed_scope_violation",
+            "correction_seed_unsafe_patch", "correction_seed_apply_failed"
+          ],
+          "failure_normalization": {
+            "every new manifest code": "must be present in MANIFEST_FAILURE_NORMALIZATION, FAILURE_TERMINAL_REASON and FAILURE_PREDICATE",
+            "terminal_semantics": "missing artifact maps to missing_artifact; binding/digest/apply mismatch maps to ref_history_unverifiable or identity/binding predicate; scope/unsafe path maps to scope_violation"
+          },
+          "required_tests": [
+            "task schema accepts absent/null/valid correction_seed and rejects each malformed field",
+            "adapter validates repository/base/scope relations",
+            "candidate patch is emitted before required check and retained on required_check_failed",
+            "failure patch never becomes result.patch or postconditions_passed",
+            "normal no-seed execution remains supported",
+            "exact run-id artifact download uses actions:read and current github.token",
+            "missing artifact stops before provider invocation",
+            "evidence field, run, task, base, execution and digest mismatches fail closed",
+            "changed-path mismatch and denied/out-of-scope seed fail closed",
+            "absolute/traversal/rename/copy/symlink/submodule/binary/empty patch fail closed",
+            "git apply check failure fails closed",
+            "valid seed applies before provider and its exact binding enters manifest",
+            "required check is rerun after seed plus correction",
+            "all new failure codes normalize to truthful stable terminal reasons",
+            "existing verification-only and no-seed tests stay green"
+          ],
+          "test_quality": {
+            "framework": "unittest",
+            "real_helpers": true,
+            "temporary_git_repository_fixtures": true,
+            "source_token_only_tests_forbidden": true,
+            "generic_any_failure_assertions_forbidden": true,
+            "registered_command": "python3 -m unittest discover -s tests -p test_b3_*.py"
+          }
+        }
+      },
+      "required": true,
+      "linked_checks": ["issue-54-failed-candidate-seed-tests"]
+    }
+  ],
+  "required_checks": [
+    {"id": "issue-54-failed-candidate-seed-tests", "command_id": "repo.contracts.b3.tests", "required": true, "expected_postconditions": [{"predicate_id": "process.exit_code.equals", "parameters": {"value": 0}}]}
+  ],
+  "review_policy": {"reviewer_class": "independent-engineering", "policy_id": "review-independence.v1", "forbidden_lineage_overlaps": ["agent_runtime_id", "credential_principal", "authored_commits"], "minimum_distinct_human_operators": 1},
+  "external_side_effects": "owner_approved",
+  "created_by": "github:yurykuchumov-ux/codex-control-plane",
+  "created_at": "2026-07-18T16:50:00Z"
+}
