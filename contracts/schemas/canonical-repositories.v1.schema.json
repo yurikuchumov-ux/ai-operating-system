@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/yurikuchumov-ux/ai-operating-system/contracts/schemas/canonical-repositories.v1.schema.json",
+  "title": "Canonical Repository Registry",
+  "description": "Registry of canonical repositories for AI Development Studio",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "canonical_repositories"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1.0.0"
+    },
+    "canonical_repositories": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "role",
+          "label",
+          "owner",
+          "name",
+          "full_name",
+          "url",
+          "visibility",
+          "main_sha",
+          "boundary"
+        ],
+        "properties": {
+          "role": {
+            "type": "string",
+            "enum": [
+              "governance",
+              "template",
+              "voice"
+            ]
+          },
+          "label": {
+            "type": "string",
+            "enum": [
+              "Governance and shared contracts",
+              "Compliant repository fixture",
+              "Voice reference product"
+            ]
+          },
+          "owner": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "full_name": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          },
+          "visibility": {
+            "type": "string",
+            "enum": [
+              "public",
+              "private"
+            ]
+          },
+          "main_sha": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{40}$"
+          },
+          "boundary": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

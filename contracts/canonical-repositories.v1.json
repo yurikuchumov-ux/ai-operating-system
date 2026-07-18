@@ -1,0 +1,38 @@
+{
+  "schema_version": "1.0.0",
+  "canonical_repositories": [
+    {
+      "role": "governance",
+      "label": "Governance and shared contracts",
+      "owner": "yurikuchumov-ux",
+      "name": "ai-operating-system",
+      "full_name": "yurikuchumov-ux/ai-operating-system",
+      "url": "https://github.com/yurikuchumov-ux/ai-operating-system",
+      "visibility": "public",
+      "main_sha": "a36a8eefcdd06c56edeec93057a90c58a239cf22",
+      "boundary": "owns governance, schemas, reusable workflows and evidence contracts"
+    },
+    {
+      "role": "template",
+      "label": "Compliant repository fixture",
+      "owner": "yurikuchumov-ux",
+      "name": "ai-development-studio-template",
+      "full_name": "yurikuchumov-ux/ai-development-studio-template",
+      "url": "https://github.com/yurikuchumov-ux/ai-development-studio-template",
+      "visibility": "public",
+      "main_sha": "ec088bf2e95e048ce1f5b69d969542b516afbc8b",
+      "boundary": "owns the minimal downstream skeleton and repeatability tests"
+    },
+    {
+      "role": "voice",
+      "label": "Voice reference product",
+      "owner": "yurikuchumov-ux",
+      "name": "-ai-development-studio",
+      "full_name": "yurikuchumov-ux/-ai-development-studio",
+      "url": "https://github.com/yurikuchumov-ux/-ai-development-studio",
+      "visibility": "private",
+      "main_sha": "f6550d4078ffccc952db269081619fdfe57e598c",
+      "boundary": "owns product runtime, domain tests and product deployment"
+    }
+  ]
+}
