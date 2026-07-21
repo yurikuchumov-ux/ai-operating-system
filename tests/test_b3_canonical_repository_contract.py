@@ -7,6 +7,7 @@ against the v1 contract specification.
 import copy
 import json
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from tools.canonical_repository_registry import validate_registry
@@ -16,114 +17,42 @@ class TestCanonicalRepositoryContract(unittest.TestCase):
     """Test cases for canonical repository registry contract."""
 
     def setUp(self):
-        """Set up test fixtures."""
-        # Exact canonical document
-        self.canonical_registry = {
-            "schema_version": "1.0.0",
-            "canonical_repositories": [
-                {
-                    "role": "governance",
-                    "label": "Governance and shared contracts",
-                    "owner": "yurikuchumov-ux",
-                    "name": "ai-operating-system",
-                    "full_name": "yurikuchumov-ux/ai-operating-system",
-                    "url": "https://github.com/yurikuchumov-ux/ai-operating-system",
-                    "visibility": "public",
-                    "boundary": "owns governance, schemas, reusable workflows and evidence contracts"
-                },
-                {
-                    "role": "template",
-                    "label": "Compliant repository fixture",
-                    "owner": "yurikuchumov-ux",
-                    "name": "ai-development-studio-template",
-                    "full_name": "yurikuchumov-ux/ai-development-studio-template",
-                    "url": "https://github.com/yurikuchumov-ux/ai-development-studio-template",
-                    "visibility": "public",
-                    "boundary": "owns the minimal downstream skeleton and repeatability tests"
-                },
-                {
-                    "role": "platform",
-                    "label": "AI Development Studio platform",
-                    "owner": "yurikuchumov-ux",
-                    "name": "-ai-development-studio",
-                    "full_name": "yurikuchumov-ux/-ai-development-studio",
-                    "url": "https://github.com/yurikuchumov-ux/-ai-development-studio",
-                    "visibility": "private",
-                    "boundary": "owns the automated agentic software-development platform runtime and platform delivery"
-                }
-            ]
-        }
-
-        # Exact canonical schema
-        self.canonical_schema = {
-            "$schema": "https://json-schema.org/draft/2020-12/schema",
-            "$id": "https://github.com/yurikuchumov-ux/ai-operating-system/contracts/schemas/canonical-repositories.v1.schema.json",
-            "title": "Canonical Repositories Registry v1",
-            "description": "Immutable registry of canonical repositories defining governance, template and platform roles",
-            "type": "object",
-            "required": ["schema_version", "canonical_repositories"],
-            "additionalProperties": False,
-            "properties": {
-                "schema_version": {
-                    "type": "string",
-                    "const": "1.0.0"
-                },
-                "canonical_repositories": {
-                    "type": "array",
-                    "minItems": 3,
-                    "maxItems": 3,
-                    "uniqueItems": True,
-                    "items": {
-                        "type": "object",
-                        "required": [
-                            "role",
-                            "label",
-                            "owner",
-                            "name",
-                            "full_name",
-                            "url",
-                            "visibility",
-                            "boundary"
-                        ],
-                        "additionalProperties": False,
-                        "properties": {
-                            "role": {
-                                "type": "string",
-                                "enum": ["governance", "template", "platform"]
-                            },
-                            "label": {
-                                "type": "string"
-                            },
-                            "owner": {
-                                "type": "string"
-                            },
-                            "name": {
-                                "type": "string"
-                            },
-                            "full_name": {
-                                "type": "string"
-                            },
-                            "url": {
-                                "type": "string",
-                                "format": "uri"
-                            },
-                            "visibility": {
-                                "type": "string",
-                                "enum": ["public", "private"]
-                            },
-                            "boundary": {
-                                "type": "string"
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        """Load the committed contract files used by production."""
+        repo_root = Path(__file__).resolve().parents[1]
+        registry_path = repo_root / "contracts" / "canonical-repositories.v1.json"
+        schema_path = repo_root / "contracts" / "schemas" / "canonical-repositories.v1.schema.json"
+        self.canonical_registry = json.loads(registry_path.read_text(encoding="utf-8"))
+        self.canonical_schema = json.loads(schema_path.read_text(encoding="utf-8"))
 
     def test_exact_canonical_document_returns_empty_list(self):
         """Test that the exact canonical document validates successfully."""
         result = validate_registry(self.canonical_registry, self.canonical_schema)
         self.assertEqual(result, [])
+
+    def test_unique_noncanonical_label_fails_closed(self):
+        """A unique but incorrect label is not canonical metadata."""
+        registry = copy.deepcopy(self.canonical_registry)
+        registry["canonical_repositories"][0]["label"] = "Changed governance label"
+        self.assertEqual(validate_registry(registry, self.canonical_schema), ["schema_validation_failed"])
+
+    def test_noncanonical_visibility_fails_closed(self):
+        """Visibility is bound to the repository role."""
+        registry = copy.deepcopy(self.canonical_registry)
+        registry["canonical_repositories"][0]["visibility"] = "private"
+        self.assertEqual(validate_registry(registry, self.canonical_schema), ["schema_validation_failed"])
+
+    def test_noncanonical_boundary_fails_closed(self):
+        """A changed ownership boundary is rejected."""
+        registry = copy.deepcopy(self.canonical_registry)
+        registry["canonical_repositories"][0]["boundary"] = "changed boundary"
+        self.assertEqual(validate_registry(registry, self.canonical_schema), ["schema_validation_failed"])
+
+    def test_swapped_visibility_fails_closed(self):
+        """Swapping valid visibility values between canonical roles is rejected."""
+        registry = copy.deepcopy(self.canonical_registry)
+        registry["canonical_repositories"][0]["visibility"] = "private"
+        registry["canonical_repositories"][2]["visibility"] = "public"
+        self.assertEqual(validate_registry(registry, self.canonical_schema), ["schema_validation_failed"])
 
     def test_exact_top_level_keys_required(self):
         """Test that exact top-level keys are required."""
@@ -209,15 +138,27 @@ class TestCanonicalRepositoryContract(unittest.TestCase):
     def test_duplicate_role(self):
         """Test that duplicate role returns duplicate_role error code."""
         registry = copy.deepcopy(self.canonical_registry)
-        # Change second entry to have same role as first
-        registry["canonical_repositories"][1]["role"] = "governance"
+        # Keep role-bound metadata schema-valid so semantic duplicate detection runs.
+        first = registry["canonical_repositories"][0]
+        second = registry["canonical_repositories"][1]
+        second["role"] = "governance"
+        second["label"] = first["label"]
+        second["visibility"] = first["visibility"]
+        second["boundary"] = first["boundary"]
         result = validate_registry(registry, self.canonical_schema)
         self.assertIn("duplicate_role", result)
 
     def test_duplicate_label(self):
         """Test that duplicate label returns duplicate_label error code."""
         registry = copy.deepcopy(self.canonical_registry)
-        registry["canonical_repositories"][1]["label"] = registry["canonical_repositories"][0]["label"]
+        # Align role-bound metadata with governance so schema validation passes
+        # and the production semantic duplicate-label path is exercised.
+        first = registry["canonical_repositories"][0]
+        second = registry["canonical_repositories"][1]
+        second["role"] = "governance"
+        second["label"] = first["label"]
+        second["visibility"] = first["visibility"]
+        second["boundary"] = first["boundary"]
         result = validate_registry(registry, self.canonical_schema)
         self.assertIn("duplicate_label", result)
 

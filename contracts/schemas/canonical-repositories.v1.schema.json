@@ -57,7 +57,48 @@
           "boundary": {
             "type": "string"
           }
-        }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {"role": {"const": "governance"}},
+              "required": ["role"]
+            },
+            "then": {
+              "properties": {
+                "label": {"const": "Governance and shared contracts"},
+                "visibility": {"const": "public"},
+                "boundary": {"const": "owns governance, schemas, reusable workflows and evidence contracts"}
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {"role": {"const": "template"}},
+              "required": ["role"]
+            },
+            "then": {
+              "properties": {
+                "label": {"const": "Compliant repository fixture"},
+                "visibility": {"const": "public"},
+                "boundary": {"const": "owns the minimal downstream skeleton and repeatability tests"}
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {"role": {"const": "platform"}},
+              "required": ["role"]
+            },
+            "then": {
+              "properties": {
+                "label": {"const": "AI Development Studio platform"},
+                "visibility": {"const": "private"},
+                "boundary": {"const": "owns the automated agentic software-development platform runtime and platform delivery"}
+              }
+            }
+          }
+        ]
       }
     }
   }
