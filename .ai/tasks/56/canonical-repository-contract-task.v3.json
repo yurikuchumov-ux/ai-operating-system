@@ -1,0 +1,249 @@
+{
+  "schema_version": "1.0.0",
+  "task_id": "yurikuchumov-ux/ai-operating-system#56",
+  "repository": "yurikuchumov-ux/ai-operating-system",
+  "issue_number": 56,
+  "objective": "Final corrective attempt 3/3 for Issue #56. Reproduce the accepted v1 canonical repository JSON contract and stable list-returning validator from clean protected main, closing every false-success finding from runs 29862090828 and 29863290720. Do not redesign the public API or registry shape. Implement only the exact contract, semantic validation and deterministic unittest regressions defined below. Claude Code OAuth only; no paid API fallback.",
+  "change_policy": {
+    "change_required": true,
+    "policy_exception_id": null,
+    "no_change": {
+      "allowed": false,
+      "reason_codes": [],
+      "required_evidence_types": []
+    }
+  },
+  "base_ref": "main",
+  "base_sha": "e81cec593e7387cbf4aa6cc1f89b00b9cb82b008",
+  "branch": "agent/issue-56-canonical-repository-contract-v3",
+  "allowed_paths": [
+    "contracts/canonical-repositories.v1.json",
+    "contracts/schemas/canonical-repositories.v1.schema.json",
+    "tools/canonical_repository_registry.py",
+    "tests/test_b3_canonical_repository_contract.py"
+  ],
+  "denied_paths": [
+    ".ai/tasks/**",
+    ".github/**",
+    "AI_OS.md",
+    "README.md",
+    "CHANGELOG.md",
+    "docs/**",
+    "fixtures/**",
+    "requirements-*.txt",
+    "standards/**",
+    "templates/**",
+    "tools/validate_canonical_repositories.py",
+    "tools/canonical_repository_plan.py",
+    "tools/p0_actions_adapter.py",
+    "tools/validate_b0.py",
+    "tools/verify_b2.py",
+    "tests/test_b3_canonical_repository_registry.py",
+    "tests/test_b3_canonical_repository_plan.py",
+    "tests/test_b3_canonical_repository_cli.py",
+    "tests/test_b3_p0_actions_adapter.py",
+    "tests/test_b3_terminal_propagation.py"
+  ],
+  "risk_class": "L2",
+  "executor": {
+    "adapter": "human-supervised-claude-code",
+    "version": "claude-code-oauth-actions-issue-56-registry-contract-v3-final",
+    "max_attempts": 3,
+    "timeout_seconds": 1800
+  },
+  "acceptance_criteria": [
+    {
+      "id": "AC-CANONICAL-CONTRACT-V3-FINAL",
+      "predicate_id": "process.exit_code.equals",
+      "parameters": {
+        "component": "issue-56-canonical-repository-contract-v3-final",
+        "value": 0,
+        "trusted_evidence_source": "workflow_observed_process_exit_code",
+        "forbidden_sources": [
+          "executor_self_report",
+          "actions_job_conclusion"
+        ],
+        "specification": {
+          "attempt_lineage": [
+            {
+              "attempt": 1,
+              "run_id": "29862090828",
+              "candidate_sha": "330f4db98060225db29f8a9fa8225cfd8cd9a285",
+              "result": "rejected_false_success_tests"
+            },
+            {
+              "attempt": 2,
+              "run_id": "29863290720",
+              "execution_id": "e4ae13a4-42d2-4ffc-bd45-5a1d96de8ea0",
+              "result": "required_check_failed_no_publication"
+            }
+          ],
+          "registry_document_exact_shape": {
+            "top_level_required_keys": ["schema_version", "canonical_repositories"],
+            "top_level_additional_properties": false,
+            "schema_version": "1.0.0",
+            "entry_required_keys": [
+              "role",
+              "label",
+              "owner",
+              "name",
+              "full_name",
+              "url",
+              "visibility",
+              "boundary"
+            ],
+            "entry_additional_properties": false,
+            "entry_count": 3,
+            "forbidden_alternative_top_level_keys": ["registry_type", "entries"],
+            "forbidden_mutable_entry_fields": ["main_sha", "head_sha", "run_id", "execution_id"]
+          },
+          "canonical_entries_exact": [
+            {
+              "role": "governance",
+              "label": "Governance and shared contracts",
+              "owner": "yurikuchumov-ux",
+              "name": "ai-operating-system",
+              "full_name": "yurikuchumov-ux/ai-operating-system",
+              "url": "https://github.com/yurikuchumov-ux/ai-operating-system",
+              "visibility": "public",
+              "boundary": "owns governance, schemas, reusable workflows and evidence contracts"
+            },
+            {
+              "role": "template",
+              "label": "Compliant repository fixture",
+              "owner": "yurikuchumov-ux",
+              "name": "ai-development-studio-template",
+              "full_name": "yurikuchumov-ux/ai-development-studio-template",
+              "url": "https://github.com/yurikuchumov-ux/ai-development-studio-template",
+              "visibility": "public",
+              "boundary": "owns the minimal downstream skeleton and repeatability tests"
+            },
+            {
+              "role": "platform",
+              "label": "AI Development Studio platform",
+              "owner": "yurikuchumov-ux",
+              "name": "-ai-development-studio",
+              "full_name": "yurikuchumov-ux/-ai-development-studio",
+              "url": "https://github.com/yurikuchumov-ux/-ai-development-studio",
+              "visibility": "private",
+              "boundary": "owns the automated agentic software-development platform runtime and platform delivery"
+            }
+          ],
+          "schema_exact_requirements": {
+            "draft": "2020-12",
+            "top_level_and_entry_additional_properties": false,
+            "min_items": 3,
+            "max_items": 3,
+            "unique_items": true,
+            "role_enum": ["governance", "template", "platform"],
+            "visibility_enum": ["public", "private"]
+          },
+          "production_api_exact": {
+            "module": "tools/canonical_repository_registry.py",
+            "public_function": "validate_registry(registry, schema)",
+            "return_type": "List[str]",
+            "success_value": [],
+            "error_order": "sorted unique stable codes",
+            "forbidden_public_redesigns": [
+              "RegistryResult return value",
+              "CanonicalRepository result wrapper",
+              "lookup_by_role API",
+              "lookup_by_owner_name API",
+              "verify_role_ownership API"
+            ],
+            "no_cli": true,
+            "no_markdown_parser": true
+          },
+          "validation_order_and_codes": {
+            "dependency_load": "validate_registry invokes a production lazy import helper on every call; ModuleNotFoundError for jsonschema returns only jsonschema_dependency_missing",
+            "schema_definition": "Draft202012Validator.check_schema(schema) runs before instance validation; SchemaError or invalid schema definition returns only schema_definition_invalid",
+            "schema_instance": "Draft202012Validator with FormatChecker validates registry; any instance violation returns only schema_validation_failed",
+            "semantics_after_schema_pass": [
+              "relation-consistent unknown owner includes canonical_owner_unknown",
+              "relation-consistent name outside the three canonical names includes canonical_repository_unknown",
+              "a known canonical owner/name bound to the wrong role includes canonical_repository_role_mismatch",
+              "full_name mismatch includes full_name_mismatch",
+              "url mismatch includes url_mismatch",
+              "duplicate role includes duplicate_role",
+              "duplicate label includes duplicate_label",
+              "duplicate full_name includes duplicate_full_name",
+              "duplicate url includes duplicate_url"
+            ]
+          },
+          "dependency_isolation_fixture_exact": {
+            "production_requirement": "jsonschema imports are lazy inside a production helper called by validate_registry; no cached availability boolean may decide success",
+            "test_requirement": "patch builtins.__import__ with a delegating side effect that raises ModuleNotFoundError only for jsonschema while calling the original importer for every other name, then call the real validate_registry",
+            "exact_assertion": ["jsonschema_dependency_missing"]
+          },
+          "schema_definition_fixture_exact": {
+            "invalid_schema": {"type": 42},
+            "exact_assertion": ["schema_definition_invalid"],
+            "forbidden_fixture": {"invalid": "schema"}
+          },
+          "required_regressions": [
+            "exact canonical document returns empty list",
+            "exact top-level keys and canonical_repositories key are asserted",
+            "registry_type and entries alternative shape is rejected",
+            "missing entry returns schema_validation_failed",
+            "extra entry returns schema_validation_failed",
+            "relation-consistent unknown owner includes canonical_owner_unknown",
+            "relation-consistent unknown name includes canonical_repository_unknown",
+            "swapping canonical names between roles includes canonical_repository_role_mismatch",
+            "duplicate role, label, full_name and url each assert their exact code",
+            "full_name and url mismatch each assert their exact code",
+            "mutable main_sha returns schema_validation_failed because additional properties are forbidden",
+            "malformed registry returns schema_validation_failed",
+            "actually invalid schema type 42 returns schema_definition_invalid",
+            "strict versus permissive supplied schema proves the schema argument is used",
+            "real production lazy import interception returns exactly jsonschema_dependency_missing"
+          ],
+          "test_quality": {
+            "framework": "unittest.TestCase",
+            "registered_command": "python3 -m unittest discover -s tests -p test_b3_*.py",
+            "production_validate_registry_must_be_called": true,
+            "top_level_test_functions_forbidden": true,
+            "generic_type_only_assertions_forbidden": true,
+            "future_behavior_comments_forbidden": true,
+            "duplicated_test_only_validator_forbidden": true,
+            "fake_mutation_test_names_without_mutation_forbidden": true,
+            "pytest_dependency_forbidden": true
+          },
+          "boundaries": {
+            "voice_is_downstream_not_repository_role": true,
+            "product_or_workflow_changes_forbidden": true,
+            "paid_api_fallback_forbidden": true,
+            "fourth_attempt_forbidden_without_new_owner_decision": true
+          }
+        }
+      },
+      "required": true,
+      "linked_checks": ["issue-56-canonical-contract-v3-final-tests"]
+    }
+  ],
+  "required_checks": [
+    {
+      "id": "issue-56-canonical-contract-v3-final-tests",
+      "command_id": "repo.contracts.b3.tests",
+      "required": true,
+      "expected_postconditions": [
+        {
+          "predicate_id": "process.exit_code.equals",
+          "parameters": {"value": 0}
+        }
+      ]
+    }
+  ],
+  "review_policy": {
+    "reviewer_class": "independent-engineering",
+    "policy_id": "review-independence.v1",
+    "forbidden_lineage_overlaps": [
+      "agent_runtime_id",
+      "credential_principal",
+      "authored_commits"
+    ],
+    "minimum_distinct_human_operators": 1
+  },
+  "external_side_effects": "owner_approved",
+  "created_by": "github:yurykuchumov-ux/codex-control-plane",
+  "created_at": "2026-07-21T19:59:39Z"
+}
