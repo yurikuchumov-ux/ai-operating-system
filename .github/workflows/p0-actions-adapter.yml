@@ -185,6 +185,7 @@ jobs:
               adapter.validate_target_branch(os.environ["TARGET_BRANCH"], os.environ["DEFAULT_BRANCH"]),
               adapter.validate_task_document(task),
               adapter.validate_executor_adapter(task),
+              adapter.validate_correction_seed(task, os.environ["REPOSITORY"]),
           ):
               if reason:
                   reject(reason)
@@ -231,6 +232,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      actions: read
     timeout-minutes: 30
     steps:
       - name: Clean ephemeral checkout at exact protected-main base SHA
@@ -258,7 +260,17 @@ jobs:
           remote_target="$(git ls-remote --heads origin "refs/heads/$TARGET_BRANCH" | awk '{print $1}')"
           test -z "$remote_target" || test "$remote_target" = "$BASE_SHA"
           git switch --create "$TARGET_BRANCH" "$BASE_SHA"
-          mkdir -p /tmp/p0-control p0-adapter-output
+          mkdir -p /tmp/p0-control /tmp/p0-trusted-repo/tools \
+            /tmp/p0-trusted-repo/contracts/schemas \
+            /tmp/p0-trusted-repo/contracts/registries p0-adapter-output
+          cp tools/p0_actions_adapter.py tools/propagate_b3.py /tmp/p0-trusted-repo/tools/
+          cp contracts/schemas/task.v1.schema.json \
+            contracts/schemas/result.v1.schema.json \
+            contracts/schemas/verification.v1.schema.json \
+            contracts/schemas/review-attestation.v1.schema.json \
+            /tmp/p0-trusted-repo/contracts/schemas/
+          cp contracts/registries/commands.v1.json /tmp/p0-trusted-repo/contracts/registries/
+          chmod -R a-w /tmp/p0-trusted-repo
           git fetch --no-tags --depth=1 origin "$TASK_COMMIT"
           test "$(git rev-parse --verify "${TASK_COMMIT}^{commit}")" = "$TASK_COMMIT"
           git show "${TASK_COMMIT}:${TASK_PATH}" > /tmp/p0-control/task.json
@@ -289,6 +301,146 @@ jobs:
             chmod -R a-w .p0-codex-control
           fi
           echo "started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+      - name: Initialize executor manifest and correction-seed binding
+        id: seed
+        env:
+          TASK_COMMIT: ${{ github.event.inputs.task_commit }}
+          TASK_PATH: ${{ github.event.inputs.task_path }}
+          EXECUTOR_ADAPTER: ${{ needs.admission.outputs.executor_adapter }}
+          EXECUTION_RUN_ID: ${{ github.run_id }}
+          STARTED_AT: ${{ steps.prepare.outputs.started_at }}
+        run: |
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          from tools import p0_actions_adapter as adapter
+          task = adapter.load_json(Path('/tmp/p0-control/task.json'))
+          seed = task.get('correction_seed')
+          out = Path('p0-adapter-output'); out.mkdir(exist_ok=True)
+          manifest = {
+              'executor_adapter': os.environ['EXECUTOR_ADAPTER'],
+              'postconditions_passed': False,
+              'executor_task_commit': os.environ['TASK_COMMIT'],
+              'executor_task_path': os.environ['TASK_PATH'],
+              'execution_evidence_run_id': os.environ['EXECUTION_RUN_ID'],
+              'execution_evidence_run_attempt': '${{ github.run_attempt }}',
+              'started_at': os.environ['STARTED_AT'],
+          }
+          (out / 'manifest.json').write_text(json.dumps(manifest, sort_keys=True), encoding='utf-8')
+          gh_out = Path(os.environ['GITHUB_OUTPUT'])
+          gh_out.write_text(
+              'present={}\nrun_id={}\n'.format(
+                  'true' if seed else 'false', seed.get('run_id', '') if seed else ''
+              ), encoding='utf-8'
+          )
+          PY
+      - name: Download exact failed candidate artifact
+        id: seed_download
+        if: steps.seed.outputs.present == 'true'
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: p0-adapter-output
+          path: /tmp/p0-seed-artifact
+          repository: ${{ github.repository }}
+          run-id: ${{ steps.seed.outputs.run_id }}
+          github-token: ${{ github.token }}
+      - name: Validate and apply exact correction seed before provider access
+        if: always()
+        env:
+          SEED_PRESENT: ${{ steps.seed.outputs.present }}
+          SEED_DOWNLOAD_OUTCOME: ${{ steps.seed_download.outcome }}
+          REPOSITORY: ${{ github.repository }}
+          BASE_SHA: ${{ needs.admission.outputs.base_sha }}
+        run: |
+          python3 - <<'PY'
+          import json, os, subprocess
+          from pathlib import Path
+          from tools import p0_actions_adapter as adapter
+
+          if os.environ.get('SEED_PRESENT') != 'true':
+              raise SystemExit(0)
+          out = Path('p0-adapter-output')
+          manifest_path = out / 'manifest.json'
+          manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+
+          def reject(code):
+              manifest.setdefault('postcondition_failure', code)
+              manifest_path.write_text(json.dumps(manifest, sort_keys=True), encoding='utf-8')
+              raise SystemExit(code)
+
+          seed_dir = Path('/tmp/p0-seed-artifact')
+          patch_path = seed_dir / 'candidate.patch'
+          evidence_path = seed_dir / 'candidate-evidence.json'
+          source_manifest_path = seed_dir / 'manifest.json'
+          if (os.environ.get('SEED_DOWNLOAD_OUTCOME') != 'success'
+                  or not patch_path.is_file() or not evidence_path.is_file()
+                  or not source_manifest_path.is_file()):
+              reject('correction_seed_artifact_missing')
+          try:
+              task = adapter.load_json(Path('/tmp/p0-control/task.json'))
+              evidence = adapter.load_json(evidence_path)
+              source_manifest = adapter.load_json(source_manifest_path)
+              patch_bytes = patch_path.read_bytes()
+          except (OSError, ValueError, json.JSONDecodeError):
+              reject('correction_seed_evidence_mismatch')
+
+          numstat = subprocess.run(
+              ['git', 'apply', '--numstat', '-z', str(patch_path)],
+              stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+          )
+          if numstat.returncode != 0:
+              reject('correction_seed_unsafe_patch')
+          observed_paths = []
+          for record in numstat.stdout.split(b'\0'):
+              if not record:
+                  continue
+              fields = record.split(b'\t', 2)
+              if len(fields) != 3:
+                  reject('correction_seed_unsafe_patch')
+              try:
+                  observed_paths.append(fields[2].decode('utf-8'))
+              except UnicodeDecodeError:
+                  reject('correction_seed_unsafe_patch')
+          failure = adapter.validate_correction_seed_evidence(
+              task, evidence, source_manifest, patch_bytes, observed_paths, {},
+              os.environ['REPOSITORY']
+          )
+          if failure:
+              reject(failure)
+          checked = subprocess.run(['git', 'apply', '--check', '--index', str(patch_path)])
+          if checked.returncode != 0:
+              reject('correction_seed_apply_failed')
+          applied = subprocess.run(['git', 'apply', '--index', str(patch_path)])
+          if applied.returncode != 0:
+              reject('correction_seed_apply_failed')
+          staged_raw = subprocess.run(
+              ['git', 'diff', '--cached', '--name-only', '-z', os.environ['BASE_SHA']],
+              check=True, stdout=subprocess.PIPE,
+          ).stdout
+          staged_paths = sorted(
+              path.decode('utf-8') for path in staged_raw.split(b'\0') if path
+          )
+          modes = {}
+          for path in staged_paths:
+              row = subprocess.run(
+                  ['git', 'ls-files', '-s', '--', path], text=True,
+                  check=True, stdout=subprocess.PIPE,
+              ).stdout.strip()
+              if row:
+                  modes[path] = row.split()[0]
+          failure = adapter.validate_correction_seed_evidence(
+              task, evidence, source_manifest, patch_bytes, staged_paths, modes,
+              os.environ['REPOSITORY']
+          )
+          if failure:
+              reject(failure)
+          manifest['correction_seed_applied'] = dict(evidence)
+          manifest_path.write_text(json.dumps(manifest, sort_keys=True), encoding='utf-8')
+          (out / 'correction-seed-binding.json').write_text(
+              json.dumps(evidence, sort_keys=True), encoding='utf-8'
+          )
+          PY
       - name: Assert provider-owned transient output.txt is absent before invocation
         run: test ! -e output.txt
       - name: Claude edits files only (Read, Edit, Write, Glob, Grep -- no Bash, no GitHub API, no commit/push)
@@ -350,6 +502,8 @@ jobs:
           import json, os
           from datetime import datetime, timezone
           from pathlib import Path
+          import sys
+          sys.path.insert(0, '/tmp/p0-trusted-repo')
           from tools.p0_actions_adapter import PROVIDER_TRANSIENT_OUTPUT_PATH
           out = Path('p0-adapter-output'); out.mkdir(exist_ok=True)
           executor_adapter = os.environ.get('EXECUTOR_ADAPTER') or ''
@@ -480,9 +634,12 @@ jobs:
               'started_at': os.environ.get('STARTED_AT'),
               'finished_at': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
           }
+          manifest_path = out / 'manifest.json'
+          preserved_manifest = json.loads(manifest_path.read_text(encoding='utf-8')) if manifest_path.is_file() else {}
+          manifest = {**preserved_manifest, **manifest}
           if control_failure:
-              manifest['postcondition_failure'] = control_failure
-          (out / 'manifest.json').write_text(json.dumps(manifest, sort_keys=True), encoding='utf-8')
+              manifest.setdefault('postcondition_failure', control_failure)
+          manifest_path.write_text(json.dumps(manifest, sort_keys=True), encoding='utf-8')
           PY
       - name: Enforce scope, run registered argv, and emit exact binary patch
         if: always()
@@ -497,9 +654,9 @@ jobs:
         run: |
           control_integrity_failed=false
           test "$(shasum -a 256 /tmp/p0-control/task.json | awk '{print $1}')" = "$EXPECTED_TASK_SHA256" || control_integrity_failed=true
-          test "$(shasum -a 256 tools/p0_actions_adapter.py | awk '{print $1}')" = "$EXPECTED_ADAPTER_SHA256" || control_integrity_failed=true
-          test "$(shasum -a 256 contracts/registries/commands.v1.json | awk '{print $1}')" = "$EXPECTED_REGISTRY_SHA256" || control_integrity_failed=true
-          test "$(shasum -a 256 tools/propagate_b3.py | awk '{print $1}')" = "$EXPECTED_SESSION_PARSER_SHA256" || control_integrity_failed=true
+          test "$(shasum -a 256 /tmp/p0-trusted-repo/tools/p0_actions_adapter.py | awk '{print $1}')" = "$EXPECTED_ADAPTER_SHA256" || control_integrity_failed=true
+          test "$(shasum -a 256 /tmp/p0-trusted-repo/contracts/registries/commands.v1.json | awk '{print $1}')" = "$EXPECTED_REGISTRY_SHA256" || control_integrity_failed=true
+          test "$(shasum -a 256 /tmp/p0-trusted-repo/tools/propagate_b3.py | awk '{print $1}')" = "$EXPECTED_SESSION_PARSER_SHA256" || control_integrity_failed=true
           if [ "$control_integrity_failed" = true ]; then
             python3 -I -c 'import json,pathlib; p=pathlib.Path("p0-adapter-output/manifest.json"); d=json.loads(p.read_text()); d["postcondition_failure"]="control_integrity_failed"; p.write_text(json.dumps(d,sort_keys=True))'
             exit 1
@@ -507,7 +664,7 @@ jobs:
           python3 -I - <<'PY'
           import json, os, subprocess, sys
           from pathlib import Path
-          sys.path.insert(0, '.')
+          sys.path.insert(0, '/tmp/p0-trusted-repo')
           from tools import p0_actions_adapter as adapter
           out = Path('p0-adapter-output')
           manifest_path = out / 'manifest.json'
@@ -570,6 +727,44 @@ jobs:
               reject('empty_diff')
           if not adapter.changed_paths_within_scope(changed, task['allowed_paths'], task['denied_paths']):
               reject('changed_paths_not_allowed')
+
+          # Preserve the exact scope-valid executor candidate before the
+          # registered check can fail.  This evidence is not a result.patch,
+          # never authorizes publication, and is useful only when a later
+          # immutable task binds every source fact and digest explicitly.
+          git('add', '-A', '--', '.', ':(exclude)p0-adapter-output/**')
+          candidate_changed = git('diff', '--cached', '--name-only', base).stdout.splitlines()
+          if not candidate_changed:
+              reject('empty_diff')
+          if not adapter.changed_paths_within_scope(candidate_changed, task['allowed_paths'], task['denied_paths']):
+              reject('changed_paths_not_allowed_after_stage')
+          candidate_patch = subprocess.run(
+              ['git', 'diff', '--cached', '--binary', base], check=True,
+              stdout=subprocess.PIPE,
+          ).stdout
+          if not candidate_patch:
+              reject('empty_patch')
+          execution_id = adapter.resolve_adapter_session_id(execution, structured)
+          if execution_id is None:
+              execution_id = adapter.derive_pipeline_execution_id(
+                  str(manifest.get('execution_evidence_run_id') or '0'),
+                  str(manifest.get('execution_evidence_run_attempt') or '1'),
+                  base,
+              )
+          candidate_evidence = adapter.persist_candidate_evidence(
+              out, task,
+              task_commit=str(manifest.get('executor_task_commit') or ''),
+              task_path=str(manifest.get('executor_task_path') or ''),
+              workflow_run_id=str(manifest.get('execution_evidence_run_id') or '0'),
+              workflow_run_attempt=int(manifest.get('execution_evidence_run_attempt') or 1),
+              execution_id=execution_id,
+              executor_adapter=str(manifest.get('executor_adapter') or ''),
+              patch_bytes=candidate_patch,
+              changed_paths=candidate_changed,
+          )
+          manifest['candidate_patch'] = candidate_evidence
+          manifest['observed_changed_paths'] = candidate_changed
+          save()
 
           argv = check_spec['argv']
           timed_out = False
@@ -916,7 +1111,7 @@ jobs:
           RUN_ATTEMPT: ${{ github.run_attempt }}
         run: |
           python3 - <<'PY'
-          import json, os, subprocess
+          import base64, json, os, subprocess
           from pathlib import Path
           from tools import p0_actions_adapter as adapter
           def read(path):
@@ -925,6 +1120,9 @@ jobs:
           def load(path):
               try: return json.loads(read(path) or '{}')
               except (json.JSONDecodeError, TypeError): return {}
+          def read_b64(path):
+              p = Path(path)
+              return base64.b64encode(p.read_bytes()).decode('ascii') if p.is_file() else None
           base = os.environ['BASE_SHA']; subject = os.environ.get('SUBJECT_SHA') or base
           manifest = load('p0-adapter-output/manifest.json')
           manifest_raw = read('p0-adapter-output/manifest.json')
@@ -959,6 +1157,9 @@ jobs:
               'codex_permission_profile': manifest.get('codex_permission_profile'),
               'codex_safety_strategy': manifest.get('codex_safety_strategy'),
               'codex_final_message': read('p0-adapter-output/codex-final-message.txt'),
+              'candidate_patch_b64': read_b64('p0-adapter-output/candidate.patch'),
+              'candidate_evidence_raw': read('p0-adapter-output/candidate-evidence.json'),
+              'correction_seed_binding_raw': read('p0-adapter-output/correction-seed-binding.json'),
               'started_at': manifest.get('started_at'),
               'finished_at': manifest.get('finished_at'),
               'execution_file_content': read('p0-adapter-output/execution-file.txt'),

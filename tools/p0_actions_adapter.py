@@ -44,6 +44,7 @@ Claude.
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import json
 import re
@@ -184,6 +185,13 @@ FAILURE_TERMINAL_REASON: Mapping[str, str] = {
     "executor_adapter_mismatch": "identity_unverifiable",
     "executor_attempts_exhausted": "adapter_error",
     "control_integrity_failed": "ref_history_unverifiable",
+    "correction_seed_invalid": "identity_unverifiable",
+    "correction_seed_artifact_missing": "missing_artifact",
+    "correction_seed_evidence_mismatch": "ref_history_unverifiable",
+    "correction_seed_digest_mismatch": "ref_history_unverifiable",
+    "correction_seed_scope_violation": "scope_violation",
+    "correction_seed_unsafe_patch": "scope_violation",
+    "correction_seed_apply_failed": "ref_history_unverifiable",
 }
 
 # Failure code -> the decisive registry predicate whose failure it records.
@@ -219,6 +227,13 @@ FAILURE_PREDICATE: Mapping[str, str] = {
     "executor_adapter_mismatch": "binding.execution_id.equals",
     "executor_attempts_exhausted": "acceptance.required.passed",
     "control_integrity_failed": "binding.execution_id.equals",
+    "correction_seed_invalid": "schema.instance.valid",
+    "correction_seed_artifact_missing": "artifact.exists",
+    "correction_seed_evidence_mismatch": "binding.execution_id.equals",
+    "correction_seed_digest_mismatch": "binding.execution_id.equals",
+    "correction_seed_scope_violation": "git.changed_paths.allowed",
+    "correction_seed_unsafe_patch": "git.changed_paths.allowed",
+    "correction_seed_apply_failed": "git.base_sha.equals",
 }
 
 # Issue #32 correction: every distinct terminal-rejection code the workflow's
@@ -260,6 +275,13 @@ MANIFEST_FAILURE_NORMALIZATION: Mapping[str, str] = {
     "executor_adapter_unsupported": "executor_adapter_unsupported",
     "executor_attempts_exhausted": "executor_attempts_exhausted",
     "control_integrity_failed": "control_integrity_failed",
+    "correction_seed_invalid": "correction_seed_invalid",
+    "correction_seed_artifact_missing": "correction_seed_artifact_missing",
+    "correction_seed_evidence_mismatch": "correction_seed_evidence_mismatch",
+    "correction_seed_digest_mismatch": "correction_seed_digest_mismatch",
+    "correction_seed_scope_violation": "correction_seed_scope_violation",
+    "correction_seed_unsafe_patch": "correction_seed_unsafe_patch",
+    "correction_seed_apply_failed": "correction_seed_apply_failed",
 }
 
 
@@ -491,6 +513,205 @@ def changed_paths_within_scope(
         if not any(path_matches(a, path) for a in allowed):
             return False
     return True
+
+
+def _is_concrete_repository_path(path: Any) -> bool:
+    """Return True only for a concrete, repository-relative file path.
+
+    Correction seeds bind observed files, not glob expressions.  Keeping this
+    stricter than task ``path_pattern`` prevents a seed declaration from
+    smuggling a wildcard into the exact-path comparison performed before a
+    patch is applied.
+    """
+    if not isinstance(path, str) or not path or len(path) > 300:
+        return False
+    if path.startswith("/") or "\\" in path or "\x00" in path:
+        return False
+    if any(ord(char) < 32 or ord(char) == 127 for char in path):
+        return False
+    if any(token in path for token in ("*", "?", "[", "]")):
+        return False
+    return all(segment not in ("", ".", "..") for segment in path.split("/"))
+
+
+def validate_correction_seed(
+    task: Mapping[str, Any], current_repository: Optional[str]
+) -> Optional[str]:
+    """Validate task-relative correction-seed relationships fail closed.
+
+    JSON Schema validates the field shapes.  This helper enforces relational
+    facts that JSON Schema cannot express: same repository/base, a safe source
+    task path, canonical exact changed paths, and current-task scope.
+    """
+    seed = task.get("correction_seed")
+    if seed is None:
+        return None
+    if not isinstance(seed, Mapping):
+        return "correction_seed_invalid"
+    if seed.get("repository") != task.get("repository") or seed.get(
+        "repository"
+    ) != current_repository:
+        return "correction_seed_invalid"
+    if seed.get("base_sha") != task.get("base_sha"):
+        return "correction_seed_invalid"
+    if validate_task_ref(seed.get("task_commit")) or validate_task_path(
+        seed.get("task_path")
+    ):
+        return "correction_seed_invalid"
+    paths = seed.get("changed_paths")
+    if not isinstance(paths, list) or not paths:
+        return "correction_seed_invalid"
+    if any(not _is_concrete_repository_path(path) for path in paths):
+        return "correction_seed_invalid"
+    if paths != sorted(set(paths)):
+        return "correction_seed_invalid"
+    if not changed_paths_within_scope(
+        paths, task.get("allowed_paths") or [], task.get("denied_paths") or []
+    ):
+        return "correction_seed_scope_violation"
+    return None
+
+
+def build_candidate_evidence(
+    task: Mapping[str, Any],
+    *,
+    task_commit: str,
+    task_path: str,
+    workflow_run_id: str,
+    workflow_run_attempt: int,
+    execution_id: str,
+    executor_adapter: str,
+    patch_bytes: bytes,
+    changed_paths: Sequence[str],
+) -> Dict[str, Any]:
+    """Build the immutable binding document stored beside candidate.patch."""
+    return {
+        "schema_version": "1.0.0",
+        "repository": task.get("repository"),
+        "workflow_run_id": str(workflow_run_id),
+        "workflow_run_attempt": int(workflow_run_attempt),
+        "task_commit": task_commit,
+        "task_path": task_path,
+        "base_sha": task.get("base_sha"),
+        "execution_id": execution_id,
+        "executor_adapter": executor_adapter,
+        "patch_sha256": sha256_bytes(patch_bytes),
+        "changed_paths": sorted(changed_paths),
+    }
+
+
+def persist_candidate_evidence(
+    output_dir: Path,
+    task: Mapping[str, Any],
+    **binding: Any,
+) -> Dict[str, Any]:
+    """Atomically-enough persist the candidate bytes before a check runs.
+
+    Both files are written in the executor evidence directory and the caller
+    receives the exact binding document for inclusion in its manifest.  A
+    later check failure cannot erase these already materialized bytes.
+    """
+    patch_bytes = binding.pop("patch_bytes")
+    if not isinstance(patch_bytes, bytes) or not patch_bytes:
+        raise P0AdapterError("candidate patch must be non-empty bytes")
+    evidence = build_candidate_evidence(
+        task, patch_bytes=patch_bytes, **binding
+    )
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / "candidate.patch").write_bytes(patch_bytes)
+    (output_dir / "candidate-evidence.json").write_bytes(
+        _canonical_bytes(evidence)
+    )
+    return evidence
+
+
+def validate_correction_seed_evidence(
+    task: Mapping[str, Any],
+    evidence: Any,
+    source_manifest: Any,
+    patch_bytes: bytes,
+    observed_paths: Sequence[str],
+    observed_modes: Mapping[str, str],
+    current_repository: Optional[str],
+) -> Optional[str]:
+    """Bind and safety-check a downloaded candidate before ``git apply``.
+
+    ``observed_paths`` and ``observed_modes`` come from trusted Git inspection
+    of the patch (and are rechecked after application by the workflow).  No
+    claim in candidate-evidence.json is accepted as proof of its own patch.
+    """
+    failure = validate_correction_seed(task, current_repository)
+    if failure:
+        return failure
+    seed = task.get("correction_seed")
+    if seed is None:
+        return None
+    if not isinstance(evidence, Mapping):
+        return "correction_seed_evidence_mismatch"
+    expected = {
+        "repository": seed.get("repository"),
+        "workflow_run_id": seed.get("run_id"),
+        "workflow_run_attempt": seed.get("run_attempt"),
+        "task_commit": seed.get("task_commit"),
+        "task_path": seed.get("task_path"),
+        "base_sha": seed.get("base_sha"),
+        "execution_id": seed.get("execution_id"),
+        "executor_adapter": seed.get("executor_adapter"),
+        "patch_sha256": seed.get("patch_sha256"),
+        "changed_paths": seed.get("changed_paths"),
+    }
+    if evidence.get("schema_version") != "1.0.0" or any(
+        evidence.get(key) != value for key, value in expected.items()
+    ):
+        return "correction_seed_evidence_mismatch"
+    # Only a scope-valid candidate whose author adapter succeeded but whose
+    # workflow-controlled registered check failed is a correction seed.  A
+    # successful execution, scope rejection, tool-policy rejection, or
+    # incomplete manifest can never be replayed through this path.
+    if (
+        not isinstance(source_manifest, Mapping)
+        or source_manifest.get("adapter_outcome") != "success"
+        or source_manifest.get("postconditions_passed") is not False
+        or source_manifest.get("postcondition_failure") != "required_check_failed"
+        or source_manifest.get("candidate_patch") != evidence
+    ):
+        return "correction_seed_evidence_mismatch"
+    if sha256_bytes(patch_bytes) != seed.get("patch_sha256"):
+        return "correction_seed_digest_mismatch"
+
+    # Binary, rename/copy, submodule and symlink patches are unnecessary for
+    # the bounded text-edit bootstrap and have ambiguous path/mode semantics.
+    unsafe_markers = (
+        b"GIT binary patch",
+        b"Binary files ",
+        b"\nrename from ",
+        b"\nrename to ",
+        b"\ncopy from ",
+        b"\ncopy to ",
+        b"\nold mode 120000",
+        b"\nnew mode 120000",
+        b"\nnew file mode 120000",
+        b"\ndeleted file mode 120000",
+        b"\nold mode 160000",
+        b"\nnew mode 160000",
+        b"\nnew file mode 160000",
+        b"\ndeleted file mode 160000",
+    )
+    if any(marker in patch_bytes for marker in unsafe_markers):
+        return "correction_seed_unsafe_patch"
+    paths = sorted(observed_paths)
+    if paths != seed.get("changed_paths"):
+        return "correction_seed_evidence_mismatch"
+    if not changed_paths_within_scope(
+        paths, task.get("allowed_paths") or [], task.get("denied_paths") or []
+    ):
+        return "correction_seed_scope_violation"
+    if set(observed_modes) - set(paths) or any(
+        mode not in {"100644", "100755"} for mode in observed_modes.values()
+    ):
+        return "correction_seed_unsafe_patch"
+    return None
 
 
 # --------------------------------------------------------------------------
@@ -1280,6 +1501,39 @@ def build_documents(decision: Decision, invocation: Mapping[str, Any], workdir: 
         artifacts.append(_artifact_entry("executor-manifest", "application/json", meta))
         artifact_ids.append("executor-manifest")
 
+    candidate_patch_b64 = signal.get("candidate_patch_b64")
+    if isinstance(candidate_patch_b64, str) and candidate_patch_b64:
+        try:
+            candidate_patch_bytes = base64.b64decode(
+                candidate_patch_b64.encode("ascii"), validate=True
+            )
+        except (UnicodeEncodeError, ValueError):
+            candidate_patch_bytes = b""
+        if candidate_patch_bytes:
+            meta = _write_evidence(workdir, "candidate.patch", candidate_patch_bytes)
+            artifacts.append(_artifact_entry("candidate-patch", "text/x-diff", meta))
+            artifact_ids.append("candidate-patch")
+
+    for signal_key, artifact_id, filename, media_type in (
+        (
+            "candidate_evidence_raw",
+            "candidate-evidence",
+            "candidate-evidence.json",
+            "application/json",
+        ),
+        (
+            "correction_seed_binding_raw",
+            "correction-seed-binding",
+            "correction-seed-binding.json",
+            "application/json",
+        ),
+    ):
+        raw = signal.get(signal_key)
+        if isinstance(raw, str) and raw:
+            meta = _write_evidence(workdir, filename, raw.encode("utf-8"))
+            artifacts.append(_artifact_entry(artifact_id, media_type, meta))
+            artifact_ids.append(artifact_id)
+
     check_observation = signal.get("required_check")
     if isinstance(check_observation, Mapping):
         check_log = check_observation.get("log")
@@ -1314,6 +1568,9 @@ def build_documents(decision: Decision, invocation: Mapping[str, Any], workdir: 
         ("executor-transcript", "executor_transcript"),
         ("codex-final-message", "executor_summary"),
         ("executor-manifest", "executor_manifest"),
+        ("candidate-patch", "executor_candidate_patch"),
+        ("candidate-evidence", "executor_candidate_evidence"),
+        ("correction-seed-binding", "correction_seed_binding"),
         ("required-check-log", "required_check_log"),
         ("result-artifact", "result_artifact"),
     ):
