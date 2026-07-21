@@ -1,0 +1,35 @@
+{
+  "schema_version": "1.0.0",
+  "canonical_repositories": [
+    {
+      "role": "governance",
+      "label": "Governance and shared contracts",
+      "owner": "yurikuchumov-ux",
+      "name": "ai-operating-system",
+      "full_name": "yurikuchumov-ux/ai-operating-system",
+      "url": "https://github.com/yurikuchumov-ux/ai-operating-system",
+      "visibility": "public",
+      "boundary": "owns governance, schemas, reusable workflows and evidence contracts"
+    },
+    {
+      "role": "template",
+      "label": "Compliant repository fixture",
+      "owner": "yurikuchumov-ux",
+      "name": "ai-development-studio-template",
+      "full_name": "yurikuchumov-ux/ai-development-studio-template",
+      "url": "https://github.com/yurikuchumov-ux/ai-development-studio-template",
+      "visibility": "public",
+      "boundary": "owns the minimal downstream skeleton and repeatability tests"
+    },
+    {
+      "role": "platform",
+      "label": "AI Development Studio platform",
+      "owner": "yurikuchumov-ux",
+      "name": "-ai-development-studio",
+      "full_name": "yurikuchumov-ux/-ai-development-studio",
+      "url": "https://github.com/yurikuchumov-ux/-ai-development-studio",
+      "visibility": "private",
+      "boundary": "owns the automated agentic software-development platform runtime and platform delivery"
+    }
+  ]
+}
