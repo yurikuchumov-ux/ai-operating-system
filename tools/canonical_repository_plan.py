@@ -11,10 +11,8 @@ TABLE_SEPARATOR = "| --- | --- | --- | --- | --- |"
 _HEADING_VARIANT = re.compile(
     r"^(#{1,6}) 3\.1 Verified names and boundaries(.*)$"
 )
-_GITHUB_REPOSITORY_LINK = re.compile(
-    r"\[[^\]\n]*\]\("
-    r"(https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)"
-    r"\)"
+_GITHUB_REPOSITORY_URL = re.compile(
+    r"^https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"
 )
 _REPOSITORY_CELL = re.compile(
     r"^\[`([^`\]\n]+)`\]\("
@@ -24,6 +22,139 @@ _REPOSITORY_CELL = re.compile(
 _SHA_CELL = re.compile(r"^`[0-9a-f]{40}`$")
 
 _REGISTRY_FIELDS = ("label", "full_name", "url", "visibility", "boundary")
+
+
+def _active_markdown_lines(lines: List[str]) -> List[bool]:
+    """Mark lines that are Markdown content, not fenced code or HTML comments."""
+    active: List[bool] = []
+    fence_character: Optional[str] = None
+    fence_length = 0
+    in_html_comment = False
+
+    for line in lines:
+        if in_html_comment:
+            active.append(False)
+            if "-->" in line:
+                in_html_comment = False
+            continue
+
+        if "<!--" in line:
+            active.append(False)
+            if "-->" not in line.split("<!--", 1)[1]:
+                in_html_comment = True
+            continue
+
+        fence = re.match(r"^ {0,3}(`{3,}|~{3,})(.*)$", line)
+        if fence_character is None:
+            if fence:
+                fence_character = fence.group(1)[0]
+                fence_length = len(fence.group(1))
+                active.append(False)
+            else:
+                active.append(True)
+            continue
+
+        active.append(False)
+        closing = re.match(
+            rf"^ {{0,3}}{re.escape(fence_character)}{{{fence_length},}}[ \t]*$",
+            line,
+        )
+        if closing:
+            fence_character = None
+            fence_length = 0
+
+    return active
+
+
+def _unescaped_closing(text: str, start: int, closing: str) -> Optional[int]:
+    """Return the next unescaped delimiter, allowing balanced label brackets."""
+    depth = 0
+    index = start
+    while index < len(text):
+        character = text[index]
+        if character == "\\":
+            index += 2
+            continue
+        if closing == "]" and character == "[":
+            depth += 1
+        elif character == closing:
+            if depth == 0:
+                return index
+            depth -= 1
+        index += 1
+    return None
+
+
+def _github_repository_links(text: str) -> List[str]:
+    """Return GitHub repository destinations from Markdown inline links."""
+    links: List[str] = []
+    cursor = 0
+    while cursor < len(text):
+        label_start = text.find("[", cursor)
+        if label_start < 0:
+            break
+        label_end = _unescaped_closing(text, label_start + 1, "]")
+        if (
+            label_end is None
+            or label_end + 1 >= len(text)
+            or text[label_end + 1] != "("
+        ):
+            cursor = label_start + 1
+            continue
+
+        index = label_end + 2
+        while index < len(text) and text[index] in " \t":
+            index += 1
+
+        if index < len(text) and text[index] == "<":
+            destination_end = _unescaped_closing(text, index + 1, ">")
+            if destination_end is None:
+                cursor = label_start + 1
+                continue
+            destination = text[index + 1 : destination_end]
+            index = destination_end + 1
+        else:
+            destination_start = index
+            parenthesis_depth = 0
+            while index < len(text):
+                character = text[index]
+                if character == "\\":
+                    index += 2
+                    continue
+                if character in " \t":
+                    break
+                if character == "(":
+                    parenthesis_depth += 1
+                elif character == ")":
+                    if parenthesis_depth == 0:
+                        break
+                    parenthesis_depth -= 1
+                index += 1
+            destination = text[destination_start:index]
+
+        while index < len(text) and text[index] in " \t":
+            index += 1
+        if index < len(text) and text[index] in "\"'(":
+            title_open = text[index]
+            title_close = ")" if title_open == "(" else title_open
+            title_end = _unescaped_closing(text, index + 1, title_close)
+            if title_end is None:
+                cursor = label_start + 1
+                continue
+            index = title_end + 1
+            while index < len(text) and text[index] in " \t":
+                index += 1
+
+        if (
+            index < len(text)
+            and text[index] == ")"
+            and _GITHUB_REPOSITORY_URL.fullmatch(destination)
+        ):
+            links.append(destination)
+            cursor = index + 1
+        else:
+            cursor = label_start + 1
+    return links
 
 
 def _registry_by_label(
@@ -49,15 +180,23 @@ def _registry_by_label(
     return result
 
 
-def _section_index(lines: List[str]) -> Tuple[Optional[int], List[str]]:
+def _section_index(
+    lines: List[str], active_lines: List[bool]
+) -> Tuple[Optional[int], List[str]]:
     """Locate the exact section and classify near-match headings."""
-    exact = [index for index, line in enumerate(lines) if line == SECTION_HEADING]
+    exact = [
+        index
+        for index, line in enumerate(lines)
+        if active_lines[index] and line == SECTION_HEADING
+    ]
     if len(exact) > 1:
         return None, ["plan_section_duplicate"]
 
     wrong_level = False
     suffixed = False
-    for line in lines:
+    for index, line in enumerate(lines):
+        if not active_lines[index]:
+            continue
         match = _HEADING_VARIANT.fullmatch(line)
         if not match or line == SECTION_HEADING:
             continue
@@ -75,10 +214,10 @@ def _section_index(lines: List[str]) -> Tuple[Optional[int], List[str]]:
     return exact[0], []
 
 
-def _section_end(lines: List[str], start: int) -> int:
+def _section_end(lines: List[str], active_lines: List[bool], start: int) -> int:
     """Return the next level 1-3 heading or end of document."""
     for index in range(start, len(lines)):
-        if re.match(r"^#{1,3}(?: |$)", lines[index]):
+        if active_lines[index] and re.match(r"^#{1,3}(?: |$)", lines[index]):
             return index
     return len(lines)
 
@@ -114,12 +253,13 @@ def validate_execution_plan(plan_text: Any, registry: Any) -> List[str]:
         return ["registry_input_invalid"]
 
     lines = plan_text.splitlines()
-    heading_index, heading_errors = _section_index(lines)
+    active_lines = _active_markdown_lines(lines)
+    heading_index, heading_errors = _section_index(lines, active_lines)
     if heading_errors:
         return heading_errors
     assert heading_index is not None
 
-    end = _section_end(lines, heading_index + 1)
+    end = _section_end(lines, active_lines, heading_index + 1)
     cursor = heading_index + 1
     while cursor < end and lines[cursor] == "":
         cursor += 1
@@ -138,7 +278,10 @@ def validate_execution_plan(plan_text: Any, registry: Any) -> List[str]:
 
     # No second table fragment may be hidden after prose or a blank line in
     # the governed section.
-    trailing_table_rows = any(line.startswith("|") for line in lines[cursor:end])
+    trailing_table_rows = any(
+        active_lines[index] and lines[index].lstrip(" \t").startswith("|")
+        for index in range(cursor, end)
+    )
     if len(rows) != 3 or trailing_table_rows:
         return ["plan_row_count_mismatch"]
 
@@ -149,13 +292,11 @@ def validate_execution_plan(plan_text: Any, registry: Any) -> List[str]:
             return [row_error]
         assert cells is not None
 
-        links = list(_GITHUB_REPOSITORY_LINK.finditer(row))
+        links = _github_repository_links(row)
         if len(links) != 1:
             return ["plan_repository_link_count_mismatch"]
 
-        links_by_cell = [
-            len(list(_GITHUB_REPOSITORY_LINK.finditer(cell))) for cell in cells
-        ]
+        links_by_cell = [len(_github_repository_links(cell)) for cell in cells]
         if links_by_cell != [0, 1, 0, 0, 0]:
             return ["plan_repository_link_outside_repository_cell"]
         parsed_rows.append(cells)

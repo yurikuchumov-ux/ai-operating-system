@@ -119,6 +119,32 @@ class TestCanonicalRepositoryPlan(unittest.TestCase):
         plan = self._replace_line(self.heading, SECTION_HEADING + " changed")
         self.assertEqual(self._errors(plan), ["plan_section_heading_suffix"])
 
+    def test_section_inside_fenced_code_is_not_markdown_heading(self):
+        lines = self.lines.copy()
+        end = next(
+            index
+            for index in range(self.heading + 1, len(lines))
+            if lines[index].startswith("### ")
+        )
+        lines.insert(end, "```")
+        lines.insert(self.heading, "```markdown")
+        self.assertEqual(
+            self._errors(self._with_lines(lines)), ["plan_section_missing"]
+        )
+
+    def test_section_inside_html_comment_is_not_markdown_heading(self):
+        lines = self.lines.copy()
+        end = next(
+            index
+            for index in range(self.heading + 1, len(lines))
+            if lines[index].startswith("### ")
+        )
+        lines.insert(end, "-->")
+        lines.insert(self.heading, "<!--")
+        self.assertEqual(
+            self._errors(self._with_lines(lines)), ["plan_section_missing"]
+        )
+
     def test_header_variants_fail_exactly(self):
         variants = (
             TABLE_HEADER.replace("Role", "Repository role"),
@@ -164,6 +190,19 @@ class TestCanonicalRepositoryPlan(unittest.TestCase):
         # in the same 3.1 section must not be ignored.
         plan = self._insert_line(self.row_start + 4, self.lines[self.row_start])
         self.assertEqual(self._errors(plan), ["plan_row_count_mismatch"])
+
+    def test_indented_hidden_second_table_fragment_is_extra_row(self):
+        lines = self.lines.copy()
+        insertion = self.row_start + 4
+        fragment = [
+            " " + TABLE_HEADER,
+            " " + TABLE_SEPARATOR,
+            " " + self.lines[self.row_start],
+        ]
+        lines[insertion:insertion] = fragment
+        self.assertEqual(
+            self._errors(self._with_lines(lines)), ["plan_row_count_mismatch"]
+        )
 
     def test_duplicate_and_substituted_role_rows(self):
         cells = self._row_cells(1)
@@ -214,15 +253,21 @@ class TestCanonicalRepositoryPlan(unittest.TestCase):
         )
 
     def test_unbackticked_rogue_links_are_counted_across_complete_row(self):
-        rogue = "[rogue](https://github.com/rogue/repository)"
-        for cell in (1, 4):
-            with self.subTest(cell=cell):
-                cells = self._row_cells(0)
-                cells[cell] += " " + rogue
-                self.assertEqual(
-                    self._errors(self._with_cells(0, cells)),
-                    ["plan_repository_link_count_mismatch"],
-                )
+        rogue_links = (
+            "[rogue](https://github.com/rogue/repository)",
+            r"[ro\]gue](https://github.com/rogue/repository)",
+            '[rogue](https://github.com/rogue/repository "title")',
+            "[outer [nested]](https://github.com/rogue/repository)",
+        )
+        for rogue in rogue_links:
+            for cell in (1, 4):
+                with self.subTest(rogue=rogue, cell=cell):
+                    cells = self._row_cells(0)
+                    cells[cell] += " " + rogue
+                    self.assertEqual(
+                        self._errors(self._with_cells(0, cells)),
+                        ["plan_repository_link_count_mismatch"],
+                    )
 
     def test_repository_link_outside_second_cell(self):
         cells = self._row_cells(0)
