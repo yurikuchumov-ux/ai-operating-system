@@ -1,7 +1,9 @@
 """Validate the governed Section 3.1 repository inventory."""
 
+import html
 import re
 from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import unquote
 
 
 SECTION_HEADING = "### 3.1 Verified names and boundaries"
@@ -12,7 +14,11 @@ _HEADING_VARIANT = re.compile(
     r"^(#{1,6}) 3\.1 Verified names and boundaries(.*)$"
 )
 _GITHUB_REPOSITORY_URL = re.compile(
-    r"^https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"
+    r"https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+"
+    r"(?![A-Za-z0-9_.~/%?#-])"
+)
+_COMMONMARK_ESCAPE = re.compile(
+    r"\\([!\"#$%&'()*+,\-./:;<=>?@\[\]^_`{|}~\\])"
 )
 _REPOSITORY_CELL = re.compile(
     r"^\[`([^`\]\n]+)`\]\("
@@ -30,18 +36,53 @@ def _active_markdown_lines(lines: List[str]) -> List[bool]:
     fence_character: Optional[str] = None
     fence_length = 0
     in_html_comment = False
+    raw_html_tag: Optional[str] = None
+    raw_html_until_blank = False
 
     for line in lines:
+        if raw_html_until_blank:
+            active.append(False)
+            if line.strip() == "":
+                raw_html_until_blank = False
+            continue
+
         if in_html_comment:
             active.append(False)
             if "-->" in line:
                 in_html_comment = False
             continue
 
+        if raw_html_tag is not None:
+            active.append(False)
+            if re.search(rf"</{re.escape(raw_html_tag)}\s*>", line, re.IGNORECASE):
+                raw_html_tag = None
+            continue
+
         if "<!--" in line:
             active.append(False)
             if "-->" not in line.split("<!--", 1)[1]:
                 in_html_comment = True
+            continue
+
+        raw_html = re.match(
+            r"^ {0,3}<(pre|script|style|textarea)(?:[ \t>]|$)",
+            line,
+            re.IGNORECASE,
+        )
+        if raw_html:
+            active.append(False)
+            tag = raw_html.group(1).lower()
+            if not re.search(rf"</{re.escape(tag)}\s*>", line, re.IGNORECASE):
+                raw_html_tag = tag
+            continue
+
+        # CommonMark has several additional raw-HTML block forms that end at
+        # a blank line.  Treat any leading HTML tag/declaration conservatively
+        # as such a block; false negatives are safer than accepting a literal
+        # pseudo-heading as governed Markdown.
+        if re.match(r"^ {0,3}<(?:/?[A-Za-z][^>]*>|\?|![A-Z]|!\[CDATA\[)", line):
+            active.append(False)
+            raw_html_until_blank = True
             continue
 
         fence = re.match(r"^ {0,3}(`{3,}|~{3,})(.*)$", line)
@@ -66,95 +107,29 @@ def _active_markdown_lines(lines: List[str]) -> List[bool]:
     return active
 
 
-def _unescaped_closing(text: str, start: int, closing: str) -> Optional[int]:
-    """Return the next unescaped delimiter, allowing balanced label brackets."""
-    depth = 0
-    index = start
-    while index < len(text):
-        character = text[index]
-        if character == "\\":
-            index += 2
-            continue
-        if closing == "]" and character == "[":
-            depth += 1
-        elif character == closing:
-            if depth == 0:
-                return index
-            depth -= 1
-        index += 1
-    return None
-
-
 def _github_repository_links(text: str) -> List[str]:
-    """Return GitHub repository destinations from Markdown inline links."""
-    links: List[str] = []
-    cursor = 0
-    while cursor < len(text):
-        label_start = text.find("[", cursor)
-        if label_start < 0:
-            break
-        label_end = _unescaped_closing(text, label_start + 1, "]")
-        if (
-            label_end is None
-            or label_end + 1 >= len(text)
-            or text[label_end + 1] != "("
-        ):
-            cursor = label_start + 1
-            continue
+    """Conservatively return every decoded GitHub repository URL.
 
-        index = label_end + 2
-        while index < len(text) and text[index] in " \t":
-            index += 1
+    Every Markdown link or autolink necessarily exposes its destination after
+    CommonMark backslash/entity decoding.  Counting plain occurrences too is
+    intentionally fail-closed: a governed row may contain only its canonical
+    repository URL, regardless of how additional URL text is presented.
+    """
+    decoded = html.unescape(text)
+    decoded = _COMMONMARK_ESCAPE.sub(r"\1", decoded)
+    decoded = unquote(decoded)
+    return [match.group(0) for match in _GITHUB_REPOSITORY_URL.finditer(decoded)]
 
-        if index < len(text) and text[index] == "<":
-            destination_end = _unescaped_closing(text, index + 1, ">")
-            if destination_end is None:
-                cursor = label_start + 1
-                continue
-            destination = text[index + 1 : destination_end]
-            index = destination_end + 1
-        else:
-            destination_start = index
-            parenthesis_depth = 0
-            while index < len(text):
-                character = text[index]
-                if character == "\\":
-                    index += 2
-                    continue
-                if character in " \t":
-                    break
-                if character == "(":
-                    parenthesis_depth += 1
-                elif character == ")":
-                    if parenthesis_depth == 0:
-                        break
-                    parenthesis_depth -= 1
-                index += 1
-            destination = text[destination_start:index]
 
-        while index < len(text) and text[index] in " \t":
-            index += 1
-        if index < len(text) and text[index] in "\"'(":
-            title_open = text[index]
-            title_close = ")" if title_open == "(" else title_open
-            title_end = _unescaped_closing(text, index + 1, title_close)
-            if title_end is None:
-                cursor = label_start + 1
-                continue
-            index = title_end + 1
-            while index < len(text) and text[index] in " \t":
-                index += 1
-
-        if (
-            index < len(text)
-            and text[index] == ")"
-            and _GITHUB_REPOSITORY_URL.fullmatch(destination)
-        ):
-            links.append(destination)
-            cursor = index + 1
-        else:
-            cursor = label_start + 1
-    return links
+def _looks_like_table_line(line: str) -> bool:
+    """Recognize table lines after Markdown container prefixes."""
+    candidate = line.lstrip(" \t")
+    while candidate.startswith(">"):
+        candidate = candidate[1:].lstrip(" \t")
+    list_item = re.match(r"^(?:[-+*]|\d+[.)])[ \t]+", candidate)
+    if list_item:
+        candidate = candidate[list_item.end() :].lstrip(" \t")
+    return candidate.startswith("|")
 
 
 def _registry_by_label(
@@ -279,7 +254,7 @@ def validate_execution_plan(plan_text: Any, registry: Any) -> List[str]:
     # No second table fragment may be hidden after prose or a blank line in
     # the governed section.
     trailing_table_rows = any(
-        active_lines[index] and lines[index].lstrip(" \t").startswith("|")
+        active_lines[index] and _looks_like_table_line(lines[index])
         for index in range(cursor, end)
     )
     if len(rows) != 3 or trailing_table_rows:

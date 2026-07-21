@@ -145,6 +145,31 @@ class TestCanonicalRepositoryPlan(unittest.TestCase):
             self._errors(self._with_lines(lines)), ["plan_section_missing"]
         )
 
+    def test_section_inside_raw_html_block_is_not_markdown_heading(self):
+        for tag in (
+            "pre",
+            "script",
+            "style",
+            "textarea",
+            "div",
+            "section",
+            "table",
+            "custom-element",
+        ):
+            with self.subTest(tag=tag):
+                lines = self.lines.copy()
+                end = next(
+                    index
+                    for index in range(self.heading + 1, len(lines))
+                    if lines[index].startswith("### ")
+                )
+                lines.insert(end, f"</{tag}>")
+                lines.insert(self.heading, f"<{tag}>")
+                self.assertEqual(
+                    self._errors(self._with_lines(lines)),
+                    ["plan_section_missing"],
+                )
+
     def test_header_variants_fail_exactly(self):
         variants = (
             TABLE_HEADER.replace("Role", "Repository role"),
@@ -198,6 +223,19 @@ class TestCanonicalRepositoryPlan(unittest.TestCase):
             " " + TABLE_HEADER,
             " " + TABLE_SEPARATOR,
             " " + self.lines[self.row_start],
+        ]
+        lines[insertion:insertion] = fragment
+        self.assertEqual(
+            self._errors(self._with_lines(lines)), ["plan_row_count_mismatch"]
+        )
+
+    def test_blockquoted_hidden_second_table_fragment_is_extra_row(self):
+        lines = self.lines.copy()
+        insertion = self.row_start + 4
+        fragment = [
+            "> " + TABLE_HEADER,
+            "> " + TABLE_SEPARATOR,
+            "> " + self.lines[self.row_start],
         ]
         lines[insertion:insertion] = fragment
         self.assertEqual(
@@ -258,6 +296,9 @@ class TestCanonicalRepositoryPlan(unittest.TestCase):
             r"[ro\]gue](https://github.com/rogue/repository)",
             '[rogue](https://github.com/rogue/repository "title")',
             "[outer [nested]](https://github.com/rogue/repository)",
+            r"[rogue](https://github.com/rogue/reposito\-ry)",
+            "[rogue](https://github.com/rogue/reposit&#x6f;ry)",
+            "<https://github.com/rogue/repository>",
         )
         for rogue in rogue_links:
             for cell in (1, 4):
