@@ -54,6 +54,34 @@ class TestCanonicalRepositoryContract(unittest.TestCase):
         registry["canonical_repositories"][2]["visibility"] = "public"
         self.assertEqual(validate_registry(registry, self.canonical_schema), ["schema_validation_failed"])
 
+    def test_empty_owner_fails_closed(self):
+        """An empty owner cannot bypass canonical identity validation."""
+        registry = copy.deepcopy(self.canonical_registry)
+        registry["canonical_repositories"][0]["owner"] = ""
+        self.assertEqual(validate_registry(registry, self.canonical_schema), ["schema_validation_failed"])
+
+    def test_empty_name_fails_closed(self):
+        """An empty repository name cannot bypass canonical identity validation."""
+        registry = copy.deepcopy(self.canonical_registry)
+        registry["canonical_repositories"][0]["name"] = ""
+        self.assertEqual(validate_registry(registry, self.canonical_schema), ["schema_validation_failed"])
+
+    def test_empty_full_name_fails_closed(self):
+        """An empty full_name cannot bypass owner/name relation validation."""
+        registry = copy.deepcopy(self.canonical_registry)
+        registry["canonical_repositories"][0]["full_name"] = ""
+        self.assertEqual(validate_registry(registry, self.canonical_schema), ["schema_validation_failed"])
+
+    def test_empty_identity_with_arbitrary_valid_uri_fails_closed(self):
+        """Falsey identity values remain invalid even with a syntactically valid URI."""
+        registry = copy.deepcopy(self.canonical_registry)
+        entry = registry["canonical_repositories"][0]
+        entry["owner"] = ""
+        entry["name"] = ""
+        entry["full_name"] = ""
+        entry["url"] = "https://example.com/x"
+        self.assertEqual(validate_registry(registry, self.canonical_schema), ["schema_validation_failed"])
+
     def test_exact_top_level_keys_required(self):
         """Test that exact top-level keys are required."""
         # Missing schema_version

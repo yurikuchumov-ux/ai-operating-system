@@ -38,13 +38,16 @@
             "type": "string"
           },
           "owner": {
-            "type": "string"
+            "type": "string",
+            "minLength": 1
           },
           "name": {
-            "type": "string"
+            "type": "string",
+            "minLength": 1
           },
           "full_name": {
-            "type": "string"
+            "type": "string",
+            "minLength": 1
           },
           "url": {
             "type": "string",

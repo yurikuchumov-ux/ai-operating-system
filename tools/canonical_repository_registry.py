@@ -114,35 +114,32 @@ def validate_registry(registry, schema) -> List[str]:
         url = entry.get("url")
 
         # Check for unknown owner
-        if owner and owner not in CANONICAL_OWNERS:
+        if owner not in CANONICAL_OWNERS:
             if "canonical_owner_unknown" not in errors:
                 errors.append("canonical_owner_unknown")
 
         # Check for unknown repository name
-        if name and name not in CANONICAL_NAMES:
+        if name not in CANONICAL_NAMES:
             if "canonical_repository_unknown" not in errors:
                 errors.append("canonical_repository_unknown")
 
         # Check for role mismatch
-        if owner and name:
-            expected_role = CANONICAL_REPOS.get((owner, name))
-            if expected_role and role != expected_role:
-                if "canonical_repository_role_mismatch" not in errors:
-                    errors.append("canonical_repository_role_mismatch")
+        expected_role = CANONICAL_REPOS.get((owner, name))
+        if expected_role and role != expected_role:
+            if "canonical_repository_role_mismatch" not in errors:
+                errors.append("canonical_repository_role_mismatch")
 
         # Check full_name matches owner/name
-        if owner and name and full_name:
-            expected_full_name = f"{owner}/{name}"
-            if full_name != expected_full_name:
-                if "full_name_mismatch" not in errors:
-                    errors.append("full_name_mismatch")
+        expected_full_name = f"{owner}/{name}"
+        if full_name != expected_full_name:
+            if "full_name_mismatch" not in errors:
+                errors.append("full_name_mismatch")
 
         # Check url matches expected format
-        if owner and name and url:
-            expected_url = f"https://github.com/{owner}/{name}"
-            if url != expected_url:
-                if "url_mismatch" not in errors:
-                    errors.append("url_mismatch")
+        expected_url = f"https://github.com/{owner}/{name}"
+        if url != expected_url:
+            if "url_mismatch" not in errors:
+                errors.append("url_mismatch")
 
         # Check for duplicate role
         if role:
