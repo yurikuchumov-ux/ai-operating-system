@@ -26,6 +26,9 @@ import base64
 import hashlib
 import json
 import re
+import shutil
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -1503,9 +1506,11 @@ class ImmutableVerifierBootstrapTests(unittest.TestCase):
     def test_snapshot_verifies_hash_before_use(self) -> None:
         text = WORKFLOW_PATH.read_text(encoding="utf-8")
         self.assertIn("Verify immutable snapshot integrity before postconditions", text)
-        self.assertIn('test -f /tmp/p0-immutable-control/tools/p0_actions_adapter.py', text)
-        self.assertIn('adapter_hash="$(shasum -a 256 /tmp/p0-immutable-control/tools/p0_actions_adapter.py', text)
-        self.assertIn('test "$adapter_hash" = "$EXPECTED_ADAPTER_SHA256"', text)
+        self.assertIn("control_bundle_sha256", text)
+        self.assertIn("EXPECTED_CONTROL_BUNDLE_SHA256", text)
+        self.assertIn("admission bundle hash mismatch", text)
+        self.assertIn("file-set mismatch", text)
+        self.assertIn("path substitution", text)
         self.assertIn('immutable_snapshot_integrity_failed', text)
 
     def test_postconditions_import_from_snapshot_not_workspace(self) -> None:
@@ -1546,7 +1551,10 @@ class ImmutableVerifierBootstrapTests(unittest.TestCase):
         required_files = [
             "tools/p0_actions_adapter.py",
             "tools/propagate_b3.py",
+            "tools/finalize_b1.py",
+            "tools/verify_b2.py",
             "contracts/registries/commands.v1.json",
+            "contracts/registries/predicates.v1.json",
             "contracts/schemas/task.v1.schema.json",
             "contracts/schemas/result.v1.schema.json",
             "contracts/schemas/verification.v1.schema.json",
@@ -1605,12 +1613,77 @@ class ImmutableVerifierBootstrapTests(unittest.TestCase):
     def test_snapshot_hash_mismatch_fails_before_import(self) -> None:
         """Hash mismatch causes immediate failure before any trusted import."""
         text = WORKFLOW_PATH.read_text(encoding="utf-8")
-        self.assertIn("immutable snapshot adapter hash mismatch", text)
+        self.assertIn("immutable snapshot bundle hash mismatch", text)
         self.assertIn("immutable_snapshot_integrity_failed", text)
         # Verification happens in separate step before postconditions
         verification_step = text.split("Verify immutable snapshot integrity before postconditions", 1)[1].split("Enforce scope, run registered argv", 1)[0]
-        self.assertIn('test "$adapter_hash" = "$EXPECTED_ADAPTER_SHA256" || snapshot_integrity_failed=true', verification_step)
-        self.assertIn('if [ "$snapshot_integrity_failed" = true ]', verification_step)
+        self.assertIn("EXPECTED_CONTROL_BUNDLE_SHA256", verification_step)
+        self.assertIn("snapshot_manifest.get('bundle_sha256')", verification_step)
+        self.assertIn("raise SystemExit(1)", verification_step)
+
+    def test_admission_binds_every_trusted_bundle_byte(self) -> None:
+        text = WORKFLOW_PATH.read_text(encoding="utf-8")
+        admission = text.split("Validate immutable task and bind exact inputs", 1)[1].split("  execute:", 1)[0]
+        self.assertIn("control_bundle_sha256", admission)
+        self.assertIn("bundle_hash.update(rel_path.encode", admission)
+        for rel_path in (
+            "tools/p0_actions_adapter.py",
+            "tools/propagate_b3.py",
+            "tools/finalize_b1.py",
+            "tools/verify_b2.py",
+            "contracts/registries/commands.v1.json",
+            "contracts/registries/predicates.v1.json",
+            "contracts/schemas/task.v1.schema.json",
+            "contracts/schemas/result.v1.schema.json",
+            "contracts/schemas/verification.v1.schema.json",
+            "contracts/schemas/review-attestation.v1.schema.json",
+        ):
+            self.assertIn(rel_path, admission)
+
+    def test_candidate_adapter_mutation_cannot_shadow_trusted_bundle(self) -> None:
+        """Execute the trusted resolver from a candidate cwd whose adapter
+        raises immediately. The registered argv must still resolve from the
+        copied immutable bundle, proving candidate imports cannot shadow it."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            trusted = root / "trusted"
+            candidate = root / "candidate"
+            for rel_path in (
+                "tools/p0_actions_adapter.py",
+                "tools/propagate_b3.py",
+                "tools/finalize_b1.py",
+                "tools/verify_b2.py",
+                "contracts/registries/commands.v1.json",
+                "contracts/registries/predicates.v1.json",
+                "contracts/schemas/task.v1.schema.json",
+                "contracts/schemas/result.v1.schema.json",
+                "contracts/schemas/verification.v1.schema.json",
+                "contracts/schemas/review-attestation.v1.schema.json",
+            ):
+                source = REPO_ROOT / rel_path
+                destination = trusted / rel_path
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(source, destination)
+            malicious = candidate / "tools/p0_actions_adapter.py"
+            malicious.parent.mkdir(parents=True, exist_ok=True)
+            malicious.write_text("raise SystemExit('candidate adapter imported')\n", encoding="utf-8")
+            run = subprocess.run(
+                [
+                    sys.executable,
+                    str(trusted / "tools/p0_actions_adapter.py"),
+                    "resolve-check",
+                    "--command-id",
+                    "repo.contracts.b3.tests",
+                ],
+                cwd=candidate,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                timeout=30,
+            )
+            self.assertEqual(0, run.returncode, run.stdout)
+            self.assertIn("test_b3_*.py", run.stdout)
+            self.assertNotIn("candidate adapter imported", run.stdout)
 
     def test_no_workspace_imports_after_target_checkout_in_trusted_code(self) -> None:
         """After switching to the target branch, no trusted verification code
