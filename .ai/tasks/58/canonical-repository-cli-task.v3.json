@@ -1,0 +1,266 @@
+{
+  "schema_version": "1.0.0",
+  "task_id": "yurikuchumov-ux/ai-operating-system#58",
+  "repository": "yurikuchumov-ux/ai-operating-system",
+  "issue_number": 58,
+  "objective": "Final corrective attempt 3/3 for the B4-C fail-closed CLI. Preserve the attempt-2 production behavior and passing regressions, but replace the impossible subprocess-local mocking pattern with an in-process harness for deterministic fault injection. Claude Code OAuth Actions only; no paid API fallback.",
+  "change_policy": {
+    "change_required": true,
+    "policy_exception_id": null,
+    "no_change": {
+      "allowed": false,
+      "reason_codes": [],
+      "required_evidence_types": []
+    }
+  },
+  "base_ref": "main",
+  "base_sha": "d4f10b714de3afae84d48dfcd3daa6405092a973",
+  "branch": "agent/issue-58-canonical-repository-cli-v3",
+  "allowed_paths": [
+    "tools/validate_canonical_repositories.py",
+    "tests/test_b3_canonical_repository_cli.py"
+  ],
+  "denied_paths": [
+    ".ai/**",
+    ".github/**",
+    "AI_OS.md",
+    "README.md",
+    "CHANGELOG.md",
+    "contracts/**",
+    "docs/**",
+    "fixtures/**",
+    "requirements-*.txt",
+    "standards/**",
+    "templates/**",
+    "tools/canonical_repository_registry.py",
+    "tools/canonical_repository_plan.py",
+    "tools/p0_actions_adapter.py",
+    "tools/validate_b0.py",
+    "tools/verify_b2.py",
+    "tests/test_b3_canonical_repository_contract.py",
+    "tests/test_b3_canonical_repository_plan.py",
+    "tests/test_b3_p0_actions_adapter.py",
+    "tests/test_b3_terminal_propagation.py"
+  ],
+  "risk_class": "L2",
+  "executor": {
+    "adapter": "human-supervised-claude-code",
+    "version": "claude-code-oauth-actions-issue-58-cli-v3-final-corrective",
+    "max_attempts": 3,
+    "timeout_seconds": 1800
+  },
+  "acceptance_criteria": [
+    {
+      "id": "AC-CANONICAL-REPOSITORY-CLI-V3",
+      "predicate_id": "process.exit_code.equals",
+      "parameters": {
+        "component": "issue-58-canonical-repository-cli-v3",
+        "value": 0,
+        "trusted_evidence_source": "workflow_observed_process_exit_code",
+        "forbidden_sources": [
+          "executor_self_report",
+          "actions_job_conclusion"
+        ],
+        "specification": {
+          "attempt_lineage": {
+            "attempt_1": {
+              "task_commit": "f0fe4234516b45ce63d8f458f0ea7549be0b3ff2",
+              "run_id": 29917424468,
+              "result": "required_check_failed",
+              "target_branch_published": false,
+              "registered_suite": "Ran 373 tests; 2 failures",
+              "material_failures": [
+                "default argparse emitted stderr for a missing value",
+                "direct-script execution lacked repository-root sys.path bootstrap",
+                "the repeated-option regression was a pass placeholder and production accepted the last value"
+              ]
+            },
+            "attempt_2": {
+              "task_commit": "a5447f898a7ccb293c37ea9d6f39763e3be24e03",
+              "run_id": 29917988601,
+              "result": "required_check_failed",
+              "target_branch_published": false,
+              "observed_changed_paths": [
+                "tests/test_b3_canonical_repository_cli.py",
+                "tools/validate_canonical_repositories.py"
+              ],
+              "registered_suite": "Ran 371 tests; 6 failures",
+              "working_corrections": [
+                "direct script from repository root and a different cwd returned exact success with empty stderr",
+                "missing option values returned exact cli_argument_invalid JSON with exit 2 and empty stderr",
+                "space, equals and mixed-form repeated options were rejected by real production execution",
+                "all ordinary success, override, file-content and validation-composition subprocess tests passed"
+              ],
+              "material_failure": "All six failures were tests that patched Path.read_bytes, builtins.__import__, validate_registry or validate_execution_plan in the unittest process and then called a helper implemented exclusively with subprocess.run. Those patches cannot cross an exec boundary, so unmodified production ran and returned success. The failure is the test harness, not evidence of a production defect."
+            },
+            "attempt_3_policy": "Preserve the working attempt-2 production algorithm and all passing subprocess regressions. Correct only the six impossible fault-injection tests by adding a genuine in-process harness that imports the exact production file and calls main(argv) while capturing stdout and stderr. No blind redesign."
+          },
+          "implementation_scope": {
+            "both_allowed_paths_are_absent_on_protected_base_and_must_be_created": true,
+            "production_path": "tools/validate_canonical_repositories.py",
+            "test_path": "tests/test_b3_canonical_repository_cli.py",
+            "existing_registry_and_plan_validators_must_only_be_imported_and_called": true,
+            "duplicating_or_editing_existing_validator_logic": false,
+            "all_other_repository_paths_forbidden": true
+          },
+          "production_contract": {
+            "preserve_attempt_2_behavior": true,
+            "public_entrypoint": "main(argv=None) returns an integer process exit code",
+            "direct_invocation": "python3 tools/validate_canonical_repositories.py",
+            "repo_root_bootstrap": "insert Path(__file__).resolve().parents[1] into sys.path before importing tools modules",
+            "defaults": {
+              "registry": "contracts/canonical-repositories.v1.json",
+              "schema": "contracts/schemas/canonical-repositories.v1.schema.json",
+              "plan": "docs/AI_DEVELOPMENT_STUDIO_EXECUTION_PLAN.md"
+            },
+            "arguments": {
+              "only": [
+                "--registry PATH",
+                "--schema PATH",
+                "--plan PATH"
+              ],
+              "invalid": [
+                "positional arguments",
+                "unknown options",
+                "abbreviated options",
+                "a missing or empty option value",
+                "any repeated named option, including mixed --name PATH and --name=PATH forms"
+              ],
+              "invalid_result": {
+                "exit_code": 2,
+                "errors": [
+                  "cli_argument_invalid"
+                ],
+                "stderr": "empty"
+              }
+            },
+            "validation_order": [
+              "parse arguments",
+              "load registry as strict UTF-8 JSON",
+              "load schema as strict UTF-8 JSON",
+              "call tools.canonical_repository_registry.validate_registry(registry, schema)",
+              "only after registry success load plan as strict UTF-8 text",
+              "call tools.canonical_repository_plan.validate_execution_plan(plan_text, registry)",
+              "emit exactly one result"
+            ],
+            "output": {
+              "success_exact": "{\"errors\":[],\"valid\":true}\n",
+              "failure": "one compact JSON object with exactly errors and valid, non-empty sorted unique errors, valid false and one trailing newline",
+              "stderr": "empty on every path"
+            },
+            "exit_codes": {
+              "success": 0,
+              "input_dependency_validation_or_internal_failure": 1,
+              "argument_failure": 2
+            },
+            "file_failure_codes": {
+              "registry": [
+                "registry_file_missing",
+                "registry_file_unreadable",
+                "registry_file_is_directory",
+                "registry_file_unicode_invalid",
+                "registry_json_invalid"
+              ],
+              "schema": [
+                "schema_file_missing",
+                "schema_file_unreadable",
+                "schema_file_is_directory",
+                "schema_file_unicode_invalid",
+                "schema_json_invalid"
+              ],
+              "plan": [
+                "plan_file_missing",
+                "plan_file_unreadable",
+                "plan_file_is_directory",
+                "plan_file_unicode_invalid"
+              ]
+            },
+            "validator_results": "preserve merged validator codes after sorted unique normalization, including jsonschema_dependency_missing, schema_definition_invalid and schema_validation_failed",
+            "unexpected_exception": {
+              "exit_code": 1,
+              "errors": [
+                "cli_internal_error"
+              ],
+              "stderr": "empty",
+              "traceback_forbidden": true
+            }
+          },
+          "mandatory_tests": {
+            "framework": "stdlib unittest.TestCase only",
+            "two_harnesses_required": {
+              "subprocess_harness": "Use sys.executable and the absolute production script path for real process-boundary regressions: defaults from repository root and another cwd; complete argument matrix; overrides; normal file and validator composition cases. Assert exact exit, stdout and empty stderr.",
+              "in_process_harness": "Load the exact production file with importlib.util.spec_from_file_location under a unique non-conflicting module name, execute the module, call its main(argv) directly, and capture stdout and stderr with contextlib.redirect_stdout and redirect_stderr. Use this harness only for deterministic patched fault injection. Restore sys.path/module state and mocks after each test."
+            },
+            "fault_injection_must_be_real": [
+              "Patch pathlib.Path.read_bytes in the same process in which production main executes; inject PermissionError for registry and plan and OSError for schema; assert the exact unreadable code, exit 1, one JSON document and empty stderr.",
+              "Patch builtins.__import__ in the same process in which production validate_registry lazily imports jsonschema; assert jsonschema_dependency_missing, exit 1 and empty stderr.",
+              "Patch tools.canonical_repository_registry.validate_registry before production main imports it; raise RuntimeError; assert cli_internal_error, exit 1 and empty stderr.",
+              "Patch tools.canonical_repository_plan.validate_execution_plan before production main imports it; raise RuntimeError; assert cli_internal_error, exit 1 and empty stderr."
+            ],
+            "forbidden_test_patterns": [
+              "expecting a unittest.mock.patch in the parent test process to affect a subprocess created with subprocess.run",
+              "pass placeholders",
+              "chmod-only unreadable tests",
+              "generic any-error assertions",
+              "pytest or new dependencies"
+            ],
+            "argument_matrix": "include positional, unknown, abbreviated, missing value, empty equals value, and repeated space/equals/mixed forms; execute real production code and assert exact JSON plus empty stderr",
+            "override_matrix": "each named override independently and all together succeed with canonical temporary copies",
+            "composition": "malformed plan, invalid schema definition, schema-invalid registry and lazy-jsonschema absence reach their exact codes",
+            "output_for_every_case": "exactly one parseable compact JSON document, exactly one trailing newline and empty stderr"
+          },
+          "security_and_delivery": {
+            "production_subprocess_network_environment_secret_file_write_git_github_calls_forbidden": true,
+            "workflow_dependency_contract_registry_plan_documentation_and_product_changes_forbidden": true,
+            "commonmark_or_gfm_scope_forbidden": true,
+            "paid_api_fallback_forbidden": true,
+            "draft_pr_only": true,
+            "automatic_merge_forbidden": true
+          },
+          "coordinator_postconditions": {
+            "changed_paths_equal_allowed_paths": true,
+            "git_diff_check_required": true,
+            "direct_cli_suite_required": true,
+            "all_canonical_repository_tests_required": true,
+            "registered_b3_suite_required": true,
+            "full_repository_suite_required": true,
+            "fresh_independent_exact_sha_pro_maximum_review_required": true,
+            "verify_only_replay_and_p0_actions_verifier_success_required": true
+          }
+        }
+      },
+      "required": true,
+      "linked_checks": [
+        "issue-58-canonical-repository-cli-v3-tests"
+      ]
+    }
+  ],
+  "required_checks": [
+    {
+      "id": "issue-58-canonical-repository-cli-v3-tests",
+      "command_id": "repo.contracts.b3.tests",
+      "required": true,
+      "expected_postconditions": [
+        {
+          "predicate_id": "process.exit_code.equals",
+          "parameters": {
+            "value": 0
+          }
+        }
+      ]
+    }
+  ],
+  "review_policy": {
+    "reviewer_class": "independent-engineering",
+    "policy_id": "review-independence.v1",
+    "forbidden_lineage_overlaps": [
+      "agent_runtime_id",
+      "credential_principal",
+      "authored_commits"
+    ],
+    "minimum_distinct_human_operators": 1
+  },
+  "external_side_effects": "owner_approved",
+  "created_by": "github:yurykuchumov-ux/codex-control-plane",
+  "created_at": "2026-07-22T12:07:05Z"
+}
