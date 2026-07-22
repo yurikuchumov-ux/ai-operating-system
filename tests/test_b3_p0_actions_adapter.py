@@ -23,6 +23,7 @@ Coverage maps to the task's acceptance criteria:
 from __future__ import annotations
 
 import base64
+import ast
 import hashlib
 import json
 import re
@@ -1497,6 +1498,16 @@ class ImmutableVerifierBootstrapTests(unittest.TestCase):
     from the exact immutable protected-default base, not the candidate
     checkout."""
 
+    def _assert_exact_snapshot_loader(self, section: str) -> None:
+        self.assertIn("importlib.util.spec_from_file_location(", section)
+        self.assertIn(
+            "'tools.p0_actions_adapter', trusted_root / 'tools/p0_actions_adapter.py'",
+            section,
+        )
+        self.assertIn("adapter_spec.loader.exec_module(adapter)", section)
+        self.assertIn("trusted adapter exact-path mismatch", section)
+        self.assertIn("trusted tools package exact-path mismatch", section)
+
     def test_workflow_creates_immutable_snapshot_before_executor(self) -> None:
         text = WORKFLOW_PATH.read_text(encoding="utf-8")
         self.assertIn("Create immutable control snapshot before executor or target checkout", text)
@@ -1517,8 +1528,7 @@ class ImmutableVerifierBootstrapTests(unittest.TestCase):
     def test_postconditions_import_from_snapshot_not_workspace(self) -> None:
         text = WORKFLOW_PATH.read_text(encoding="utf-8")
         postcondition_section = text.split("Enforce scope, run registered argv", 1)[1].split("Upload executor evidence", 1)[0]
-        self.assertIn("sys.path.insert(0, '/tmp/p0-immutable-control')", postcondition_section)
-        self.assertIn("from tools import p0_actions_adapter as adapter", postcondition_section)
+        self._assert_exact_snapshot_loader(postcondition_section)
         # Must not import from workspace after subject checkout
         self.assertNotIn("sys.path.insert(0, '.')", postcondition_section)
 
@@ -1538,30 +1548,31 @@ class ImmutableVerifierBootstrapTests(unittest.TestCase):
         text = WORKFLOW_PATH.read_text(encoding="utf-8")
         publisher_section = text.split("publish-target:", 1)[1].split("finalize-and-verify:", 1)[0]
         self.assertIn("Create immutable control snapshot before publisher verification", publisher_section)
-        self.assertIn("sys.path.insert(0, '/tmp/p0-immutable-control')", publisher_section)
+        self._assert_exact_snapshot_loader(publisher_section)
 
     def test_finalize_uses_snapshot_adapter_not_workspace(self) -> None:
         text = WORKFLOW_PATH.read_text(encoding="utf-8")
         finalize_section = text.split("Finalize schema documents from trusted signal", 1)[1].split("Upload stable result", 1)[0]
-        self.assertIn("python3 /tmp/p0-immutable-control/tools/p0_actions_adapter.py finalize", finalize_section)
-        # Must not use workspace adapter
+        self._assert_exact_snapshot_loader(finalize_section)
+        self.assertIn("raise SystemExit(adapter.main([", finalize_section)
         self.assertNotIn("python3 tools/p0_actions_adapter.py finalize", finalize_section)
+        self.assertNotIn("python3 /tmp/p0-immutable-control/tools/p0_actions_adapter.py finalize", finalize_section)
 
     def test_independent_required_check_uses_snapshot_registry(self) -> None:
         text = WORKFLOW_PATH.read_text(encoding="utf-8")
         independent_check = text.split("Independently run registry argv on exact subject", 1)[1].split("Assemble trusted signal", 1)[0]
-        self.assertIn("sys.path.insert(0, '/tmp/p0-immutable-control')", independent_check)
-        self.assertIn("from tools import p0_actions_adapter as adapter", independent_check)
+        self._assert_exact_snapshot_loader(independent_check)
 
     def test_trusted_signal_assembly_uses_snapshot_adapter(self) -> None:
         text = WORKFLOW_PATH.read_text(encoding="utf-8")
         signal_assembly = text.split("Assemble trusted signal only from observed files", 1)[1].split("Finalize schema documents", 1)[0]
-        self.assertIn("sys.path.insert(0, '/tmp/p0-immutable-control')", signal_assembly)
+        self._assert_exact_snapshot_loader(signal_assembly)
 
     def test_snapshot_includes_all_required_files(self) -> None:
         text = WORKFLOW_PATH.read_text(encoding="utf-8")
         snapshot_section = text.split("Create immutable control snapshot before executor", 1)[1].split("Create exact target branch", 1)[0]
         required_files = [
+            "tools/__init__.py",
             "tools/p0_actions_adapter.py",
             "tools/propagate_b3.py",
             "tools/finalize_b1.py",
@@ -1574,7 +1585,10 @@ class ImmutableVerifierBootstrapTests(unittest.TestCase):
             "contracts/schemas/review-attestation.v1.schema.json",
         ]
         for file_path in required_files:
-            self.assertIn(f"cp {file_path} /tmp/p0-immutable-control/{file_path}", snapshot_section)
+            if file_path == "tools/__init__.py":
+                self.assertIn(": > /tmp/p0-immutable-control/tools/__init__.py", snapshot_section)
+            else:
+                self.assertIn(f"cp {file_path} /tmp/p0-immutable-control/{file_path}", snapshot_section)
 
     def test_candidate_registered_command_runs_on_candidate_checkout(self) -> None:
         """The candidate registered check runs in the workspace (cwd='.'),
@@ -1587,19 +1601,19 @@ class ImmutableVerifierBootstrapTests(unittest.TestCase):
     def test_prepare_step_uses_snapshot_for_task_parsing(self) -> None:
         text = WORKFLOW_PATH.read_text(encoding="utf-8")
         prepare_section = text.split("Create exact target branch and materialize bounded control inputs", 1)[1].split("Assert provider-owned transient", 1)[0]
-        self.assertIn("sys.path.insert(0, '/tmp/p0-immutable-control')", prepare_section)
+        self._assert_exact_snapshot_loader(prepare_section)
 
     def test_validation_imports_use_snapshot_not_workspace(self) -> None:
         text = WORKFLOW_PATH.read_text(encoding="utf-8")
         # Re-fetch immutable task validation
         refetch = text.split("Re-fetch immutable task from exact commit", 1)[1].split("Fetch review bytes", 1)[0]
-        self.assertIn("sys.path.insert(0, '/tmp/p0-immutable-control')", refetch)
+        self._assert_exact_snapshot_loader(refetch)
         # Review validation
         review_fetch = text.split("Fetch review bytes from exact immutable review commit", 1)[1].split("Observe exact target", 1)[0]
-        self.assertIn("sys.path.insert(0, '/tmp/p0-immutable-control')", review_fetch)
+        self._assert_exact_snapshot_loader(review_fetch)
         # Target branch validation
         observe = text.split("Observe exact target/default refs", 1)[1].split("Independently run registry", 1)[0]
-        self.assertIn("sys.path.insert(0, '/tmp/p0-immutable-control')", observe)
+        self._assert_exact_snapshot_loader(observe)
 
     def test_snapshot_created_from_base_before_subject_checkout(self) -> None:
         """The snapshot is created at the exact base SHA before switching to
@@ -1640,6 +1654,7 @@ class ImmutableVerifierBootstrapTests(unittest.TestCase):
         self.assertIn("control_bundle_sha256", admission)
         self.assertIn("bundle_hash.update(rel_path.encode", admission)
         for rel_path in (
+            "tools/__init__.py",
             "tools/p0_actions_adapter.py",
             "tools/propagate_b3.py",
             "tools/finalize_b1.py",
@@ -1662,6 +1677,7 @@ class ImmutableVerifierBootstrapTests(unittest.TestCase):
             trusted = root / "trusted"
             candidate = root / "candidate"
             for rel_path in (
+                "tools/__init__.py",
                 "tools/p0_actions_adapter.py",
                 "tools/propagate_b3.py",
                 "tools/finalize_b1.py",
@@ -1673,20 +1689,47 @@ class ImmutableVerifierBootstrapTests(unittest.TestCase):
                 "contracts/schemas/verification.v1.schema.json",
                 "contracts/schemas/review-attestation.v1.schema.json",
             ):
-                source = REPO_ROOT / rel_path
                 destination = trusted / rel_path
                 destination.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copyfile(source, destination)
+                if rel_path == "tools/__init__.py":
+                    destination.write_bytes(b"")
+                else:
+                    shutil.copyfile(REPO_ROOT / rel_path, destination)
             malicious = candidate / "tools/p0_actions_adapter.py"
             malicious.parent.mkdir(parents=True, exist_ok=True)
             malicious.write_text("raise SystemExit('candidate adapter imported')\n", encoding="utf-8")
+            (candidate / "tools/__init__.py").write_text(
+                "raise SystemExit('candidate tools package imported')\n", encoding="utf-8"
+            )
+            (candidate / "tools.py").write_text(
+                "raise SystemExit('candidate tools module imported')\n", encoding="utf-8"
+            )
+            exact_loader = """
+import importlib.util
+import pathlib
+import sys
+trusted_root = pathlib.Path(sys.argv[1]).resolve()
+sys.path.insert(0, str(trusted_root))
+spec = importlib.util.spec_from_file_location(
+    'tools.p0_actions_adapter', trusted_root / 'tools/p0_actions_adapter.py')
+if spec is None or spec.loader is None:
+    raise SystemExit('trusted adapter exact-path loader unavailable')
+adapter = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = adapter
+spec.loader.exec_module(adapter)
+if pathlib.Path(adapter.__file__).resolve() != trusted_root / 'tools/p0_actions_adapter.py':
+    raise SystemExit('trusted adapter exact-path mismatch')
+if pathlib.Path(sys.modules['tools'].__file__).resolve() != trusted_root / 'tools/__init__.py':
+    raise SystemExit('trusted tools package exact-path mismatch')
+raise SystemExit(adapter.main([
+    'resolve-check', '--command-id', 'repo.contracts.b3.tests']))
+"""
             run = subprocess.run(
                 [
                     sys.executable,
-                    str(trusted / "tools/p0_actions_adapter.py"),
-                    "resolve-check",
-                    "--command-id",
-                    "repo.contracts.b3.tests",
+                    "-c",
+                    exact_loader,
+                    str(trusted),
                 ],
                 cwd=candidate,
                 text=True,
@@ -1697,6 +1740,34 @@ class ImmutableVerifierBootstrapTests(unittest.TestCase):
             self.assertEqual(0, run.returncode, run.stdout)
             self.assertIn("test_b3_*.py", run.stdout)
             self.assertNotIn("candidate adapter imported", run.stdout)
+            self.assertNotIn("candidate tools package imported", run.stdout)
+            self.assertNotIn("candidate tools module imported", run.stdout)
+
+    def test_trusted_tools_is_regular_root_owned_package(self) -> None:
+        text = WORKFLOW_PATH.read_text(encoding="utf-8")
+        self.assertEqual(3, text.count(": > /tmp/p0-immutable-control/tools/__init__.py"))
+        self.assertEqual(3, text.count("sudo chown -R root:root /tmp/p0-immutable-control"))
+        self.assertEqual(3, text.count("sudo chmod -R a-w /tmp/p0-immutable-control"))
+        self.assertIn("trusted tools package exact-path mismatch", text)
+        self.assertIn("trusted adapter exact-path mismatch", text)
+
+    def test_adapter_hash_is_checked_before_every_post_snapshot_boundary(self) -> None:
+        text = WORKFLOW_PATH.read_text(encoding="utf-8")
+        boundary_check = (
+            "test \"$(shasum -a 256 /tmp/p0-immutable-control/tools/"
+            "p0_actions_adapter.py | awk '{print $1}')\" = \"$P0_EXPECTED_ADAPTER_SHA256\""
+        )
+        self.assertGreaterEqual(text.count(boundary_check), 9)
+        self.assertEqual(3, text.count("P0_EXPECTED_ADAPTER_SHA256: ${{ needs.admission.outputs.adapter_sha256 }}"))
+
+    def test_missing_subject_never_runs_required_command_on_base(self) -> None:
+        text = WORKFLOW_PATH.read_text(encoding="utf-8")
+        independent = text.split("Independently run registry argv on exact subject", 1)[1].split(
+            "Assemble trusted signal", 1
+        )[0]
+        self.assertIn("if not os.environ.get('SUBJECT_SHA')", independent)
+        self.assertIn("workflow_observed_missing_subject", independent)
+        self.assertIn("'exit_code': 125", independent)
 
     def test_no_workspace_imports_after_target_checkout_in_trusted_code(self) -> None:
         """After switching to the target branch, no trusted verification code
@@ -1705,12 +1776,49 @@ class ImmutableVerifierBootstrapTests(unittest.TestCase):
         # After "git switch --create" in execute job, all imports use snapshot
         postcondition = text.split("git switch --create", 1)[1].split("Upload executor evidence", 1)[0]
         # Should have snapshot import, not workspace import
-        self.assertIn("sys.path.insert(0, '/tmp/p0-immutable-control')", postcondition)
+        self._assert_exact_snapshot_loader(postcondition)
         # Explicitly check the postcondition doesn't have workspace import
         lines_with_pathinsert = [line for line in postcondition.split('\n') if 'sys.path.insert' in line]
         for line in lines_with_pathinsert:
-            if '/tmp/p0-immutable-control' not in line:
+            if 'trusted_root' not in line:
                 self.fail(f"Found workspace import in postcondition: {line}")
+
+    def test_snapshot_declares_complete_local_python_dependency_closure(self) -> None:
+        """Every local tools.* import reachable from the trusted adapter is
+        explicitly present in the admission-bound immutable file set."""
+        bundled = {
+            "tools/__init__.py",
+            "tools/p0_actions_adapter.py",
+            "tools/propagate_b3.py",
+            "tools/finalize_b1.py",
+            "tools/verify_b2.py",
+        }
+        for rel_path in sorted(bundled - {"tools/__init__.py"}):
+            tree = ast.parse((REPO_ROOT / rel_path).read_text(encoding="utf-8"))
+            for node in ast.walk(tree):
+                names: list[str] = []
+                if isinstance(node, ast.ImportFrom) and (node.module or "").startswith("tools."):
+                    names.append(node.module or "")
+                elif isinstance(node, ast.Import):
+                    names.extend(alias.name for alias in node.names if alias.name.startswith("tools."))
+                for module_name in names:
+                    dependency = module_name.replace(".", "/") + ".py"
+                    self.assertIn(
+                        dependency,
+                        bundled,
+                        f"trusted dependency {dependency} imported by {rel_path} is not admission-bound",
+                    )
+
+    def test_every_trusted_adapter_import_uses_exact_snapshot_loader(self) -> None:
+        text = WORKFLOW_PATH.read_text(encoding="utf-8")
+        # Admission runs on the exact protected base before any candidate is
+        # present. Every later security boundary must use the exact-path
+        # immutable loader rather than ordinary import resolution.
+        post_admission = text.split("  execute:", 1)[1]
+        self.assertNotIn("from tools import p0_actions_adapter as adapter", post_admission)
+        self.assertNotIn("from tools.p0_actions_adapter import", post_admission)
+        self.assertEqual(9, text.count("importlib.util.spec_from_file_location("))
+        self.assertEqual(9, text.count("adapter_spec.loader.exec_module(adapter)"))
 
     def test_publisher_recreates_snapshot_from_base_not_target(self) -> None:
         """The publisher creates its own snapshot from base SHA, not from the

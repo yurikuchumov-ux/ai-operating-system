@@ -210,6 +210,7 @@ jobs:
           if mode == "verify-only" and not os.environ.get("EXECUTION_RUN_ID", "").isdigit():
               reject("missing_execution_run_id")
           control_files = (
+              "tools/__init__.py",
               "tools/p0_actions_adapter.py",
               "tools/propagate_b3.py",
               "tools/finalize_b1.py",
@@ -223,7 +224,11 @@ jobs:
           )
           bundle_hash = hashlib.sha256()
           for rel_path in control_files:
-              file_bytes = Path(rel_path).read_bytes()
+              # A generated empty package marker makes the trusted tools tree
+              # a regular package.  Without it, a candidate tools/__init__.py
+              # or tools.py can win over the namespace-package portion even
+              # when the trusted root is first on sys.path.
+              file_bytes = b"" if rel_path == "tools/__init__.py" else Path(rel_path).read_bytes()
               bundle_hash.update(rel_path.encode("utf-8") + b"\0")
               bundle_hash.update(len(file_bytes).to_bytes(8, "big"))
               bundle_hash.update(file_bytes)
@@ -245,6 +250,8 @@ jobs:
   execute:
     name: Execute bounded file edits and emit verified patch
     needs: admission
+    env:
+      P0_EXPECTED_ADAPTER_SHA256: ${{ needs.admission.outputs.adapter_sha256 }}
     if: >-
       github.event_name == 'workflow_dispatch' &&
       github.event.inputs.mode == 'execute' &&
@@ -274,6 +281,7 @@ jobs:
         run: |
           test "$(git rev-parse HEAD)" = "$BASE_SHA"
           mkdir -p /tmp/p0-immutable-control/tools /tmp/p0-immutable-control/contracts/registries /tmp/p0-immutable-control/contracts/schemas
+          : > /tmp/p0-immutable-control/tools/__init__.py
           cp tools/p0_actions_adapter.py /tmp/p0-immutable-control/tools/p0_actions_adapter.py
           cp tools/propagate_b3.py /tmp/p0-immutable-control/tools/propagate_b3.py
           cp tools/finalize_b1.py /tmp/p0-immutable-control/tools/finalize_b1.py
@@ -293,6 +301,7 @@ jobs:
           from pathlib import Path
           root = Path('/tmp/p0-immutable-control')
           control_files = (
+              'tools/__init__.py',
               'tools/p0_actions_adapter.py',
               'tools/propagate_b3.py',
               'tools/finalize_b1.py',
@@ -337,7 +346,8 @@ jobs:
               json.dumps(manifest, sort_keys=True), encoding='utf-8'
           )
           PY
-          chmod -R a-w /tmp/p0-immutable-control
+          sudo chown -R root:root /tmp/p0-immutable-control
+          sudo chmod -R a-w /tmp/p0-immutable-control
       - name: Create exact target branch and materialize bounded control inputs
         id: prepare
         env:
@@ -357,11 +367,24 @@ jobs:
           git fetch --no-tags --depth=1 origin "$TASK_COMMIT"
           test "$(git rev-parse --verify "${TASK_COMMIT}^{commit}")" = "$TASK_COMMIT"
           git show "${TASK_COMMIT}:${TASK_PATH}" > /tmp/p0-control/task.json
+          test "$(shasum -a 256 /tmp/p0-immutable-control/tools/p0_actions_adapter.py | awk '{print $1}')" = "$P0_EXPECTED_ADAPTER_SHA256"
           python3 - <<'PY'
           import json, sys
           from pathlib import Path
-          sys.path.insert(0, '/tmp/p0-immutable-control')
-          from tools import p0_actions_adapter as adapter
+          import importlib.util
+          trusted_root = Path('/tmp/p0-immutable-control').resolve()
+          sys.path.insert(0, str(trusted_root))
+          adapter_spec = importlib.util.spec_from_file_location(
+              'tools.p0_actions_adapter', trusted_root / 'tools/p0_actions_adapter.py')
+          if adapter_spec is None or adapter_spec.loader is None:
+              raise SystemExit('trusted adapter exact-path loader unavailable')
+          adapter = importlib.util.module_from_spec(adapter_spec)
+          sys.modules[adapter_spec.name] = adapter
+          adapter_spec.loader.exec_module(adapter)
+          if Path(adapter.__file__).resolve() != trusted_root / 'tools/p0_actions_adapter.py':
+              raise SystemExit('trusted adapter exact-path mismatch')
+          if Path(sys.modules['tools'].__file__).resolve() != trusted_root / 'tools/__init__.py':
+              raise SystemExit('trusted tools package exact-path mismatch')
           task = adapter.load_json(Path('/tmp/p0-control/task.json'))
           check = adapter.bounded_required_check(task)
           if check is None or not adapter.acceptance_is_supported(task):
@@ -651,11 +674,24 @@ jobs:
             python3 -I -c 'import json,pathlib; p=pathlib.Path("p0-adapter-output/manifest.json"); d=json.loads(p.read_text()); d["postcondition_failure"]="control_integrity_failed"; p.write_text(json.dumps(d,sort_keys=True))'
             exit 1
           fi
+          test "$(shasum -a 256 /tmp/p0-immutable-control/tools/p0_actions_adapter.py | awk '{print $1}')" = "$P0_EXPECTED_ADAPTER_SHA256"
           python3 -I - <<'PY'
           import json, os, subprocess, sys
           from pathlib import Path
-          sys.path.insert(0, '/tmp/p0-immutable-control')
-          from tools import p0_actions_adapter as adapter
+          import importlib.util
+          trusted_root = Path('/tmp/p0-immutable-control').resolve()
+          sys.path.insert(0, str(trusted_root))
+          adapter_spec = importlib.util.spec_from_file_location(
+              'tools.p0_actions_adapter', trusted_root / 'tools/p0_actions_adapter.py')
+          if adapter_spec is None or adapter_spec.loader is None:
+              raise SystemExit('trusted adapter exact-path loader unavailable')
+          adapter = importlib.util.module_from_spec(adapter_spec)
+          sys.modules[adapter_spec.name] = adapter
+          adapter_spec.loader.exec_module(adapter)
+          if Path(adapter.__file__).resolve() != trusted_root / 'tools/p0_actions_adapter.py':
+              raise SystemExit('trusted adapter exact-path mismatch')
+          if Path(sys.modules['tools'].__file__).resolve() != trusted_root / 'tools/__init__.py':
+              raise SystemExit('trusted tools package exact-path mismatch')
           out = Path('p0-adapter-output')
           manifest_path = out / 'manifest.json'
           manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
@@ -780,6 +816,8 @@ jobs:
   publish-target:
     name: Reverify patch and ordinary-push exact target branch
     needs: [admission, execute]
+    env:
+      P0_EXPECTED_ADAPTER_SHA256: ${{ needs.admission.outputs.adapter_sha256 }}
     if: >-
       github.event_name == 'workflow_dispatch' &&
       github.event.inputs.mode == 'execute' &&
@@ -807,6 +845,7 @@ jobs:
         run: |
           test "$(git rev-parse HEAD)" = "$BASE_SHA"
           mkdir -p /tmp/p0-immutable-control/tools /tmp/p0-immutable-control/contracts/registries /tmp/p0-immutable-control/contracts/schemas
+          : > /tmp/p0-immutable-control/tools/__init__.py
           cp tools/p0_actions_adapter.py /tmp/p0-immutable-control/tools/p0_actions_adapter.py
           cp tools/propagate_b3.py /tmp/p0-immutable-control/tools/propagate_b3.py
           cp tools/finalize_b1.py /tmp/p0-immutable-control/tools/finalize_b1.py
@@ -826,7 +865,7 @@ jobs:
           from pathlib import Path
           root = Path('/tmp/p0-immutable-control')
           control_files = (
-              'tools/p0_actions_adapter.py', 'tools/propagate_b3.py',
+              'tools/__init__.py', 'tools/p0_actions_adapter.py', 'tools/propagate_b3.py',
               'tools/finalize_b1.py', 'tools/verify_b2.py',
               'contracts/registries/commands.v1.json',
               'contracts/registries/predicates.v1.json',
@@ -850,7 +889,8 @@ jobs:
           if digest.hexdigest() != os.environ['EXPECTED_CONTROL_BUNDLE_SHA256']:
               raise SystemExit('publisher snapshot bundle hash mismatch')
           PY
-          chmod -R a-w /tmp/p0-immutable-control
+          sudo chown -R root:root /tmp/p0-immutable-control
+          sudo chmod -R a-w /tmp/p0-immutable-control
       - uses: actions/download-artifact@v4
         with:
           name: p0-adapter-output
@@ -866,11 +906,24 @@ jobs:
           git fetch --no-tags --depth=1 origin "$TASK_COMMIT"
           test "$(git rev-parse --verify "${TASK_COMMIT}^{commit}")" = "$TASK_COMMIT"
           git show "${TASK_COMMIT}:${TASK_PATH}" > /tmp/immutable-task.json
+          test "$(shasum -a 256 /tmp/p0-immutable-control/tools/p0_actions_adapter.py | awk '{print $1}')" = "$P0_EXPECTED_ADAPTER_SHA256"
           python3 - <<'PY'
           import json, os, subprocess, sys
           from pathlib import Path
-          sys.path.insert(0, '/tmp/p0-immutable-control')
-          from tools import p0_actions_adapter as adapter
+          import importlib.util
+          trusted_root = Path('/tmp/p0-immutable-control').resolve()
+          sys.path.insert(0, str(trusted_root))
+          adapter_spec = importlib.util.spec_from_file_location(
+              'tools.p0_actions_adapter', trusted_root / 'tools/p0_actions_adapter.py')
+          if adapter_spec is None or adapter_spec.loader is None:
+              raise SystemExit('trusted adapter exact-path loader unavailable')
+          adapter = importlib.util.module_from_spec(adapter_spec)
+          sys.modules[adapter_spec.name] = adapter
+          adapter_spec.loader.exec_module(adapter)
+          if Path(adapter.__file__).resolve() != trusted_root / 'tools/p0_actions_adapter.py':
+              raise SystemExit('trusted adapter exact-path mismatch')
+          if Path(sys.modules['tools'].__file__).resolve() != trusted_root / 'tools/__init__.py':
+              raise SystemExit('trusted tools package exact-path mismatch')
           out = Path('p0-adapter-output')
           manifest = json.loads((out / 'manifest.json').read_text(encoding='utf-8'))
           task = adapter.load_json(Path('/tmp/immutable-task.json'))
@@ -971,6 +1024,8 @@ jobs:
   finalize-and-verify:
     name: Finalize, independently verify, and publish Check Run
     needs: [admission, execute, publish-target]
+    env:
+      P0_EXPECTED_ADAPTER_SHA256: ${{ needs.admission.outputs.adapter_sha256 }}
     if: always() && github.event_name == 'workflow_dispatch' && needs.admission.result != 'skipped'
     runs-on: ubuntu-latest
     permissions:
@@ -997,6 +1052,7 @@ jobs:
         run: |
           test "$(git rev-parse HEAD)" = "$BASE_SHA"
           mkdir -p /tmp/p0-immutable-control/tools /tmp/p0-immutable-control/contracts/registries /tmp/p0-immutable-control/contracts/schemas
+          : > /tmp/p0-immutable-control/tools/__init__.py
           cp tools/p0_actions_adapter.py /tmp/p0-immutable-control/tools/p0_actions_adapter.py
           cp tools/propagate_b3.py /tmp/p0-immutable-control/tools/propagate_b3.py
           cp tools/finalize_b1.py /tmp/p0-immutable-control/tools/finalize_b1.py
@@ -1016,7 +1072,7 @@ jobs:
           from pathlib import Path
           root = Path('/tmp/p0-immutable-control')
           control_files = (
-              'tools/p0_actions_adapter.py', 'tools/propagate_b3.py',
+              'tools/__init__.py', 'tools/p0_actions_adapter.py', 'tools/propagate_b3.py',
               'tools/finalize_b1.py', 'tools/verify_b2.py',
               'contracts/registries/commands.v1.json',
               'contracts/registries/predicates.v1.json',
@@ -1040,7 +1096,8 @@ jobs:
           if digest.hexdigest() != os.environ['EXPECTED_CONTROL_BUNDLE_SHA256']:
               raise SystemExit('finalizer snapshot bundle hash mismatch')
           PY
-          chmod -R a-w /tmp/p0-immutable-control
+          sudo chown -R root:root /tmp/p0-immutable-control
+          sudo chmod -R a-w /tmp/p0-immutable-control
       - name: Download current execution evidence
         if: github.event.inputs.mode == 'execute'
         continue-on-error: true
@@ -1086,11 +1143,25 @@ jobs:
           TASK_PATH: ${{ github.event.inputs.task_path }}
         run: |
           mkdir -p p0-output
+          test "$(shasum -a 256 /tmp/p0-immutable-control/tools/p0_actions_adapter.py | awk '{print $1}')" = "$P0_EXPECTED_ADAPTER_SHA256"
           python3 - <<'PY'
           import os, sys
-          sys.path.insert(0, '/tmp/p0-immutable-control')
-          from tools.p0_actions_adapter import validate_task_ref, validate_task_path
-          sys.exit(0 if not validate_task_ref(os.environ.get("TASK_COMMIT")) and not validate_task_path(os.environ.get("TASK_PATH")) else 1)
+          from pathlib import Path
+          import importlib.util
+          trusted_root = Path('/tmp/p0-immutable-control').resolve()
+          sys.path.insert(0, str(trusted_root))
+          adapter_spec = importlib.util.spec_from_file_location(
+              'tools.p0_actions_adapter', trusted_root / 'tools/p0_actions_adapter.py')
+          if adapter_spec is None or adapter_spec.loader is None:
+              raise SystemExit('trusted adapter exact-path loader unavailable')
+          adapter = importlib.util.module_from_spec(adapter_spec)
+          sys.modules[adapter_spec.name] = adapter
+          adapter_spec.loader.exec_module(adapter)
+          if Path(adapter.__file__).resolve() != trusted_root / 'tools/p0_actions_adapter.py':
+              raise SystemExit('trusted adapter exact-path mismatch')
+          if Path(sys.modules['tools'].__file__).resolve() != trusted_root / 'tools/__init__.py':
+              raise SystemExit('trusted tools package exact-path mismatch')
+          sys.exit(0 if not adapter.validate_task_ref(os.environ.get("TASK_COMMIT")) and not adapter.validate_task_path(os.environ.get("TASK_PATH")) else 1)
           PY
           git fetch --no-tags --depth=1 origin "$TASK_COMMIT"
           test "$(git rev-parse --verify "${TASK_COMMIT}^{commit}")" = "$TASK_COMMIT"
@@ -1101,11 +1172,25 @@ jobs:
           REVIEW_COMMIT: ${{ github.event.inputs.review_ref }}
           REVIEW_PATH: ${{ github.event.inputs.review_path }}
         run: |
+          test "$(shasum -a 256 /tmp/p0-immutable-control/tools/p0_actions_adapter.py | awk '{print $1}')" = "$P0_EXPECTED_ADAPTER_SHA256"
           python3 - <<'PY'
           import os, sys
-          sys.path.insert(0, '/tmp/p0-immutable-control')
-          from tools.p0_actions_adapter import validate_task_ref, validate_review_path
-          sys.exit(0 if not validate_task_ref(os.environ.get("REVIEW_COMMIT")) and not validate_review_path(os.environ.get("REVIEW_PATH")) else 1)
+          from pathlib import Path
+          import importlib.util
+          trusted_root = Path('/tmp/p0-immutable-control').resolve()
+          sys.path.insert(0, str(trusted_root))
+          adapter_spec = importlib.util.spec_from_file_location(
+              'tools.p0_actions_adapter', trusted_root / 'tools/p0_actions_adapter.py')
+          if adapter_spec is None or adapter_spec.loader is None:
+              raise SystemExit('trusted adapter exact-path loader unavailable')
+          adapter = importlib.util.module_from_spec(adapter_spec)
+          sys.modules[adapter_spec.name] = adapter
+          adapter_spec.loader.exec_module(adapter)
+          if Path(adapter.__file__).resolve() != trusted_root / 'tools/p0_actions_adapter.py':
+              raise SystemExit('trusted adapter exact-path mismatch')
+          if Path(sys.modules['tools'].__file__).resolve() != trusted_root / 'tools/__init__.py':
+              raise SystemExit('trusted tools package exact-path mismatch')
+          sys.exit(0 if not adapter.validate_task_ref(os.environ.get("REVIEW_COMMIT")) and not adapter.validate_review_path(os.environ.get("REVIEW_PATH")) else 1)
           PY
           git fetch --no-tags --depth=1 origin "$REVIEW_COMMIT"
           test "$(git rev-parse --verify "${REVIEW_COMMIT}^{commit}")" = "$REVIEW_COMMIT"
@@ -1120,11 +1205,25 @@ jobs:
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           BASE_SHA: ${{ needs.admission.outputs.base_sha }}
         run: |
+          test "$(shasum -a 256 /tmp/p0-immutable-control/tools/p0_actions_adapter.py | awk '{print $1}')" = "$P0_EXPECTED_ADAPTER_SHA256"
           python3 - <<'PY'
           import os, sys
-          sys.path.insert(0, '/tmp/p0-immutable-control')
-          from tools.p0_actions_adapter import validate_target_branch
-          sys.exit(0 if not validate_target_branch(os.environ.get("TARGET_BRANCH"), os.environ.get("DEFAULT_BRANCH")) else 1)
+          from pathlib import Path
+          import importlib.util
+          trusted_root = Path('/tmp/p0-immutable-control').resolve()
+          sys.path.insert(0, str(trusted_root))
+          adapter_spec = importlib.util.spec_from_file_location(
+              'tools.p0_actions_adapter', trusted_root / 'tools/p0_actions_adapter.py')
+          if adapter_spec is None or adapter_spec.loader is None:
+              raise SystemExit('trusted adapter exact-path loader unavailable')
+          adapter = importlib.util.module_from_spec(adapter_spec)
+          sys.modules[adapter_spec.name] = adapter
+          adapter_spec.loader.exec_module(adapter)
+          if Path(adapter.__file__).resolve() != trusted_root / 'tools/p0_actions_adapter.py':
+              raise SystemExit('trusted adapter exact-path mismatch')
+          if Path(sys.modules['tools'].__file__).resolve() != trusted_root / 'tools/__init__.py':
+              raise SystemExit('trusted tools package exact-path mismatch')
+          sys.exit(0 if not adapter.validate_target_branch(os.environ.get("TARGET_BRANCH"), os.environ.get("DEFAULT_BRANCH")) else 1)
           PY
           git fetch --no-tags origin "+refs/heads/$DEFAULT_BRANCH:refs/remotes/origin/$DEFAULT_BRANCH"
           default_head="$(git rev-parse "refs/remotes/origin/$DEFAULT_BRANCH")"
@@ -1147,11 +1246,35 @@ jobs:
         env:
           SUBJECT_SHA: ${{ steps.observe.outputs.subject_sha }}
         run: |
+          test "$(shasum -a 256 /tmp/p0-immutable-control/tools/p0_actions_adapter.py | awk '{print $1}')" = "$P0_EXPECTED_ADAPTER_SHA256"
           python3 - <<'PY'
           import json, os, subprocess, sys
           from pathlib import Path
-          sys.path.insert(0, '/tmp/p0-immutable-control')
-          from tools import p0_actions_adapter as adapter
+          import importlib.util
+          trusted_root = Path('/tmp/p0-immutable-control').resolve()
+          sys.path.insert(0, str(trusted_root))
+          adapter_spec = importlib.util.spec_from_file_location(
+              'tools.p0_actions_adapter', trusted_root / 'tools/p0_actions_adapter.py')
+          if adapter_spec is None or adapter_spec.loader is None:
+              raise SystemExit('trusted adapter exact-path loader unavailable')
+          adapter = importlib.util.module_from_spec(adapter_spec)
+          sys.modules[adapter_spec.name] = adapter
+          adapter_spec.loader.exec_module(adapter)
+          if Path(adapter.__file__).resolve() != trusted_root / 'tools/p0_actions_adapter.py':
+              raise SystemExit('trusted adapter exact-path mismatch')
+          if Path(sys.modules['tools'].__file__).resolve() != trusted_root / 'tools/__init__.py':
+              raise SystemExit('trusted tools package exact-path mismatch')
+          if not os.environ.get('SUBJECT_SHA'):
+              Path('p0-output/required-check.log').write_text(
+                  'target subject is absent; registered command was not run on base\n',
+                  encoding='utf-8',
+              )
+              Path('p0-output/required-check.json').write_text(json.dumps({
+                  'command_id': None, 'argv': [],
+                  'source': 'workflow_observed_missing_subject',
+                  'subject_sha': '', 'exit_code': 125, 'timed_out': False,
+              }, sort_keys=True), encoding='utf-8')
+              raise SystemExit(1)
           task = adapter.load_json(Path('p0-output/task.json'))
           check = adapter.bounded_required_check(task)
           if check is None or not adapter.acceptance_is_supported(task):
@@ -1185,11 +1308,24 @@ jobs:
           RUN_ID: ${{ github.run_id }}
           RUN_ATTEMPT: ${{ github.run_attempt }}
         run: |
+          test "$(shasum -a 256 /tmp/p0-immutable-control/tools/p0_actions_adapter.py | awk '{print $1}')" = "$P0_EXPECTED_ADAPTER_SHA256"
           python3 - <<'PY'
           import json, os, subprocess, sys
           from pathlib import Path
-          sys.path.insert(0, '/tmp/p0-immutable-control')
-          from tools import p0_actions_adapter as adapter
+          import importlib.util
+          trusted_root = Path('/tmp/p0-immutable-control').resolve()
+          sys.path.insert(0, str(trusted_root))
+          adapter_spec = importlib.util.spec_from_file_location(
+              'tools.p0_actions_adapter', trusted_root / 'tools/p0_actions_adapter.py')
+          if adapter_spec is None or adapter_spec.loader is None:
+              raise SystemExit('trusted adapter exact-path loader unavailable')
+          adapter = importlib.util.module_from_spec(adapter_spec)
+          sys.modules[adapter_spec.name] = adapter
+          adapter_spec.loader.exec_module(adapter)
+          if Path(adapter.__file__).resolve() != trusted_root / 'tools/p0_actions_adapter.py':
+              raise SystemExit('trusted adapter exact-path mismatch')
+          if Path(sys.modules['tools'].__file__).resolve() != trusted_root / 'tools/__init__.py':
+              raise SystemExit('trusted tools package exact-path mismatch')
           def read(path):
               p = Path(path)
               return p.read_text(encoding='utf-8', errors='replace') if p.is_file() else None
@@ -1274,20 +1410,40 @@ jobs:
           MODE: ${{ github.event.inputs.mode }}
           EXECUTION_RUN_ID: ${{ github.event.inputs.execution_run_id }}
         run: |
-          python3 /tmp/p0-immutable-control/tools/p0_actions_adapter.py finalize \
-            --signal p0-output/signal.json \
-            --task p0-output/task.json \
-            --review-attestation p0-output/review.json \
-            --task-commit "$TASK_COMMIT" \
-            --task-path "$TASK_PATH" \
-            --target-branch "$TARGET_BRANCH" \
-            --default-branch "$DEFAULT_BRANCH" \
-            --attempt "$ATTEMPT" \
-            --mode "$MODE" \
-            --execution-run-id "$EXECUTION_RUN_ID" \
-            --verification-id "$(python3 -c 'import uuid; print(uuid.uuid4())')" \
-            --evaluated-at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            --output-dir p0-output/pipeline
+          test "$(shasum -a 256 /tmp/p0-immutable-control/tools/p0_actions_adapter.py | awk '{print $1}')" = "$P0_EXPECTED_ADAPTER_SHA256"
+          python3 - <<'PY'
+          import importlib.util, os, sys, uuid
+          from datetime import datetime, timezone
+          from pathlib import Path
+          trusted_root = Path('/tmp/p0-immutable-control').resolve()
+          sys.path.insert(0, str(trusted_root))
+          adapter_spec = importlib.util.spec_from_file_location(
+              'tools.p0_actions_adapter', trusted_root / 'tools/p0_actions_adapter.py')
+          if adapter_spec is None or adapter_spec.loader is None:
+              raise SystemExit('trusted adapter exact-path loader unavailable')
+          adapter = importlib.util.module_from_spec(adapter_spec)
+          sys.modules[adapter_spec.name] = adapter
+          adapter_spec.loader.exec_module(adapter)
+          if Path(adapter.__file__).resolve() != trusted_root / 'tools/p0_actions_adapter.py':
+              raise SystemExit('trusted adapter exact-path mismatch')
+          if Path(sys.modules['tools'].__file__).resolve() != trusted_root / 'tools/__init__.py':
+              raise SystemExit('trusted tools package exact-path mismatch')
+          raise SystemExit(adapter.main([
+              'finalize', '--signal', 'p0-output/signal.json',
+              '--task', 'p0-output/task.json',
+              '--review-attestation', 'p0-output/review.json',
+              '--task-commit', os.environ.get('TASK_COMMIT', ''),
+              '--task-path', os.environ.get('TASK_PATH', ''),
+              '--target-branch', os.environ.get('TARGET_BRANCH', ''),
+              '--default-branch', os.environ.get('DEFAULT_BRANCH', ''),
+              '--attempt', os.environ.get('ATTEMPT', ''),
+              '--mode', os.environ.get('MODE', ''),
+              '--execution-run-id', os.environ.get('EXECUTION_RUN_ID', ''),
+              '--verification-id', str(uuid.uuid4()),
+              '--evaluated-at', datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
+              '--output-dir', 'p0-output/pipeline',
+          ]))
+          PY
       - name: Upload stable result and verification evidence
         if: always()
         uses: actions/upload-artifact@v4
