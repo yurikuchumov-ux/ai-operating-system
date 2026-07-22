@@ -3,7 +3,7 @@
   "task_id": "yurikuchumov-ux/ai-operating-system#57",
   "repository": "yurikuchumov-ux/ai-operating-system",
   "issue_number": 57,
-  "objective": "Actions-backed execution of the owner-authorized bounded B4-B redesign. Implement a finite raw-source grammar for the exact governed Section 3.1 inventory block, preserve the stage-A registry bindings and exact documentation replacement, and make no claim about rendered Markdown semantics. Start from protected main; do not copy the rejected CommonMark emulation from Draft PR #60 or rely on the locally authored PR #61 as execution evidence.",
+  "objective": "Corrective Actions-backed attempt 2/3 for the owner-authorized bounded B4-B redesign. Implement a finite raw-source grammar for the exact governed Section 3.1 inventory block, preserve the stage-A registry bindings and exact documentation replacement, and make no claim about rendered Markdown semantics. Start from protected main; do not copy the rejected CommonMark emulation from Draft PR #60 or rely on the locally authored PR #61 as execution evidence. Run 29903957551 proved attempt 1 fail-closed because the generated test module imported unavailable pytest and its plain functions would not be discovered by the registered unittest command; use stdlib unittest.TestCase regressions only and add no dependency.",
   "change_policy": {
     "change_required": true,
     "policy_exception_id": null,
@@ -76,6 +76,12 @@
               "3bfdafa3cd3cece1c69e9dfe699c46e9e0a651a3"
             ],
             "draft_pr": 60,
+            "actions_attempt_1": {
+              "run_id": 29903957551,
+              "result": "required_check_failed",
+              "immutable_evidence_artifact": "p0-run-29903957551-evidence",
+              "material_evidence": "tests/test_b3_canonical_repository_plan.py imported unavailable pytest and defined plain pytest-style functions, while the registered command is stdlib unittest discovery"
+            },
             "reuse_policy": "requirements and adversarial evidence only; do not copy rejected implementation code or treat local PR #61 as execution evidence"
           },
           "stage_boundary": {
@@ -97,6 +103,14 @@
             "registry_argument": "the supplied stage-A registry is authoritative and must actually be used",
             "no_file_reads": true,
             "no_cli": true
+          },
+          "test_execution_environment": {
+            "registered_command": "python3 -m unittest discover -s tests -p test_b3_*.py",
+            "framework": "Python standard-library unittest",
+            "new_regressions_must_be_discoverable_as": "methods on unittest.TestCase subclasses",
+            "pytest_import_forbidden": true,
+            "third_party_test_dependencies_forbidden": true,
+            "requirements_changes_forbidden": true
           },
           "bounded_raw_source_grammar": {
             "interpretation": "raw source lines only; this validator does not parse or make claims about CommonMark, GFM, HTML blocks, fenced code, blockquotes, reference links or renderer output",
@@ -177,7 +191,8 @@
             "digits-only 40-character lowercase-hex SHA is structurally accepted",
             "supplied registry label, full_name, URL, visibility and boundary mutations prove the registry is used",
             "non-string plan and structurally invalid registry return their input codes",
-            "tests contain no CommonMark, GFM or HTML parser and make no renderer-semantic assertions"
+            "tests contain no CommonMark, GFM or HTML parser and make no renderer-semantic assertions",
+            "every new regression is a stdlib unittest.TestCase method discovered and executed by the registered command; pytest imports, pytest-style plain test functions and new dependencies are forbidden"
           ],
           "documentation_change_exact": {
             "path": "docs/AI_DEVELOPMENT_STUDIO_EXECUTION_PLAN.md",
