@@ -1,0 +1,47 @@
+name: Claude Review Bootstrap
+
+on:
+  pull_request:
+    types: [synchronize]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+  id-token: write
+
+jobs:
+  review:
+    if: github.event.pull_request.number == 9
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out pull request
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Run independent Claude review
+        uses: anthropics/claude-code-action@e90deca47693f9457b72f2b53c17d7c445a87342 # v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ github.token }}
+          prompt: |
+            Perform an independent review of PR #${{ github.event.pull_request.number }}.
+            Check compliance with Issue #8, verify that only AI_OS.md is in the intended final scope,
+            confirm existing rules are not weakened, and assess the new Capability Discovery First
+            and Automation First principles for clarity, completeness, and contradictions.
+
+            Do not modify files, create commits, push, merge, or change repository settings.
+
+            After completing the review, publish exactly one top-level PR comment using `gh pr comment`.
+            The comment must start with `CLAUDE_REVIEW_RESULT:` and then contain:
+            - `VERDICT: APPROVE` or `VERDICT: REQUEST_CHANGES`;
+            - a concise evidence-based summary;
+            - blocking findings, or `Blocking findings: none`.
+          claude_args: |
+            --max-turns 8
+            --allowedTools "Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr comment:*)"
+            --disallowedTools "Edit,Write,NotebookEditCell"
