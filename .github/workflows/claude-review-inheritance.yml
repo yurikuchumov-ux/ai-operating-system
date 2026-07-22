@@ -1,0 +1,41 @@
+name: Claude Review - AI OS Inheritance
+
+on:
+  pull_request:
+    types: [synchronize]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+  id-token: write
+
+jobs:
+  review:
+    if: github.event.pull_request.number == 11
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Independent architecture review
+        uses: anthropics/claude-code-action@6902c227aaa9536481b99d56f3014bbbad6c6da8
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ github.token }}
+          track_progress: true
+          use_sticky_comment: true
+          prompt: |
+            Independently review PR #11 against Issue #10.
+            Read Issue #10, the PR metadata, and the diff. Check precedence,
+            tracking/pinned modes, compatibility policy, security constraints,
+            contradictions with AI_OS.md, and sufficiency for downstream automation.
+            Do not edit files or merge. Finish with a concise verdict containing
+            APPROVE or REQUEST_CHANGES, findings, and required changes if any.
+          claude_args: |
+            --max-turns 12
+            --allowedTools "Bash(gh issue view:*),Bash(gh pr view:*),Bash(gh pr diff:*)"
+            --disallowedTools "Edit,Write,NotebookEditCell"
