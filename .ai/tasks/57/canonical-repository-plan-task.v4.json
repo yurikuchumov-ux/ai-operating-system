@@ -3,7 +3,7 @@
   "task_id": "yurikuchumov-ux/ai-operating-system#57",
   "repository": "yurikuchumov-ux/ai-operating-system",
   "issue_number": 57,
-  "objective": "Executor-switched bounded B4-B implementation after three exhausted Claude attempts. Use the pinned openai-codex-action once to implement the finite raw-source grammar for the exact governed Section 3.1 inventory block, preserve the stage-A registry bindings and exact documentation replacement, and make no claim about rendered Markdown semantics. Start from protected main. Preserve the independently approved behavioral quality of PR #61 without treating that locally authored PR as Actions execution evidence. Runs 29903957551, 29904531362 and 29905181439 are immutable corrective evidence: use stdlib unittest.TestCase only, enforce exact raw-row reconstruction without strip-based normalization, and follow the explicit diagnostic contract so implementation and regressions cannot disagree about rejection codes.",
+  "objective": "Corrective Codex Actions attempt after run 29906877565 returned empty_diff. Create the two expected missing allowed code/test files, edit the exact governed Section 3.1 row, and implement the finite raw-source grammar with stage-A registry binding and the explicit diagnostic contract. Missing allowed outputs are not a repo/task mismatch. Preserve approved PR #61 behavior as requirements only; this new run must provide exact Actions execution evidence.",
   "change_policy": {
     "change_required": true,
     "policy_exception_id": null,
@@ -15,7 +15,7 @@
   },
   "base_ref": "main",
   "base_sha": "e1ce7b0d2881c019cd0768f6b89ddb421db407c3",
-  "branch": "agent/issue-57-bounded-raw-grammar-v5-codex-actions",
+  "branch": "agent/issue-57-bounded-raw-grammar-v6-codex-actions",
   "allowed_paths": [
     "tools/canonical_repository_plan.py",
     "tests/test_b3_canonical_repository_plan.py",
@@ -46,7 +46,7 @@
   "risk_class": "L2",
   "executor": {
     "adapter": "openai-codex-action",
-    "version": "codex-action-0.144.5-gpt-5.3-codex-high-issue-57-v5",
+    "version": "codex-action-0.144.5-gpt-5.3-codex-high-issue-57-v6",
     "max_attempts": 1,
     "timeout_seconds": 1800
   },
@@ -100,6 +100,13 @@
               "to": "openai-codex-action",
               "new_executor_attempt_limit": 1
             },
+            "codex_actions_attempt_1": {
+              "run_id": 29906877565,
+              "result": "empty_diff",
+              "adapter_outcome": "success",
+              "target_branch_published": false,
+              "material_evidence": "the executor correctly observed that the production and test paths were absent but incorrectly treated their expected creation as a repo/task mismatch; the immutable final message requested direction instead of creating the two allowed files"
+            },
             "approved_behavioral_reference": {
               "pr": 61,
               "reviewed_sha": "4f04f039c7d28379f3165e8fe58f70d3d2b588d9",
@@ -127,6 +134,22 @@
             "registry_argument": "the supplied stage-A registry is authoritative and must actually be used",
             "no_file_reads": true,
             "no_cli": true
+          },
+          "file_creation_contract": {
+            "protected_main_expected_state": {
+              "tools/canonical_repository_plan.py": "absent",
+              "tests/test_b3_canonical_repository_plan.py": "absent",
+              "docs/AI_DEVELOPMENT_STUDIO_EXECUTION_PLAN.md": "present"
+            },
+            "required_operations": {
+              "tools/canonical_repository_plan.py": "create the new production module",
+              "tests/test_b3_canonical_repository_plan.py": "create the new stdlib unittest regression module",
+              "docs/AI_DEVELOPMENT_STUDIO_EXECUTION_PLAN.md": "edit only the exact third Section 3.1 inventory row"
+            },
+            "missing_new_output_files_are_expected": true,
+            "creation_of_both_missing_allowed_files_is_mandatory": true,
+            "similarly_named_existing_files_are_not_substitutes": true,
+            "do_not_request_direction_for_expected_absence": true
           },
           "test_execution_environment": {
             "registered_command": "python3 -m unittest discover -s tests -p test_b3_*.py",
