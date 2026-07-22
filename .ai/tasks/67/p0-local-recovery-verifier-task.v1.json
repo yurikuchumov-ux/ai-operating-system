@@ -1,0 +1,209 @@
+{
+  "schema_version": "1.0.0",
+  "task_id": "yurikuchumov-ux/ai-operating-system#67",
+  "repository": "yurikuchumov-ux/ai-operating-system",
+  "issue_number": 67,
+  "objective": "Add a truthful GitHub-Actions-owned local-recovery verification route that publishes the existing required p0-actions-verifier Check Run from exact task, target, review and registered-command evidence without invoking an execution agent or using a paid model API. Preserve all existing execute and verify-only paths.",
+  "change_policy": {
+    "change_required": true,
+    "policy_exception_id": null,
+    "no_change": {
+      "allowed": false,
+      "reason_codes": [],
+      "required_evidence_types": []
+    }
+  },
+  "base_ref": "main",
+  "base_sha": "d4f10b714de3afae84d48dfcd3daa6405092a973",
+  "branch": "agent/issue-67-local-recovery-verifier",
+  "allowed_paths": [
+    ".github/workflows/p0-actions-adapter.yml",
+    "tools/p0_actions_adapter.py",
+    "tests/test_b3_p0_actions_adapter.py"
+  ],
+  "denied_paths": [
+    ".ai/**",
+    "AI_OS.md",
+    "README.md",
+    "CHANGELOG.md",
+    "contracts/**",
+    "docs/**",
+    "fixtures/**",
+    "requirements-*.txt",
+    "standards/**",
+    "templates/**",
+    "tools/canonical_repository_plan.py",
+    "tools/canonical_repository_registry.py",
+    "tools/validate_canonical_repositories.py",
+    "tools/validate_b0.py",
+    "tools/verify_b2.py",
+    "tools/propagate_b3.py",
+    "tests/test_b0_contracts.py",
+    "tests/test_b3_canonical_repository_contract.py",
+    "tests/test_b3_canonical_repository_plan.py",
+    "tests/test_b3_canonical_repository_registry.py",
+    "tests/test_b3_canonical_repository_cli.py",
+    "tests/test_b3_terminal_propagation.py",
+    ".github/workflows/b3-terminal-propagation.yml"
+  ],
+  "risk_class": "L2",
+  "executor": {
+    "adapter": "human-supervised-claude-code",
+    "version": "claude-code-2.1.197-p0-local-recovery-verifier",
+    "max_attempts": 3,
+    "timeout_seconds": 1800
+  },
+  "acceptance_criteria": [
+    {
+      "id": "AC-P0-LOCAL-RECOVERY-VERIFIER",
+      "predicate_id": "process.exit_code.equals",
+      "parameters": {
+        "component": "p0-local-recovery-verifier-route",
+        "value": 0,
+        "trusted_evidence_source": "workflow_observed_process_exit_code",
+        "forbidden_sources": [
+          "executor_self_report",
+          "actions_job_conclusion",
+          "pull_request_body",
+          "review_comment_prose"
+        ],
+        "specification": {
+          "problem_evidence": {
+            "blocked_pr": 66,
+            "blocked_sha": "d4e455c825bd0a66f65432047fd1fb4e71d47e90",
+            "required_context": "p0-actions-verifier",
+            "required_context_app": "github-actions",
+            "branch_protection_enforces_admins": true,
+            "ordinary_pr_path_only_runs_bootstrap": true,
+            "existing_verify_only_requires_execution_run_id": true,
+            "local_recovery_has_no_actions_execution_artifact": true,
+            "admin_merge_attempt_failed": true
+          },
+          "architecture": {
+            "route_location": "extend the existing P0 Actions Adapter workflow and verifier library; do not create a separate service or weaken branch protection",
+            "mode": "local-recovery-verify",
+            "execution_agent_invocation_forbidden": true,
+            "model_api_secret_use_forbidden": true,
+            "check_context_exact": "p0-actions-verifier",
+            "check_publisher": "GitHub Actions checks:write finalizer",
+            "automatic_merge_forbidden": true
+          },
+          "admission": {
+            "dispatch_ref_must_equal_current_protected_default_branch": true,
+            "task_commit_full_sha_required": true,
+            "task_path_allowlisted_required": true,
+            "target_branch_agent_shape_required": true,
+            "review_commit_full_sha_required": true,
+            "review_path_safe_json_required": true,
+            "task_schema_required": true,
+            "task_repository_issue_branch_base_and_base_ref_binding_required": true,
+            "local_recovery_adapter_allowlist": [
+              "local-codex-desktop"
+            ],
+            "ordinary_claude_and_codex_actions_tasks_must_not_enter_local_recovery_route": true,
+            "existing_execute_and_verify_only_admission_must_remain_unchanged": true
+          },
+          "trusted_observation": {
+            "fetch_exact_task_bytes": true,
+            "fetch_exact_review_bytes": true,
+            "fetch_exact_target_head": true,
+            "target_head_must_equal_reviewed_sha": true,
+            "merge_base_must_equal_task_base_sha": true,
+            "protected_default_head_must_equal_task_base_sha": true,
+            "authored_commits_recomputed_from_git": true,
+            "changed_paths_recomputed_from_git": true,
+            "change_required_nonempty_diff_required": true,
+            "allowed_and_denied_path_policy_required": true,
+            "registered_argv_only": true,
+            "required_command_real_exit_code_and_timeout_required": true,
+            "review_schema_task_policy_risk_sha_and_eligibility_binding_required": true,
+            "review_authored_commit_overlap_recomputed_required": true,
+            "review_agent_runtime_and_credential_overlap_fail_closed": true,
+            "default_and_target_refs_reobserved_before_check_publication": true
+          },
+          "result_and_check": {
+            "machine_readable_result_required": true,
+            "machine_readable_verification_required": true,
+            "stable_evidence_artifact_required": true,
+            "check_run_always_published_on_observed_subject": true,
+            "success_only_when_every_postcondition_passes": true,
+            "every_missing_stale_malformed_or_mismatched_input_fails_closed": true,
+            "no_synthetic_execution_id_or_executor_evidence": true,
+            "local_recovery_provenance_explicit_in_metadata": true
+          },
+          "regressions": {
+            "positive_exact_issue65_fixture_or_harness": true,
+            "no_execution_run_id_required_only_in_local_recovery_mode": true,
+            "execute_and_verify_only_still_require_original_evidence": true,
+            "unsupported_adapter_rejected": true,
+            "missing_or_mutable_task_or_review_ref_rejected": true,
+            "stale_review_sha_rejected": true,
+            "review_identity_overlap_rejected": true,
+            "review_authored_commit_overlap_rejected": true,
+            "base_default_target_or_merge_base_mismatch_rejected": true,
+            "empty_diff_and_scope_violation_rejected": true,
+            "required_command_failure_and_timeout_rejected": true,
+            "reviewed_head_change_requires_new_check": true,
+            "workflow_source_asserts_no_claude_or_codex_step_in_local_recovery_mode": true,
+            "check_success_cannot_derive_from_pr_or_review prose": true
+          },
+          "security": {
+            "permissions_least_privilege": true,
+            "author_jobs_no_write_credentials": true,
+            "verifier_only_checks_write": true,
+            "shell_injection_from_dispatch_inputs_forbidden": true,
+            "mutable_refs_forbidden": true,
+            "artifact_replay_from_unbound_run_forbidden": true,
+            "secrets_environment_and_model_api_calls_forbidden": true,
+            "branch_protection_change_forbidden": true,
+            "default_branch_write_and_merge_forbidden": true
+          },
+          "postconditions": {
+            "changed_paths_equal_allowed_paths": true,
+            "git_diff_check": true,
+            "task_specific_tests": true,
+            "b3_suite": true,
+            "full_repository_suite": true,
+            "targeted_mutation_checks": true,
+            "real_actions_execute_run_id_required": true,
+            "fresh_independent_exact_sha_chatgpt_pro_maximum_review": true,
+            "verify_local_recovery_can_publish_success_for_pr66_without_model_api": true,
+            "draft_pr_only": true
+          }
+        }
+      },
+      "required": true,
+      "linked_checks": [
+        "issue-67-p0-local-recovery-verifier-tests"
+      ]
+    }
+  ],
+  "required_checks": [
+    {
+      "id": "issue-67-p0-local-recovery-verifier-tests",
+      "command_id": "repo.contracts.b3.tests",
+      "required": true,
+      "expected_postconditions": [
+        {
+          "predicate_id": "process.exit_code.equals",
+          "parameters": {
+            "value": 0
+          }
+        }
+      ]
+    }
+  ],
+  "review_policy": {
+    "reviewer_class": "independent-engineering",
+    "policy_id": "review-independence.v1",
+    "forbidden_lineage_overlaps": [
+      "agent_runtime_id",
+      "credential_principal",
+      "authored_commits"
+    ],
+    "minimum_distinct_human_operators": 1
+  },
+  "external_side_effects": "owner_approved",
+  "created_by": "github:yurykuchumov-ux/codex-control-plane",
+  "created_at": "2026-07-22T15:35:17Z"
+}
