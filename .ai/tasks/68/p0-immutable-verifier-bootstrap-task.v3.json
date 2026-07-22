@@ -1,0 +1,214 @@
+{
+  "schema_version": "1.0.0",
+  "task_id": "yurikuchumov-ux/ai-operating-system#68",
+  "repository": "yurikuchumov-ux/ai-operating-system",
+  "issue_number": 68,
+  "objective": "Correct all seven independently reproduced P0 trust-boundary findings at Draft PR #69 without weakening protected-default admission: isolate candidate Git metadata, contain and reap required-check descendants, make timeout evidence total and bounded, content-bind actions and runtimes, record truthful provider provenance, preserve trusted sudo after untrusted Codex execution, and bind verify-only evidence to one exact artifact from one exact run attempt.",
+  "change_policy": {
+    "change_required": true,
+    "policy_exception_id": null,
+    "no_change": {
+      "allowed": false,
+      "reason_codes": [],
+      "required_evidence_types": []
+    }
+  },
+  "base_ref": "main",
+  "base_sha": "d4f10b714de3afae84d48dfcd3daa6405092a973",
+  "branch": "agent/issue-68-immutable-verifier-bootstrap",
+  "allowed_paths": [
+    ".github/workflows/p0-actions-adapter.yml",
+    "contracts/p0-runtime-lock.v1.json",
+    "contracts/schemas/result.v1.schema.json",
+    "contracts/schemas/task.v1.schema.json",
+    "contracts/schemas/verification.v1.schema.json",
+    "requirements-p0-actions.lock",
+    "requirements-p0-actions.txt",
+    "tests/test_b0_contracts.py",
+    "tests/test_b3_p0_actions_adapter.py",
+    "tools/p0_actions_adapter.py",
+    "tools/p0_actions_boundary.py"
+  ],
+  "denied_paths": [
+    ".ai/**",
+    "AI_OS.md",
+    "README.md",
+    "CHANGELOG.md",
+    "contracts/registries/**",
+    "contracts/schemas/review-attestation.v1.schema.json",
+    "docs/**",
+    "fixtures/**",
+    "requirements-b0.txt",
+    "standards/**",
+    "templates/**",
+    "tests/test_b3_canonical_repository_contract.py",
+    "tests/test_b3_canonical_repository_plan.py",
+    "tests/test_b3_canonical_repository_registry.py",
+    "tests/test_b3_canonical_repository_cli.py",
+    "tests/test_b3_terminal_propagation.py",
+    ".github/workflows/b3-terminal-propagation.yml"
+  ],
+  "risk_class": "L3",
+  "executor": {
+    "adapter": "human-supervised-claude-code",
+    "version": "p0-actions-contract-issue-68-corrective-4",
+    "max_attempts": 3,
+    "timeout_seconds": 7200
+  },
+  "acceptance_criteria": [
+    {
+      "id": "AC-P0-IMMUTABLE-VERIFIER-CORRECTIVE-4",
+      "predicate_id": "process.exit_code.equals",
+      "parameters": {
+        "component": "p0-actions-adapter-seven-finding-correction",
+        "value": 0,
+        "trusted_evidence_source": "workflow_observed_process_exit_code",
+        "forbidden_sources": [
+          "executor_self_report",
+          "actions_job_conclusion",
+          "pull_request_body",
+          "review_comment_prose"
+        ],
+        "specification": {
+          "authorization": {
+            "prior_task_commit": "8bdaf954bf621f2da1948abb61f1312a6803dfd5",
+            "reviewed_head": "31fbd7b07e1e1b63b400f61fa5da3037dde04e86",
+            "prior_exact_head_run_id": "29951001467",
+            "independent_review_verdict": "REQUEST_CHANGES",
+            "independent_reviewer_authored_commits": [],
+            "preserve_existing_pr_branch": true,
+            "preserve_draft_state": true,
+            "merge_forbidden_without_owner_approval": true
+          },
+          "candidate_git_metadata_isolation": {
+            "trusted_git_after_provider_never_uses_candidate_git_dir": true,
+            "trusted_repo_reconstructed_at_admitted_base": true,
+            "only_allowlisted_regular_file_bytes_or_deletions_transferred": true,
+            "filesystem_diff_does_not_invoke_candidate_git": true,
+            "symlink_hardlink_fifo_socket_device_and_special_file_substitution_rejected": true,
+            "candidate_git_config_attributes_hooks_filters_external_diff_and_textconv_never_execute": true,
+            "background_filter_children_never_survive": true
+          },
+          "required_check_containment": {
+            "boundaries": [
+              "executor",
+              "publisher",
+              "finalizer"
+            ],
+            "cgroup_v2_or_equivalent_enumerable_domain_required": true,
+            "process_group_only_is_insufficient": true,
+            "success_nonzero_timeout_background_setsid_and_double_fork_members_killed_and_reaped": true,
+            "domain_empty_proven_before_trusted_continuation": true,
+            "containment_unavailable_fails_closed": true
+          },
+          "timeout_evidence": {
+            "stdout_and_stderr_types": [
+              "bytes",
+              "str",
+              "null"
+            ],
+            "invalid_utf8_decoded_with_replacement": true,
+            "capture_is_streamed_and_bounded": true,
+            "maximum_combined_log_bytes": 1048576,
+            "cleanup_precedes_evidence_and_guard": true,
+            "evidence_and_guard_finalize_for_every_outcome": true
+          },
+          "immutable_supply_chain": {
+            "all_nonlocal_actions_pinned_to_full_commit_sha": true,
+            "provider_action_source_digest_recorded": true,
+            "python_install_uses_complete_hash_locked_wheels": true,
+            "claude_bun_codex_and_proxy_installers_avoid_mutable_scripts": true,
+            "provider_executables_content_bound_before_invocation": true,
+            "runtime_version_and_digest_rechecked_after_invocation": true,
+            "runtime_lock_is_admission_bound_and_in_immutable_snapshot": true,
+            "mutable_refs_forbidden": true
+          },
+          "truthful_provider_provenance": {
+            "adapter_contract_version_separate_from_provider_executable_version": true,
+            "claude_expected_version": "2.0.45",
+            "observed_executable_version_required": true,
+            "observed_executable_sha256_required": true,
+            "admission_expectation_mismatch_fails_closed": true,
+            "hardcoded_claude_2_1_197_claim_removed": true
+          },
+          "codex_privilege_boundary": {
+            "untrusted_codex_never_has_sudo": true,
+            "irreversible_drop_sudo_not_applied_to_trusted_continuation_identity": true,
+            "dedicated_unprivileged_identity_or_fresh_job_required": true,
+            "trusted_validation_identity_retains_sudo": true,
+            "exact_action_privilege_transition_integration_regression": true,
+            "paid_model_api_execution_forbidden_without_separate_owner_notice": true
+          },
+          "artifact_identity": {
+            "verify_only_inputs_bind_run_id_and_run_attempt": true,
+            "verify_only_inputs_bind_artifact_id_name_size_and_sha256": true,
+            "upload_artifact_id_and_digest_captured": true,
+            "download_uses_exact_artifact_id": true,
+            "raw_archive_bytes_hashed_before_extraction": true,
+            "duplicate_missing_expired_wrong_attempt_wrong_name_wrong_size_and_wrong_digest_rejected": true,
+            "two_attempts_with_same_artifact_name_cannot_replay": true
+          },
+          "preserved_properties": {
+            "complete_admission_bound_immutable_bundle_and_import_closure": true,
+            "root_owned_read_only_snapshot_and_guard": true,
+            "exact_snapshot_file_isolated_imports": true,
+            "candidate_real_cwd_argv_exit_and_minimal_clean_env": true,
+            "sitecustomize_and_stdlib_shadow_protection": true,
+            "publisher_credential_separation": true,
+            "publisher_token_absent_from_child_argv_and_env": true,
+            "missing_subject_exit_125_without_base_execution": true,
+            "strict_protected_current_default_admission": true,
+            "ancestry_default_branch_and_target_only_push_checks": true,
+            "no_merge_default_write_or_protection_mutation": true
+          },
+          "postconditions": {
+            "changed_paths_within_allowed_paths": true,
+            "git_diff_check": true,
+            "task_specific_tests": true,
+            "b3_suite": true,
+            "full_repository_suite": true,
+            "workflow_yaml_parse": true,
+            "runtime_lock_schema_and_digest_checks": true,
+            "targeted_adversarial_regressions": true,
+            "fresh_exact_sha_evidence_pack": true,
+            "fresh_independent_exact_sha_chatgpt_pro_maximum_review": true,
+            "post_merge_protected_default_production_canary_required": true,
+            "draft_pr_only": true
+          }
+        }
+      },
+      "required": true,
+      "linked_checks": [
+        "issue-68-p0-immutable-verifier-bootstrap-tests"
+      ]
+    }
+  ],
+  "required_checks": [
+    {
+      "id": "issue-68-p0-immutable-verifier-bootstrap-tests",
+      "command_id": "repo.contracts.b3.tests",
+      "required": true,
+      "expected_postconditions": [
+        {
+          "predicate_id": "process.exit_code.equals",
+          "parameters": {
+            "value": 0
+          }
+        }
+      ]
+    }
+  ],
+  "review_policy": {
+    "reviewer_class": "independent-engineering",
+    "policy_id": "review-independence.v1",
+    "forbidden_lineage_overlaps": [
+      "agent_runtime_id",
+      "credential_principal",
+      "authored_commits"
+    ],
+    "minimum_distinct_human_operators": 1
+  },
+  "external_side_effects": "owner_approved",
+  "created_by": "github:yurykuchumov-ux/codex-control-plane",
+  "created_at": "2026-07-22T21:00:27Z"
+}
