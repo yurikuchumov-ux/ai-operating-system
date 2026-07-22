@@ -386,6 +386,73 @@ class CanonicalRepositoryCliTests(unittest.TestCase):
                 ["schema_definition_invalid"],
             )
 
+    def test_external_schema_reference_fails_closed_without_network(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            schema = Path(temporary) / "external-ref-schema.json"
+            schema.write_text(
+                json.dumps(
+                    {
+                        "$schema": "https://json-schema.org/draft/2020-12/schema",
+                        "$ref": "http://127.0.0.1:1/remote.json",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with patch("socket.create_connection") as network_connection:
+                observed = self.in_process_cli.run(["--schema", str(schema)])
+            network_connection.assert_not_called()
+            self.assert_result(
+                observed,
+                1,
+                ["schema_definition_invalid"],
+            )
+
+    def test_all_nonlocal_schema_reference_keywords_fail_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for keyword, reference in (
+                ("$ref", "relative-schema.json"),
+                ("$dynamicRef", "https://example.invalid/schema"),
+                ("$recursiveRef", "file:///tmp/schema.json"),
+            ):
+                with self.subTest(keyword=keyword):
+                    schema = root / f"{keyword[1:]}-schema.json"
+                    schema.write_text(
+                        json.dumps(
+                            {
+                                "$schema": (
+                                    "https://json-schema.org/draft/2020-12/schema"
+                                ),
+                                "allOf": [{keyword: reference}],
+                            }
+                        ),
+                        encoding="utf-8",
+                    )
+                    self.assert_result(
+                        self.subprocess_cli.run(["--schema", str(schema)]),
+                        1,
+                        ["schema_definition_invalid"],
+                    )
+
+    def test_local_schema_reference_remains_supported(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            schema = Path(temporary) / "local-ref-schema.json"
+            schema.write_text(
+                json.dumps(
+                    {
+                        "$schema": "https://json-schema.org/draft/2020-12/schema",
+                        "$defs": {"registry": {"type": "object"}},
+                        "$ref": "#/$defs/registry",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            self.assert_result(
+                self.subprocess_cli.run(["--schema", str(schema)]),
+                0,
+                [],
+            )
+
     def test_schema_validation_failure_is_preserved(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             invalid = Path(temporary) / "registry.json"

@@ -203,6 +203,25 @@ def _load_text(path: Path, kind: str) -> tuple[str | None, list[str]]:
     return _decode(content, kind)
 
 
+def _has_external_schema_reference(value: Any) -> bool:
+    """Return whether a schema can resolve a reference outside itself."""
+
+    if isinstance(value, dict):
+        for key, child in value.items():
+            if (
+                key in {"$ref", "$dynamicRef", "$recursiveRef"}
+                and isinstance(child, str)
+                and not child.startswith("#")
+            ):
+                return True
+            if _has_external_schema_reference(child):
+                return True
+        return False
+    if isinstance(value, list):
+        return any(_has_external_schema_reference(child) for child in value)
+    return False
+
+
 def _normalized_validator_errors(value: Any) -> list[str]:
     if not isinstance(value, list):
         raise TypeError("validator did not return a list")
@@ -232,6 +251,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         schema, errors = _load_json(arguments["schema"], "schema")
         if errors:
             return _emit(errors, 1)
+        if _has_external_schema_reference(schema):
+            return _emit(["schema_definition_invalid"], 1)
 
         _purge_dependency_modules("jsonschema")
         registry_module = _load_repo_module(_REGISTRY_VALIDATOR)
