@@ -3,7 +3,7 @@
   "task_id": "yurikuchumov-ux/ai-operating-system#57",
   "repository": "yurikuchumov-ux/ai-operating-system",
   "issue_number": 57,
-  "objective": "Corrective Actions-backed attempt 2/3 for the owner-authorized bounded B4-B redesign. Implement a finite raw-source grammar for the exact governed Section 3.1 inventory block, preserve the stage-A registry bindings and exact documentation replacement, and make no claim about rendered Markdown semantics. Start from protected main; do not copy the rejected CommonMark emulation from Draft PR #60 or rely on the locally authored PR #61 as execution evidence. Run 29903957551 proved attempt 1 fail-closed because the generated test module imported unavailable pytest and its plain functions would not be discovered by the registered unittest command; use stdlib unittest.TestCase regressions only and add no dependency.",
+  "objective": "Final corrective Actions-backed attempt 3/3 for the owner-authorized bounded B4-B redesign. Implement a finite raw-source grammar for the exact governed Section 3.1 inventory block, preserve the stage-A registry bindings and exact documentation replacement, and make no claim about rendered Markdown semantics. Start from protected main; do not copy the rejected CommonMark emulation from Draft PR #60 or rely on the locally authored PR #61 as execution evidence. Run 29903957551 proved attempt 1 fail-closed because the generated test module imported unavailable pytest. Run 29904531362 produced candidate 06f7a2ea172feecbc24b6b69c81e5075e56139aa, but independent verification proved it false-succeeds when a cell has more than the single permitted ASCII padding space. Use stdlib unittest.TestCase regressions only, add no dependency, and enforce raw row equality without strip-based normalization.",
   "change_policy": {
     "change_required": true,
     "policy_exception_id": null,
@@ -15,7 +15,7 @@
   },
   "base_ref": "main",
   "base_sha": "e1ce7b0d2881c019cd0768f6b89ddb421db407c3",
-  "branch": "agent/issue-57-bounded-raw-grammar-v4-actions",
+  "branch": "agent/issue-57-bounded-raw-grammar-v4-actions-attempt-3",
   "allowed_paths": [
     "tools/canonical_repository_plan.py",
     "tests/test_b3_canonical_repository_plan.py",
@@ -82,6 +82,12 @@
               "immutable_evidence_artifact": "p0-run-29903957551-evidence",
               "material_evidence": "tests/test_b3_canonical_repository_plan.py imported unavailable pytest and defined plain pytest-style functions, while the registered command is stdlib unittest discovery"
             },
+            "actions_attempt_2": {
+              "run_id": 29904531362,
+              "candidate_sha": "06f7a2ea172feecbc24b6b69c81e5075e56139aa",
+              "result": "rejected_by_independent_postcondition_verification",
+              "material_evidence": "replacing the exact first row prefix '| Governance and shared contracts |' with '|  Governance and shared contracts  |' returned [] because strip-based normalization erased forbidden padding; the declared raw-source grammar requires exact single-ASCII-space cell padding"
+            },
             "reuse_policy": "requirements and adversarial evidence only; do not copy rejected implementation code or treat local PR #61 as execution evidence"
           },
           "stage_boundary": {
@@ -126,6 +132,7 @@
             ],
             "line_comparison": "raw full-line equality without strip, case folding, entity decoding, URL decoding or Markdown normalization",
             "row_shape": "one leading delimiter, exactly five preserved interior cells with exactly one ASCII padding space, one trailing delimiter",
+            "row_validation_algorithm_requirement": "after identifying exactly five raw interior cells, derive cell values without strip or other whitespace normalization and require exact reconstruction of the original row as '| ' plus the five values joined by ' | ' plus ' |'; any extra leading/trailing ASCII space, tab or other boundary whitespace in any cell is invalid",
             "row_count": 3,
             "fourth_contiguous_pipe_row_forbidden": true,
             "repository_url_token": "the complete raw row contains exactly one literal lowercase https://github.com/OWNER/REPOSITORY token",
@@ -150,6 +157,21 @@
             "plan_label_set_equals_registry_label_set": true,
             "duplicate_role_cells_forbidden": true,
             "main_sha_rule": "exact surrounding backticks and lowercase [0-9a-f]{40}; digits-only SHA is structurally valid"
+          },
+          "registry_input_structure": {
+            "registry_type": "object",
+            "canonical_repositories_type": "array",
+            "entry_type": "object",
+            "required_string_fields": [
+              "label",
+              "full_name",
+              "url",
+              "visibility",
+              "boundary"
+            ],
+            "label_non_empty": true,
+            "labels_unique": true,
+            "invalid_structure_must_fail_before_plan_semantics": true
           },
           "expected_inventory_rows": [
             {
@@ -181,6 +203,7 @@
             "exact committed plan plus exact committed registry returns an empty list",
             "missing and duplicate raw sentinel return their specific codes",
             "the exact blank/header/separator sequence is mandatory and raw whitespace variants fail",
+            "for each of the five data-row cells, one extra leading ASCII space, one extra trailing ASCII space, a leading tab after the required padding and a trailing tab before the required padding each fail; no strip-based normalization is permitted",
             "fewer or more than five preserved interior cells fail",
             "ordinary and empty sixth cells fail before semantic field validation",
             "a fourth contiguous leading-pipe row fails",
@@ -191,6 +214,7 @@
             "digits-only 40-character lowercase-hex SHA is structurally accepted",
             "supplied registry label, full_name, URL, visibility and boundary mutations prove the registry is used",
             "non-string plan and structurally invalid registry return their input codes",
+            "registry entries with a missing or non-string required field, an empty label or duplicate labels fail as invalid registry input before plan semantics",
             "tests contain no CommonMark, GFM or HTML parser and make no renderer-semantic assertions",
             "every new regression is a stdlib unittest.TestCase method discovered and executed by the registered command; pytest imports, pytest-style plain test functions and new dependencies are forbidden"
           ],
