@@ -43,7 +43,7 @@
   "risk_class": "L2",
   "executor": {
     "adapter": "human-supervised-claude-code",
-    "version": "claude-code-2.1.197-p0-immutable-verifier-bootstrap-corrective-2",
+    "version": "claude-code-2.1.197-p0-immutable-verifier-bootstrap-corrective-3",
     "max_attempts": 3,
     "timeout_seconds": 1800
   },
@@ -63,25 +63,43 @@
         ],
         "specification": {
           "corrective_attempt": {
-            "attempt": 2,
-            "prior_run_id": "29935048547",
-            "prior_result": "required_check_failed",
+            "attempt": 3,
+            "prior_run_id": "29935609264",
+            "prior_result": "executor_and_publisher_B3_checks_passed_but_publisher_transport_failed_and_independent_code_review_found_incomplete_trust_separation",
             "observed_changed_paths": [
               ".github/workflows/p0-actions-adapter.yml",
               "tests/test_b3_p0_actions_adapter.py"
             ],
-            "prior_b3_result": "Ran 343 tests; 342 passed; one failed",
-            "blocking_test": "ImmutableVerifierBootstrapTests.test_snapshot_sha256_validated_against_admission_outputs",
-            "blocking_evidence": "snapshot step copied immutable files but did not contain observed_adapter_sha256= or an equivalent explicit runtime comparison against admission-bound SHA-256 outputs",
+            "prior_b3_result": "executor and publisher registered B3 commands exited 0",
+            "blocking_test": "existing regressions failed to detect subject-code imports after target checkout",
+            "blocking_evidence": "independent exact-patch inspection found remaining workspace imports in Independently run registry argv and Assemble trusted signal, plus python3 tools/p0_actions_adapter.py finalize; flat snapshot layout also makes p0_actions_adapter dependencies resolve outside the snapshot",
             "required_correction": {
-              "do_not_weaken_or_delete_blocking_test": true,
-              "compute_snapshot_hashes_after_copy": true,
-              "compare_snapshot_adapter_hash_to_admission_adapter_sha256": true,
-              "compare_snapshot_registry_hash_to_admission_registry_sha256": true,
-              "compare_snapshot_session_parser_hash_to_admission_session_parser_sha256": true,
-              "mismatch_exits_nonzero_before_any_trusted_import": true,
-              "perform_equivalent_validation_at_every_new_snapshot_security_boundary": true,
-              "preserve_all_other_v1_behavior_and_regressions": true
+              "replace_flat_snapshot_with_repo_shaped_bundle": true,
+              "bundle_root_exact": "/tmp/p0-immutable-control",
+              "bundle_required_paths": [
+                "tools/p0_actions_adapter.py",
+                "tools/propagate_b3.py",
+                "contracts/registries/commands.v1.json",
+                "contracts/schemas/task.v1.schema.json",
+                "contracts/schemas/result.v1.schema.json",
+                "contracts/schemas/verification.v1.schema.json",
+                "contracts/schemas/review-attestation.v1.schema.json"
+              ],
+              "bundle_created_from_base_before_executor_or_target_checkout": true,
+              "bundle_exact_file_set_and_hash_manifest_bound_at_admission": true,
+              "bundle_mismatch_exits_before_trusted_import": true,
+              "execute_postcondition_import_exact": "/tmp/p0-immutable-control/tools/p0_actions_adapter.py",
+              "publisher_import_exact": "/tmp/p0-immutable-control/tools/p0_actions_adapter.py",
+              "independent_required_check_resolver_import_exact": "/tmp/p0-immutable-control/tools/p0_actions_adapter.py",
+              "trusted_signal_assembly_import_exact": "/tmp/p0-immutable-control/tools/p0_actions_adapter.py",
+              "finalize_cli_exact": "/tmp/p0-immutable-control/tools/p0_actions_adapter.py",
+              "candidate_registered_argv_cwd_remains_candidate_checkout": true,
+              "no_from_tools_p0_actions_adapter_after_subject_checkout": true,
+              "no_python3_tools_p0_actions_adapter_finalize": true,
+              "add_step_specific_source_regressions_for_every_trusted_import": true,
+              "add_mutation_regression_replacing_candidate_evaluate_with_always_pass": true,
+              "do_not_claim_GITHUB_TOKEN_push_transport_as_code_success": true,
+              "preserve_prior_hash_checks_and_all_v1_security_behavior": true
             }
           },
           "immutable_control_snapshot": {
