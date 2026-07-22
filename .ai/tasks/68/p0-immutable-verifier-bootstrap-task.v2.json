@@ -1,0 +1,181 @@
+{
+  "schema_version": "1.0.0",
+  "task_id": "yurikuchumov-ux/ai-operating-system#68",
+  "repository": "yurikuchumov-ux/ai-operating-system",
+  "issue_number": 68,
+  "objective": "Make P0 Actions Adapter self-updates truthful by using verifier and control code snapshotted from the exact immutable protected-default base for executor postconditions, publisher verification, trusted-signal assembly and finalization, while candidate registered commands still run against the candidate checkout.",
+  "change_policy": {
+    "change_required": true,
+    "policy_exception_id": null,
+    "no_change": {
+      "allowed": false,
+      "reason_codes": [],
+      "required_evidence_types": []
+    }
+  },
+  "base_ref": "main",
+  "base_sha": "d4f10b714de3afae84d48dfcd3daa6405092a973",
+  "branch": "agent/issue-68-immutable-verifier-bootstrap",
+  "allowed_paths": [
+    ".github/workflows/p0-actions-adapter.yml",
+    "tests/test_b3_p0_actions_adapter.py"
+  ],
+  "denied_paths": [
+    ".ai/**",
+    "AI_OS.md",
+    "README.md",
+    "CHANGELOG.md",
+    "contracts/**",
+    "docs/**",
+    "fixtures/**",
+    "requirements-*.txt",
+    "standards/**",
+    "templates/**",
+    "tools/**",
+    "tests/test_b0_contracts.py",
+    "tests/test_b3_canonical_repository_contract.py",
+    "tests/test_b3_canonical_repository_plan.py",
+    "tests/test_b3_canonical_repository_registry.py",
+    "tests/test_b3_canonical_repository_cli.py",
+    "tests/test_b3_terminal_propagation.py",
+    ".github/workflows/b3-terminal-propagation.yml"
+  ],
+  "risk_class": "L2",
+  "executor": {
+    "adapter": "human-supervised-claude-code",
+    "version": "claude-code-2.1.197-p0-immutable-verifier-bootstrap-corrective-2",
+    "max_attempts": 3,
+    "timeout_seconds": 1800
+  },
+  "acceptance_criteria": [
+    {
+      "id": "AC-P0-IMMUTABLE-VERIFIER-BOOTSTRAP",
+      "predicate_id": "process.exit_code.equals",
+      "parameters": {
+        "component": "p0-actions-adapter-immutable-control-plane",
+        "value": 0,
+        "trusted_evidence_source": "workflow_observed_process_exit_code",
+        "forbidden_sources": [
+          "executor_self_report",
+          "actions_job_conclusion",
+          "pull_request_body",
+          "review_comment_prose"
+        ],
+        "specification": {
+          "corrective_attempt": {
+            "attempt": 2,
+            "prior_run_id": "29935048547",
+            "prior_result": "required_check_failed",
+            "observed_changed_paths": [
+              ".github/workflows/p0-actions-adapter.yml",
+              "tests/test_b3_p0_actions_adapter.py"
+            ],
+            "prior_b3_result": "Ran 343 tests; 342 passed; one failed",
+            "blocking_test": "ImmutableVerifierBootstrapTests.test_snapshot_sha256_validated_against_admission_outputs",
+            "blocking_evidence": "snapshot step copied immutable files but did not contain observed_adapter_sha256= or an equivalent explicit runtime comparison against admission-bound SHA-256 outputs",
+            "required_correction": {
+              "do_not_weaken_or_delete_blocking_test": true,
+              "compute_snapshot_hashes_after_copy": true,
+              "compare_snapshot_adapter_hash_to_admission_adapter_sha256": true,
+              "compare_snapshot_registry_hash_to_admission_registry_sha256": true,
+              "compare_snapshot_session_parser_hash_to_admission_session_parser_sha256": true,
+              "mismatch_exits_nonzero_before_any_trusted_import": true,
+              "perform_equivalent_validation_at_every_new_snapshot_security_boundary": true,
+              "preserve_all_other_v1_behavior_and_regressions": true
+            }
+          },
+          "immutable_control_snapshot": {
+            "source": "exact protected-default base checkout admitted by base SHA",
+            "created_before_executor_edits": true,
+            "created_before_subject_checkout": true,
+            "adapter_registry_and_session_parser_bytes_copied_outside_workspace": true,
+            "admission_observed_sha256_binding_required": true,
+            "read_only_and_tamper_evident_state_required": true,
+            "missing_unreadable_symlinked_substituted_or_modified_snapshot_fails_closed": true
+          },
+          "trusted_import_policy": {
+            "execute_postconditions_use_only_base_snapshot": true,
+            "publisher_reverification_uses_only_base_snapshot": true,
+            "finalizer_validation_signal_assembly_and_document_generation_use_only_base_snapshot": true,
+            "workspace_or_subject_module_shadowing_forbidden": true,
+            "module_loaded_by_exact_snapshot_file_path": true,
+            "trusted_module_hash_checked_before_each_security_boundary": true
+          },
+          "candidate_behavior": {
+            "registered_required_command_runs_on_candidate_checkout": true,
+            "candidate_tests_import_candidate_code": true,
+            "candidate_diff_scope_recomputed_by_trusted_base_module": true,
+            "candidate_adapter_may_change_without_automatic_control_integrity_failure": true,
+            "candidate_adapter_cannot_influence_its_own_verifier_decision": true
+          },
+          "regressions": {
+            "subject_self_approval_mutation_rejected": true,
+            "snapshot_hash_tamper_rejected": true,
+            "snapshot_path_substitution_rejected": true,
+            "workspace_shadowing_rejected": true,
+            "ordinary_non_adapter_execute_behavior_unchanged": true,
+            "verify_only_evidence_binding_unchanged": true,
+            "publisher_actor_separation_unchanged": true,
+            "required_check_real_exit_code_and_timeout_unchanged": true,
+            "failure_result_and_check_run_always_published": true
+          },
+          "security": {
+            "permissions_least_privilege": true,
+            "author_jobs_no_write_credentials": true,
+            "verifier_only_checks_write": true,
+            "shell_injection_from_dispatch_inputs_forbidden": true,
+            "mutable_refs_forbidden": true,
+            "artifact_replay_forbidden": true,
+            "model_api_secret_use_forbidden": true,
+            "branch_protection_change_forbidden": true,
+            "default_branch_write_and_merge_forbidden": true
+          },
+          "postconditions": {
+            "changed_paths_equal_allowed_paths": true,
+            "git_diff_check": true,
+            "task_specific_tests": true,
+            "b3_suite": true,
+            "full_repository_suite": true,
+            "workflow_yaml_parse": true,
+            "targeted_mutation_checks": true,
+            "real_actions_execute_run_id_required": true,
+            "fresh_independent_exact_sha_chatgpt_pro_maximum_review": true,
+            "draft_pr_only": true
+          }
+        }
+      },
+      "required": true,
+      "linked_checks": [
+        "issue-68-p0-immutable-verifier-bootstrap-tests"
+      ]
+    }
+  ],
+  "required_checks": [
+    {
+      "id": "issue-68-p0-immutable-verifier-bootstrap-tests",
+      "command_id": "repo.contracts.b3.tests",
+      "required": true,
+      "expected_postconditions": [
+        {
+          "predicate_id": "process.exit_code.equals",
+          "parameters": {
+            "value": 0
+          }
+        }
+      ]
+    }
+  ],
+  "review_policy": {
+    "reviewer_class": "independent-engineering",
+    "policy_id": "review-independence.v1",
+    "forbidden_lineage_overlaps": [
+      "agent_runtime_id",
+      "credential_principal",
+      "authored_commits"
+    ],
+    "minimum_distinct_human_operators": 1
+  },
+  "external_side_effects": "owner_approved",
+  "created_by": "github:yurykuchumov-ux/codex-control-plane",
+  "created_at": "2026-07-22T15:53:40Z"
+}
