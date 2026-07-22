@@ -1,0 +1,232 @@
+{
+  "schema_version": "1.0.0",
+  "task_id": "yurikuchumov-ux/ai-operating-system#57",
+  "repository": "yurikuchumov-ux/ai-operating-system",
+  "issue_number": 57,
+  "objective": "Owner-authorized bounded redesign of B4-B after the v3 and Codex corrective reviews proved that semantic Markdown wording implied an unbounded bespoke CommonMark/GFM parser. Implement a finite raw-source grammar for the exact governed Section 3.1 inventory block, preserve the stage-A registry bindings and exact documentation replacement, and make no claim about rendered Markdown semantics. Start from protected main; do not copy the rejected CommonMark emulation from Draft PR #60.",
+  "change_policy": {
+    "change_required": true,
+    "policy_exception_id": null,
+    "no_change": {
+      "allowed": false,
+      "reason_codes": [],
+      "required_evidence_types": []
+    }
+  },
+  "base_ref": "main",
+  "base_sha": "e1ce7b0d2881c019cd0768f6b89ddb421db407c3",
+  "branch": "agent/issue-57-bounded-raw-grammar-v4",
+  "allowed_paths": [
+    "tools/canonical_repository_plan.py",
+    "tests/test_b3_canonical_repository_plan.py",
+    "docs/AI_DEVELOPMENT_STUDIO_EXECUTION_PLAN.md"
+  ],
+  "denied_paths": [
+    ".ai/tasks/**",
+    ".github/**",
+    "AI_OS.md",
+    "README.md",
+    "CHANGELOG.md",
+    "contracts/**",
+    "fixtures/**",
+    "requirements-*.txt",
+    "standards/**",
+    "templates/**",
+    "tools/canonical_repository_registry.py",
+    "tools/validate_canonical_repositories.py",
+    "tools/p0_actions_adapter.py",
+    "tools/validate_b0.py",
+    "tools/verify_b2.py",
+    "tests/test_b3_canonical_repository_contract.py",
+    "tests/test_b3_canonical_repository_registry.py",
+    "tests/test_b3_canonical_repository_cli.py",
+    "tests/test_b3_p0_actions_adapter.py",
+    "tests/test_b3_terminal_propagation.py"
+  ],
+  "risk_class": "L2",
+  "executor": {
+    "adapter": "human-supervised-codex",
+    "version": "codex-desktop-issue-57-bounded-raw-v4",
+    "max_attempts": 3,
+    "timeout_seconds": 1800
+  },
+  "acceptance_criteria": [
+    {
+      "id": "AC-CANONICAL-PLAN-BOUNDED-RAW-V4",
+      "predicate_id": "process.exit_code.equals",
+      "parameters": {
+        "component": "issue-57-canonical-repository-plan-bounded-raw-v4",
+        "value": 0,
+        "trusted_evidence_source": "workflow_observed_process_exit_code",
+        "forbidden_sources": [
+          "executor_self_report",
+          "actions_job_conclusion"
+        ],
+        "specification": {
+          "owner_decision": {
+            "decision": "authorize_bounded_raw_source_redesign",
+            "recorded_in_session": true,
+            "prior_hold_evidence": "https://github.com/yurikuchumov-ux/ai-operating-system/issues/57#issuecomment-5039866863"
+          },
+          "attempt_lineage": {
+            "claude_attempts_exhausted": 3,
+            "codex_rejected_heads": [
+              "7094b12111944dc541fb5a2fea215584b63e4436",
+              "bf75bb2f5c4cffdc69bf677e89d9d59140f1fa94",
+              "3bfdafa3cd3cece1c69e9dfe699c46e9e0a651a3"
+            ],
+            "draft_pr": 60,
+            "reuse_policy": "requirements and adversarial evidence only; do not copy the rejected semantic-Markdown parser"
+          },
+          "stage_boundary": {
+            "stage": "B4-B",
+            "stage_a_registry_path": "contracts/canonical-repositories.v1.json",
+            "stage_a_registry_state": "read-only governed input",
+            "stage_c_cli_forbidden": true,
+            "argument_parsing_forbidden": true,
+            "filesystem_error_presentation_forbidden": true,
+            "commonmark_or_gfm_semantics_forbidden": true,
+            "markdown_dependency_change_forbidden": true
+          },
+          "production_api_exact": {
+            "module": "tools/canonical_repository_plan.py",
+            "public_function": "validate_execution_plan(plan_text, registry)",
+            "return_type": "List[str]",
+            "success_value": [],
+            "error_order": "sorted unique stable codes",
+            "registry_argument": "the supplied stage-A registry is authoritative and must actually be used",
+            "no_file_reads": true,
+            "no_cli": true
+          },
+          "bounded_raw_source_grammar": {
+            "interpretation": "raw source lines only; this validator does not parse or make claims about CommonMark, GFM, HTML blocks, fenced code, blockquotes, reference links or renderer output",
+            "sentinel": "### 3.1 Verified names and boundaries",
+            "sentinel_count": 1,
+            "contiguous_lines_after_sentinel": [
+              "",
+              "| Role | Canonical repository | Visibility | `main` SHA | Boundary |",
+              "| --- | --- | --- | --- | --- |",
+              "exact registry-bound row 1",
+              "exact registry-bound row 2",
+              "exact registry-bound row 3"
+            ],
+            "line_comparison": "raw full-line equality without strip, case folding, entity decoding, URL decoding or Markdown normalization",
+            "row_shape": "one leading delimiter, exactly five preserved interior cells with exactly one ASCII padding space, one trailing delimiter",
+            "row_count": 3,
+            "fourth_contiguous_pipe_row_forbidden": true,
+            "repository_url_token": "the complete raw row contains exactly one literal lowercase https://github.com/OWNER/REPOSITORY token",
+            "repository_cell": "the second cell fullmatches exactly [`FULL_NAME`](URL), with registry full_name and URL and no prefix or suffix",
+            "out_of_scope_examples": [
+              "whether the sentinel renders as a Markdown heading",
+              "whether later prose renders as another table",
+              "reference-style Markdown link resolution",
+              "HTML block start and termination rules",
+              "CommonMark or GFM conformance"
+            ]
+          },
+          "identity_binding": {
+            "join_key": "exact first Role cell equals registry label",
+            "required_registry_fields_compared": [
+              "label",
+              "full_name",
+              "url",
+              "visibility",
+              "boundary"
+            ],
+            "plan_label_set_equals_registry_label_set": true,
+            "duplicate_role_cells_forbidden": true,
+            "main_sha_rule": "exact surrounding backticks and lowercase [0-9a-f]{40}; digits-only SHA is structurally valid"
+          },
+          "expected_inventory_rows": [
+            {
+              "role_cell": "Governance and shared contracts",
+              "repository_full_name": "yurikuchumov-ux/ai-operating-system",
+              "repository_url": "https://github.com/yurikuchumov-ux/ai-operating-system",
+              "visibility": "public",
+              "main_sha": "a36a8eefcdd06c56edeec93057a90c58a239cf22",
+              "boundary": "owns governance, schemas, reusable workflows and evidence contracts"
+            },
+            {
+              "role_cell": "Compliant repository fixture",
+              "repository_full_name": "yurikuchumov-ux/ai-development-studio-template",
+              "repository_url": "https://github.com/yurikuchumov-ux/ai-development-studio-template",
+              "visibility": "public",
+              "main_sha": "ec088bf2e95e048ce1f5b69d969542b516afbc8b",
+              "boundary": "owns the minimal downstream skeleton and repeatability tests"
+            },
+            {
+              "role_cell": "AI Development Studio platform",
+              "repository_full_name": "yurikuchumov-ux/-ai-development-studio",
+              "repository_url": "https://github.com/yurikuchumov-ux/-ai-development-studio",
+              "visibility": "private",
+              "main_sha": "f6550d4078ffccc952db269081619fdfe57e598c",
+              "boundary": "owns the automated agentic software-development platform runtime and platform delivery"
+            }
+          ],
+          "required_regressions": [
+            "exact committed plan plus exact committed registry returns an empty list",
+            "missing and duplicate raw sentinel return their specific codes",
+            "the exact blank/header/separator sequence is mandatory and raw whitespace variants fail",
+            "fewer or more than five preserved interior cells fail",
+            "ordinary and empty sixth cells fail before semantic field validation",
+            "a fourth contiguous leading-pipe row fails",
+            "each raw row contains exactly one literal GitHub repository URL token",
+            "repository cell prefix, suffix, full-name mutation and URL mutation fail",
+            "Role duplication and label-set substitution fail",
+            "visibility, boundary and SHA mutations return specific codes",
+            "digits-only 40-character lowercase-hex SHA is structurally accepted",
+            "supplied registry label, full_name, URL, visibility and boundary mutations prove the registry is used",
+            "non-string plan and structurally invalid registry return their input codes",
+            "tests contain no CommonMark, GFM or HTML parser and make no renderer-semantic assertions"
+          ],
+          "documentation_change_exact": {
+            "path": "docs/AI_DEVELOPMENT_STUDIO_EXECUTION_PLAN.md",
+            "only_changed_line": "the third Section 3.1 inventory data row",
+            "replacement_row": "| AI Development Studio platform | [`yurikuchumov-ux/-ai-development-studio`](https://github.com/yurikuchumov-ux/-ai-development-studio) | private | `f6550d4078ffccc952db269081619fdfe57e598c` | owns the automated agentic software-development platform runtime and platform delivery |",
+            "first_two_rows_byte_identical": true,
+            "all_unrelated_prose_and_rows_byte_identical": true
+          },
+          "review_focus": [
+            "contract and implementation describe the same finite raw-source grammar",
+            "no semantic Markdown claims remain",
+            "no rejected PR #60 parser code is copied",
+            "no false success exists within the declared raw-source grammar",
+            "failures outside the declared grammar are not misreported as supported behavior"
+          ]
+        }
+      },
+      "required": true,
+      "linked_checks": [
+        "issue-57-bounded-raw-v4-tests"
+      ]
+    }
+  ],
+  "required_checks": [
+    {
+      "id": "issue-57-bounded-raw-v4-tests",
+      "command_id": "repo.contracts.b3.tests",
+      "required": true,
+      "expected_postconditions": [
+        {
+          "predicate_id": "process.exit_code.equals",
+          "parameters": {
+            "value": 0
+          }
+        }
+      ]
+    }
+  ],
+  "review_policy": {
+    "reviewer_class": "independent-engineering",
+    "policy_id": "review-independence.v1",
+    "forbidden_lineage_overlaps": [
+      "agent_runtime_id",
+      "credential_principal",
+      "authored_commits"
+    ],
+    "minimum_distinct_human_operators": 1
+  },
+  "external_side_effects": "owner_approved",
+  "created_by": "github:yurykuchumov-ux/codex-control-plane",
+  "created_at": "2026-07-22T07:35:27Z"
+}
