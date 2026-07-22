@@ -7,9 +7,11 @@ import contextlib
 import importlib.util
 import io
 import json
+import os
 import subprocess
 import sys
 import tempfile
+import types
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -21,13 +23,17 @@ class _SubprocessHarness:
         self.repo_root = repo_root
 
     def run(
-        self, arguments: list[str] | None = None, cwd: Path | None = None
+        self,
+        arguments: list[str] | None = None,
+        cwd: Path | None = None,
+        environment: dict[str, str] | None = None,
     ) -> tuple[int, str, str]:
         completed = subprocess.run(
             [sys.executable, str(self.script), *(arguments or [])],
             cwd=str(cwd or self.repo_root),
             capture_output=True,
             check=False,
+            env=environment,
             text=True,
         )
         return completed.returncode, completed.stdout, completed.stderr
@@ -201,6 +207,63 @@ class CanonicalRepositoryCliTests(unittest.TestCase):
                 with self.subTest(label=label):
                     self.assert_result(self.subprocess_cli.run(arguments), 1, [error])
 
+    def test_non_finite_json_number_matrix(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for constant in ("NaN", "Infinity", "-Infinity"):
+                for kind, option, error in (
+                    ("registry", "--registry", "registry_json_invalid"),
+                    ("schema", "--schema", "schema_json_invalid"),
+                ):
+                    with self.subTest(kind=kind, constant=constant):
+                        invalid = root / f"{kind}-{constant}.json"
+                        invalid.write_text(
+                            '{"non_standard_number":' + constant + "}",
+                            encoding="utf-8",
+                        )
+                        self.assert_result(
+                            self.subprocess_cli.run([option, str(invalid)]),
+                            1,
+                            [error],
+                        )
+
+    def test_pythonpath_validator_shadowing_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            attacker_tools = root / "attacker" / "tools"
+            attacker_tools.mkdir(parents=True)
+            (attacker_tools / "__init__.py").write_text("", encoding="utf-8")
+            (attacker_tools / "canonical_repository_registry.py").write_text(
+                "def validate_registry(registry, schema):\n    return []\n",
+                encoding="utf-8",
+            )
+            (attacker_tools / "canonical_repository_plan.py").write_text(
+                "def validate_execution_plan(plan, registry):\n    return []\n",
+                encoding="utf-8",
+            )
+            invalid_registry = root / "registry.json"
+            invalid_plan = root / "plan.md"
+            invalid_registry.write_text("{}", encoding="utf-8")
+            invalid_plan.write_text("not a canonical plan", encoding="utf-8")
+
+            environment = os.environ.copy()
+            environment["PYTHONPATH"] = os.pathsep.join(
+                (str(root / "attacker"), str(self.repo_root))
+            )
+            self.assert_result(
+                self.subprocess_cli.run(
+                    [
+                        "--registry",
+                        str(invalid_registry),
+                        "--plan",
+                        str(invalid_plan),
+                    ],
+                    environment=environment,
+                ),
+                1,
+                ["cli_internal_error"],
+            )
+
     def test_invalid_schema_definition_is_preserved(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             invalid = Path(temporary) / "schema.json"
@@ -329,6 +392,47 @@ class CanonicalRepositoryCliTests(unittest.TestCase):
                     1,
                     ["cli_internal_error"],
                 )
+
+    def test_invalid_plan_validator_result_fails_closed(self) -> None:
+        for label, invalid_result in (
+            ("none", None),
+            ("string", "plan_section_missing"),
+            ("mapping", {"error": "plan_section_missing"}),
+            ("empty_code", [""]),
+        ):
+            with self.subTest(label=label), patch(
+                "tools.canonical_repository_plan.validate_execution_plan",
+                return_value=invalid_result,
+            ):
+                self.assert_result(
+                    self.in_process_cli.run(),
+                    1,
+                    ["cli_internal_error"],
+                )
+
+    def test_cached_registry_module_with_wrong_origin_fails_closed(self) -> None:
+        module_name = "tools.canonical_repository_registry"
+        attacker_module = types.ModuleType(module_name)
+        attacker_module.__file__ = "/tmp/attacker/canonical_repository_registry.py"
+        attacker_module.validate_registry = lambda registry, schema: []
+        with patch.dict(sys.modules, {module_name: attacker_module}):
+            self.assert_result(
+                self.in_process_cli.run(),
+                1,
+                ["cli_internal_error"],
+            )
+
+    def test_cached_plan_module_with_wrong_origin_fails_closed(self) -> None:
+        module_name = "tools.canonical_repository_plan"
+        attacker_module = types.ModuleType(module_name)
+        attacker_module.__file__ = "/tmp/attacker/canonical_repository_plan.py"
+        attacker_module.validate_execution_plan = lambda plan, registry: []
+        with patch.dict(sys.modules, {module_name: attacker_module}):
+            self.assert_result(
+                self.in_process_cli.run(),
+                1,
+                ["cli_internal_error"],
+            )
 
     def test_validator_errors_are_sorted_and_deduplicated(self) -> None:
         with patch(

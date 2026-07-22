@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import importlib
 import json
 import sys
 from pathlib import Path
@@ -15,6 +16,8 @@ DEFAULT_SCHEMA = (
     REPO_ROOT / "contracts" / "schemas" / "canonical-repositories.v1.schema.json"
 )
 DEFAULT_PLAN = REPO_ROOT / "docs" / "AI_DEVELOPMENT_STUDIO_EXECUTION_PLAN.md"
+_REGISTRY_VALIDATOR = REPO_ROOT / "tools" / "canonical_repository_registry.py"
+_PLAN_VALIDATOR = REPO_ROOT / "tools" / "canonical_repository_plan.py"
 _OPTIONS = {
     "--registry": "registry",
     "--schema": "schema",
@@ -24,6 +27,20 @@ _OPTIONS = {
 
 class _ArgumentError(Exception):
     """Raised for every declared command-line argument failure."""
+
+
+def _bind_repo_root() -> None:
+    root = str(REPO_ROOT)
+    sys.path[:] = [entry for entry in sys.path if entry != root]
+    sys.path.insert(0, root)
+
+
+def _import_repo_module(name: str, expected_path: Path) -> Any:
+    module = importlib.import_module(name)
+    origin = getattr(module, "__file__", None)
+    if origin is None or Path(origin).resolve() != expected_path.resolve():
+        raise ImportError(f"unexpected module origin for {name}")
+    return module
 
 
 def _emit(errors: Sequence[str], exit_code: int) -> int:
@@ -98,6 +115,10 @@ def _decode(content: bytes, kind: str) -> tuple[str | None, list[str]]:
         return None, [f"{kind}_file_unicode_invalid"]
 
 
+def _reject_json_constant(value: str) -> None:
+    raise ValueError(f"non-finite JSON number: {value}")
+
+
 def _load_json(path: Path, kind: str) -> tuple[Any | None, list[str]]:
     content, errors = _read_bytes(path, kind)
     if errors:
@@ -108,8 +129,11 @@ def _load_json(path: Path, kind: str) -> tuple[Any | None, list[str]]:
         return None, errors
 
     try:
-        return json.loads(text), []
-    except json.JSONDecodeError:
+        return json.loads(
+            text,
+            parse_constant=_reject_json_constant,
+        ), []
+    except (json.JSONDecodeError, ValueError):
         return None, [f"{kind}_json_invalid"]
 
 
@@ -139,12 +163,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     except Exception:
         return _emit(["cli_internal_error"], 1)
 
-    if str(REPO_ROOT) not in sys.path:
-        sys.path.insert(0, str(REPO_ROOT))
-
     try:
-        from tools.canonical_repository_plan import validate_execution_plan
-        from tools.canonical_repository_registry import validate_registry
+        _bind_repo_root()
 
         registry, errors = _load_json(arguments["registry"], "registry")
         if errors:
@@ -154,7 +174,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         if errors:
             return _emit(errors, 1)
 
-        errors = _normalized_validator_errors(validate_registry(registry, schema))
+        registry_module = _import_repo_module(
+            "tools.canonical_repository_registry",
+            _REGISTRY_VALIDATOR,
+        )
+        errors = _normalized_validator_errors(
+            registry_module.validate_registry(registry, schema)
+        )
         if errors:
             return _emit(errors, 1)
 
@@ -162,8 +188,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         if errors:
             return _emit(errors, 1)
 
+        plan_module = _import_repo_module(
+            "tools.canonical_repository_plan",
+            _PLAN_VALIDATOR,
+        )
         errors = _normalized_validator_errors(
-            validate_execution_plan(plan, registry)
+            plan_module.validate_execution_plan(plan, registry)
         )
         if errors:
             return _emit(errors, 1)
