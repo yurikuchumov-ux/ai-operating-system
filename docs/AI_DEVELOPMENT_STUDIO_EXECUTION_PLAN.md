@@ -84,6 +84,11 @@ hyphen are not the canonical current GitHub name.
 Renaming `-ai-development-studio` is a separate owner-controlled migration and
 is not performed by this planning PR.
 
+**DECISION:** canonical repository-name checks must enforce repository-token
+boundaries so `ai-development-studio-template` is never interpreted as the
+legacy alias `ai-development-studio`; alias mentions are allowed only when
+explicitly marked historical, incorrect, or discrepancy context.
+
 ### 3.2 Branch and protection baseline
 
 **VERIFIED FACT:** all three repositories use `main` as the default branch.
