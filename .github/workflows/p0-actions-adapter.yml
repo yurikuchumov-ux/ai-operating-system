@@ -243,6 +243,55 @@ jobs:
         with:
           python-version: "3.11"
       - run: python3 -m pip install --disable-pip-version-check --no-input -r requirements-p0-actions.txt
+      - name: Create immutable control snapshot before executor or target checkout
+        id: snapshot
+        env:
+          BASE_SHA: ${{ needs.admission.outputs.base_sha }}
+          EXPECTED_ADAPTER_SHA256: ${{ needs.admission.outputs.adapter_sha256 }}
+          EXPECTED_REGISTRY_SHA256: ${{ needs.admission.outputs.registry_sha256 }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$BASE_SHA"
+          mkdir -p /tmp/p0-immutable-control/tools /tmp/p0-immutable-control/contracts/registries /tmp/p0-immutable-control/contracts/schemas
+          cp tools/p0_actions_adapter.py /tmp/p0-immutable-control/tools/p0_actions_adapter.py
+          cp tools/propagate_b3.py /tmp/p0-immutable-control/tools/propagate_b3.py
+          cp contracts/registries/commands.v1.json /tmp/p0-immutable-control/contracts/registries/commands.v1.json
+          cp contracts/schemas/task.v1.schema.json /tmp/p0-immutable-control/contracts/schemas/task.v1.schema.json
+          cp contracts/schemas/result.v1.schema.json /tmp/p0-immutable-control/contracts/schemas/result.v1.schema.json
+          cp contracts/schemas/verification.v1.schema.json /tmp/p0-immutable-control/contracts/schemas/verification.v1.schema.json
+          cp contracts/schemas/review-attestation.v1.schema.json /tmp/p0-immutable-control/contracts/schemas/review-attestation.v1.schema.json
+          chmod -R a-w /tmp/p0-immutable-control
+          adapter_hash="$(shasum -a 256 /tmp/p0-immutable-control/tools/p0_actions_adapter.py | awk '{print $1}')"
+          registry_hash="$(shasum -a 256 /tmp/p0-immutable-control/contracts/registries/commands.v1.json | awk '{print $1}')"
+          test "$adapter_hash" = "$EXPECTED_ADAPTER_SHA256" || { echo "::error::immutable snapshot adapter hash mismatch"; exit 1; }
+          test "$registry_hash" = "$EXPECTED_REGISTRY_SHA256" || { echo "::error::immutable snapshot registry hash mismatch"; exit 1; }
+          python3 - <<'PY'
+          import json, hashlib
+          from pathlib import Path
+          manifest = {
+              'bundle_root': '/tmp/p0-immutable-control',
+              'created_from_base': '${{ needs.admission.outputs.base_sha }}',
+              'files': {}
+          }
+          for rel_path in [
+              'tools/p0_actions_adapter.py',
+              'tools/propagate_b3.py',
+              'contracts/registries/commands.v1.json',
+              'contracts/schemas/task.v1.schema.json',
+              'contracts/schemas/result.v1.schema.json',
+              'contracts/schemas/verification.v1.schema.json',
+              'contracts/schemas/review-attestation.v1.schema.json',
+          ]:
+              full_path = Path('/tmp/p0-immutable-control') / rel_path
+              file_bytes = full_path.read_bytes()
+              manifest['files'][rel_path] = {
+                  'sha256': hashlib.sha256(file_bytes).hexdigest(),
+                  'size': len(file_bytes),
+              }
+          Path('/tmp/p0-immutable-control/snapshot-manifest.json').write_text(
+              json.dumps(manifest, sort_keys=True), encoding='utf-8'
+          )
+          PY
+          chmod -R a-w /tmp/p0-immutable-control
       - name: Create exact target branch and materialize bounded control inputs
         id: prepare
         env:
@@ -263,8 +312,9 @@ jobs:
           test "$(git rev-parse --verify "${TASK_COMMIT}^{commit}")" = "$TASK_COMMIT"
           git show "${TASK_COMMIT}:${TASK_PATH}" > /tmp/p0-control/task.json
           python3 - <<'PY'
-          import json
+          import json, sys
           from pathlib import Path
+          sys.path.insert(0, '/tmp/p0-immutable-control')
           from tools import p0_actions_adapter as adapter
           task = adapter.load_json(Path('/tmp/p0-control/task.json'))
           check = adapter.bounded_required_check(task)
@@ -484,6 +534,28 @@ jobs:
               manifest['postcondition_failure'] = control_failure
           (out / 'manifest.json').write_text(json.dumps(manifest, sort_keys=True), encoding='utf-8')
           PY
+      - name: Verify immutable snapshot integrity before postconditions
+        if: always()
+        env:
+          EXPECTED_ADAPTER_SHA256: ${{ needs.admission.outputs.adapter_sha256 }}
+          EXPECTED_REGISTRY_SHA256: ${{ needs.admission.outputs.registry_sha256 }}
+          EXPECTED_SESSION_PARSER_SHA256: ${{ needs.admission.outputs.session_parser_sha256 }}
+        run: |
+          snapshot_integrity_failed=false
+          test -d /tmp/p0-immutable-control || snapshot_integrity_failed=true
+          test -f /tmp/p0-immutable-control/tools/p0_actions_adapter.py || snapshot_integrity_failed=true
+          test -f /tmp/p0-immutable-control/contracts/registries/commands.v1.json || snapshot_integrity_failed=true
+          test -f /tmp/p0-immutable-control/snapshot-manifest.json || snapshot_integrity_failed=true
+          adapter_hash="$(shasum -a 256 /tmp/p0-immutable-control/tools/p0_actions_adapter.py | awk '{print $1}')"
+          registry_hash="$(shasum -a 256 /tmp/p0-immutable-control/contracts/registries/commands.v1.json | awk '{print $1}')"
+          session_parser_hash="$(shasum -a 256 /tmp/p0-immutable-control/tools/propagate_b3.py | awk '{print $1}')"
+          test "$adapter_hash" = "$EXPECTED_ADAPTER_SHA256" || snapshot_integrity_failed=true
+          test "$registry_hash" = "$EXPECTED_REGISTRY_SHA256" || snapshot_integrity_failed=true
+          test "$session_parser_hash" = "$EXPECTED_SESSION_PARSER_SHA256" || snapshot_integrity_failed=true
+          if [ "$snapshot_integrity_failed" = true ]; then
+            python3 -I -c 'import json,pathlib; p=pathlib.Path("p0-adapter-output/manifest.json"); d=json.loads(p.read_text()); d["postcondition_failure"]="immutable_snapshot_integrity_failed"; p.write_text(json.dumps(d,sort_keys=True))'
+            exit 1
+          fi
       - name: Enforce scope, run registered argv, and emit exact binary patch
         if: always()
         env:
@@ -491,15 +563,9 @@ jobs:
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           BASE_SHA: ${{ needs.admission.outputs.base_sha }}
           EXPECTED_TASK_SHA256: ${{ needs.admission.outputs.task_sha256 }}
-          EXPECTED_ADAPTER_SHA256: ${{ needs.admission.outputs.adapter_sha256 }}
-          EXPECTED_REGISTRY_SHA256: ${{ needs.admission.outputs.registry_sha256 }}
-          EXPECTED_SESSION_PARSER_SHA256: ${{ needs.admission.outputs.session_parser_sha256 }}
         run: |
           control_integrity_failed=false
           test "$(shasum -a 256 /tmp/p0-control/task.json | awk '{print $1}')" = "$EXPECTED_TASK_SHA256" || control_integrity_failed=true
-          test "$(shasum -a 256 tools/p0_actions_adapter.py | awk '{print $1}')" = "$EXPECTED_ADAPTER_SHA256" || control_integrity_failed=true
-          test "$(shasum -a 256 contracts/registries/commands.v1.json | awk '{print $1}')" = "$EXPECTED_REGISTRY_SHA256" || control_integrity_failed=true
-          test "$(shasum -a 256 tools/propagate_b3.py | awk '{print $1}')" = "$EXPECTED_SESSION_PARSER_SHA256" || control_integrity_failed=true
           if [ "$control_integrity_failed" = true ]; then
             python3 -I -c 'import json,pathlib; p=pathlib.Path("p0-adapter-output/manifest.json"); d=json.loads(p.read_text()); d["postcondition_failure"]="control_integrity_failed"; p.write_text(json.dumps(d,sort_keys=True))'
             exit 1
@@ -507,7 +573,7 @@ jobs:
           python3 -I - <<'PY'
           import json, os, subprocess, sys
           from pathlib import Path
-          sys.path.insert(0, '.')
+          sys.path.insert(0, '/tmp/p0-immutable-control')
           from tools import p0_actions_adapter as adapter
           out = Path('p0-adapter-output')
           manifest_path = out / 'manifest.json'
@@ -651,6 +717,26 @@ jobs:
         with:
           python-version: "3.11"
       - run: python3 -m pip install --disable-pip-version-check --no-input -r requirements-p0-actions.txt
+      - name: Create immutable control snapshot before publisher verification
+        env:
+          BASE_SHA: ${{ needs.admission.outputs.base_sha }}
+          EXPECTED_ADAPTER_SHA256: ${{ needs.admission.outputs.adapter_sha256 }}
+          EXPECTED_REGISTRY_SHA256: ${{ needs.admission.outputs.registry_sha256 }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$BASE_SHA"
+          mkdir -p /tmp/p0-immutable-control/tools /tmp/p0-immutable-control/contracts/registries /tmp/p0-immutable-control/contracts/schemas
+          cp tools/p0_actions_adapter.py /tmp/p0-immutable-control/tools/p0_actions_adapter.py
+          cp tools/propagate_b3.py /tmp/p0-immutable-control/tools/propagate_b3.py
+          cp contracts/registries/commands.v1.json /tmp/p0-immutable-control/contracts/registries/commands.v1.json
+          cp contracts/schemas/task.v1.schema.json /tmp/p0-immutable-control/contracts/schemas/task.v1.schema.json
+          cp contracts/schemas/result.v1.schema.json /tmp/p0-immutable-control/contracts/schemas/result.v1.schema.json
+          cp contracts/schemas/verification.v1.schema.json /tmp/p0-immutable-control/contracts/schemas/verification.v1.schema.json
+          cp contracts/schemas/review-attestation.v1.schema.json /tmp/p0-immutable-control/contracts/schemas/review-attestation.v1.schema.json
+          chmod -R a-w /tmp/p0-immutable-control
+          adapter_hash="$(shasum -a 256 /tmp/p0-immutable-control/tools/p0_actions_adapter.py | awk '{print $1}')"
+          registry_hash="$(shasum -a 256 /tmp/p0-immutable-control/contracts/registries/commands.v1.json | awk '{print $1}')"
+          test "$adapter_hash" = "$EXPECTED_ADAPTER_SHA256" || { echo "::error::publisher snapshot adapter hash mismatch"; exit 1; }
+          test "$registry_hash" = "$EXPECTED_REGISTRY_SHA256" || { echo "::error::publisher snapshot registry hash mismatch"; exit 1; }
       - uses: actions/download-artifact@v4
         with:
           name: p0-adapter-output
@@ -667,8 +753,9 @@ jobs:
           test "$(git rev-parse --verify "${TASK_COMMIT}^{commit}")" = "$TASK_COMMIT"
           git show "${TASK_COMMIT}:${TASK_PATH}" > /tmp/immutable-task.json
           python3 - <<'PY'
-          import json, os, subprocess
+          import json, os, subprocess, sys
           from pathlib import Path
+          sys.path.insert(0, '/tmp/p0-immutable-control')
           from tools import p0_actions_adapter as adapter
           out = Path('p0-adapter-output')
           manifest = json.loads((out / 'manifest.json').read_text(encoding='utf-8'))
@@ -787,6 +874,26 @@ jobs:
         with:
           python-version: "3.11"
       - run: python3 -m pip install --disable-pip-version-check --no-input -r requirements-p0-actions.txt
+      - name: Create immutable control snapshot for finalization
+        env:
+          BASE_SHA: ${{ needs.admission.outputs.base_sha || github.sha }}
+          EXPECTED_ADAPTER_SHA256: ${{ needs.admission.outputs.adapter_sha256 }}
+          EXPECTED_REGISTRY_SHA256: ${{ needs.admission.outputs.registry_sha256 }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$BASE_SHA"
+          mkdir -p /tmp/p0-immutable-control/tools /tmp/p0-immutable-control/contracts/registries /tmp/p0-immutable-control/contracts/schemas
+          cp tools/p0_actions_adapter.py /tmp/p0-immutable-control/tools/p0_actions_adapter.py
+          cp tools/propagate_b3.py /tmp/p0-immutable-control/tools/propagate_b3.py
+          cp contracts/registries/commands.v1.json /tmp/p0-immutable-control/contracts/registries/commands.v1.json
+          cp contracts/schemas/task.v1.schema.json /tmp/p0-immutable-control/contracts/schemas/task.v1.schema.json
+          cp contracts/schemas/result.v1.schema.json /tmp/p0-immutable-control/contracts/schemas/result.v1.schema.json
+          cp contracts/schemas/verification.v1.schema.json /tmp/p0-immutable-control/contracts/schemas/verification.v1.schema.json
+          cp contracts/schemas/review-attestation.v1.schema.json /tmp/p0-immutable-control/contracts/schemas/review-attestation.v1.schema.json
+          chmod -R a-w /tmp/p0-immutable-control
+          adapter_hash="$(shasum -a 256 /tmp/p0-immutable-control/tools/p0_actions_adapter.py | awk '{print $1}')"
+          registry_hash="$(shasum -a 256 /tmp/p0-immutable-control/contracts/registries/commands.v1.json | awk '{print $1}')"
+          test "$adapter_hash" = "$EXPECTED_ADAPTER_SHA256" || { echo "::error::finalize snapshot adapter hash mismatch"; exit 1; }
+          test "$registry_hash" = "$EXPECTED_REGISTRY_SHA256" || { echo "::error::finalize snapshot registry hash mismatch"; exit 1; }
       - name: Download current execution evidence
         if: github.event.inputs.mode == 'execute'
         continue-on-error: true
@@ -832,7 +939,12 @@ jobs:
           TASK_PATH: ${{ github.event.inputs.task_path }}
         run: |
           mkdir -p p0-output
-          python3 -c 'import os,sys; from tools.p0_actions_adapter import validate_task_ref,validate_task_path; sys.exit(0 if not validate_task_ref(os.environ.get("TASK_COMMIT")) and not validate_task_path(os.environ.get("TASK_PATH")) else 1)'
+          python3 - <<'PY'
+          import os, sys
+          sys.path.insert(0, '/tmp/p0-immutable-control')
+          from tools.p0_actions_adapter import validate_task_ref, validate_task_path
+          sys.exit(0 if not validate_task_ref(os.environ.get("TASK_COMMIT")) and not validate_task_path(os.environ.get("TASK_PATH")) else 1)
+          PY
           git fetch --no-tags --depth=1 origin "$TASK_COMMIT"
           test "$(git rev-parse --verify "${TASK_COMMIT}^{commit}")" = "$TASK_COMMIT"
           git show "${TASK_COMMIT}:${TASK_PATH}" > p0-output/task.json
@@ -842,7 +954,12 @@ jobs:
           REVIEW_COMMIT: ${{ github.event.inputs.review_ref }}
           REVIEW_PATH: ${{ github.event.inputs.review_path }}
         run: |
-          python3 -c 'import os,sys; from tools.p0_actions_adapter import validate_task_ref,validate_review_path; sys.exit(0 if not validate_task_ref(os.environ.get("REVIEW_COMMIT")) and not validate_review_path(os.environ.get("REVIEW_PATH")) else 1)'
+          python3 - <<'PY'
+          import os, sys
+          sys.path.insert(0, '/tmp/p0-immutable-control')
+          from tools.p0_actions_adapter import validate_task_ref, validate_review_path
+          sys.exit(0 if not validate_task_ref(os.environ.get("REVIEW_COMMIT")) and not validate_review_path(os.environ.get("REVIEW_PATH")) else 1)
+          PY
           git fetch --no-tags --depth=1 origin "$REVIEW_COMMIT"
           test "$(git rev-parse --verify "${REVIEW_COMMIT}^{commit}")" = "$REVIEW_COMMIT"
           git show "${REVIEW_COMMIT}:${REVIEW_PATH}" > p0-output/review.json
@@ -856,7 +973,12 @@ jobs:
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           BASE_SHA: ${{ needs.admission.outputs.base_sha }}
         run: |
-          python3 -c 'import os,sys; from tools.p0_actions_adapter import validate_target_branch; sys.exit(0 if not validate_target_branch(os.environ.get("TARGET_BRANCH"), os.environ.get("DEFAULT_BRANCH")) else 1)'
+          python3 - <<'PY'
+          import os, sys
+          sys.path.insert(0, '/tmp/p0-immutable-control')
+          from tools.p0_actions_adapter import validate_target_branch
+          sys.exit(0 if not validate_target_branch(os.environ.get("TARGET_BRANCH"), os.environ.get("DEFAULT_BRANCH")) else 1)
+          PY
           git fetch --no-tags origin "+refs/heads/$DEFAULT_BRANCH:refs/remotes/origin/$DEFAULT_BRANCH"
           default_head="$(git rev-parse "refs/remotes/origin/$DEFAULT_BRANCH")"
           # An absent target branch after an executor rejection (e.g. a
@@ -879,8 +1001,9 @@ jobs:
           SUBJECT_SHA: ${{ steps.observe.outputs.subject_sha }}
         run: |
           python3 - <<'PY'
-          import json, os, subprocess
+          import json, os, subprocess, sys
           from pathlib import Path
+          sys.path.insert(0, '/tmp/p0-immutable-control')
           from tools import p0_actions_adapter as adapter
           task = adapter.load_json(Path('p0-output/task.json'))
           check = adapter.bounded_required_check(task)
@@ -916,8 +1039,9 @@ jobs:
           RUN_ATTEMPT: ${{ github.run_attempt }}
         run: |
           python3 - <<'PY'
-          import json, os, subprocess
+          import json, os, subprocess, sys
           from pathlib import Path
+          sys.path.insert(0, '/tmp/p0-immutable-control')
           from tools import p0_actions_adapter as adapter
           def read(path):
               p = Path(path)
@@ -1003,7 +1127,7 @@ jobs:
           MODE: ${{ github.event.inputs.mode }}
           EXECUTION_RUN_ID: ${{ github.event.inputs.execution_run_id }}
         run: |
-          python3 tools/p0_actions_adapter.py finalize \
+          python3 /tmp/p0-immutable-control/tools/p0_actions_adapter.py finalize \
             --signal p0-output/signal.json \
             --task p0-output/task.json \
             --review-attestation p0-output/review.json \

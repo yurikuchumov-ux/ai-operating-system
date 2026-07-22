@@ -1487,6 +1487,155 @@ class WorkflowInvariantTests(unittest.TestCase):
         self.assertNotIn("bypassPermissions", claude_args_block)
 
 
+class ImmutableVerifierBootstrapTests(unittest.TestCase):
+    """Issue #68: immutable verifier bootstrap ensures postconditions,
+    publisher verification, and finalization use verifier code snapshotted
+    from the exact immutable protected-default base, not the candidate
+    checkout."""
+
+    def test_workflow_creates_immutable_snapshot_before_executor(self) -> None:
+        text = WORKFLOW_PATH.read_text(encoding="utf-8")
+        self.assertIn("Create immutable control snapshot before executor or target checkout", text)
+        self.assertIn("mkdir -p /tmp/p0-immutable-control/tools", text)
+        self.assertIn("cp tools/p0_actions_adapter.py /tmp/p0-immutable-control/tools/p0_actions_adapter.py", text)
+        self.assertIn("chmod -R a-w /tmp/p0-immutable-control", text)
+
+    def test_snapshot_verifies_hash_before_use(self) -> None:
+        text = WORKFLOW_PATH.read_text(encoding="utf-8")
+        self.assertIn("Verify immutable snapshot integrity before postconditions", text)
+        self.assertIn('test -f /tmp/p0-immutable-control/tools/p0_actions_adapter.py', text)
+        self.assertIn('adapter_hash="$(shasum -a 256 /tmp/p0-immutable-control/tools/p0_actions_adapter.py', text)
+        self.assertIn('test "$adapter_hash" = "$EXPECTED_ADAPTER_SHA256"', text)
+        self.assertIn('immutable_snapshot_integrity_failed', text)
+
+    def test_postconditions_import_from_snapshot_not_workspace(self) -> None:
+        text = WORKFLOW_PATH.read_text(encoding="utf-8")
+        postcondition_section = text.split("Enforce scope, run registered argv", 1)[1].split("Upload executor evidence", 1)[0]
+        self.assertIn("sys.path.insert(0, '/tmp/p0-immutable-control')", postcondition_section)
+        self.assertIn("from tools import p0_actions_adapter as adapter", postcondition_section)
+        # Must not import from workspace after subject checkout
+        self.assertNotIn("sys.path.insert(0, '.')", postcondition_section)
+
+    def test_publisher_imports_from_snapshot_not_workspace(self) -> None:
+        text = WORKFLOW_PATH.read_text(encoding="utf-8")
+        publisher_section = text.split("publish-target:", 1)[1].split("finalize-and-verify:", 1)[0]
+        self.assertIn("Create immutable control snapshot before publisher verification", publisher_section)
+        self.assertIn("sys.path.insert(0, '/tmp/p0-immutable-control')", publisher_section)
+
+    def test_finalize_uses_snapshot_adapter_not_workspace(self) -> None:
+        text = WORKFLOW_PATH.read_text(encoding="utf-8")
+        finalize_section = text.split("Finalize schema documents from trusted signal", 1)[1].split("Upload stable result", 1)[0]
+        self.assertIn("python3 /tmp/p0-immutable-control/tools/p0_actions_adapter.py finalize", finalize_section)
+        # Must not use workspace adapter
+        self.assertNotIn("python3 tools/p0_actions_adapter.py finalize", finalize_section)
+
+    def test_independent_required_check_uses_snapshot_registry(self) -> None:
+        text = WORKFLOW_PATH.read_text(encoding="utf-8")
+        independent_check = text.split("Independently run registry argv on exact subject", 1)[1].split("Assemble trusted signal", 1)[0]
+        self.assertIn("sys.path.insert(0, '/tmp/p0-immutable-control')", independent_check)
+        self.assertIn("from tools import p0_actions_adapter as adapter", independent_check)
+
+    def test_trusted_signal_assembly_uses_snapshot_adapter(self) -> None:
+        text = WORKFLOW_PATH.read_text(encoding="utf-8")
+        signal_assembly = text.split("Assemble trusted signal only from observed files", 1)[1].split("Finalize schema documents", 1)[0]
+        self.assertIn("sys.path.insert(0, '/tmp/p0-immutable-control')", signal_assembly)
+
+    def test_snapshot_includes_all_required_files(self) -> None:
+        text = WORKFLOW_PATH.read_text(encoding="utf-8")
+        snapshot_section = text.split("Create immutable control snapshot before executor", 1)[1].split("Create exact target branch", 1)[0]
+        required_files = [
+            "tools/p0_actions_adapter.py",
+            "tools/propagate_b3.py",
+            "contracts/registries/commands.v1.json",
+            "contracts/schemas/task.v1.schema.json",
+            "contracts/schemas/result.v1.schema.json",
+            "contracts/schemas/verification.v1.schema.json",
+            "contracts/schemas/review-attestation.v1.schema.json",
+        ]
+        for file_path in required_files:
+            self.assertIn(f"cp {file_path} /tmp/p0-immutable-control/{file_path}", snapshot_section)
+
+    def test_candidate_registered_command_runs_on_candidate_checkout(self) -> None:
+        """The candidate registered check runs in the workspace (cwd='.'),
+        not in the snapshot, so candidate tests can import candidate code."""
+        text = WORKFLOW_PATH.read_text(encoding="utf-8")
+        # The executor postcondition check runs in cwd='.'
+        postcondition = text.split("Enforce scope, run registered argv", 1)[1].split("Upload executor evidence", 1)[0]
+        self.assertIn("subprocess.run(argv, cwd='.'", postcondition)
+
+    def test_prepare_step_uses_snapshot_for_task_parsing(self) -> None:
+        text = WORKFLOW_PATH.read_text(encoding="utf-8")
+        prepare_section = text.split("Create exact target branch and materialize bounded control inputs", 1)[1].split("Assert provider-owned transient", 1)[0]
+        self.assertIn("sys.path.insert(0, '/tmp/p0-immutable-control')", prepare_section)
+
+    def test_validation_imports_use_snapshot_not_workspace(self) -> None:
+        text = WORKFLOW_PATH.read_text(encoding="utf-8")
+        # Re-fetch immutable task validation
+        refetch = text.split("Re-fetch immutable task from exact commit", 1)[1].split("Fetch review bytes", 1)[0]
+        self.assertIn("sys.path.insert(0, '/tmp/p0-immutable-control')", refetch)
+        # Review validation
+        review_fetch = text.split("Fetch review bytes from exact immutable review commit", 1)[1].split("Observe exact target", 1)[0]
+        self.assertIn("sys.path.insert(0, '/tmp/p0-immutable-control')", review_fetch)
+        # Target branch validation
+        observe = text.split("Observe exact target/default refs", 1)[1].split("Independently run registry", 1)[0]
+        self.assertIn("sys.path.insert(0, '/tmp/p0-immutable-control')", observe)
+
+    def test_snapshot_created_from_base_before_subject_checkout(self) -> None:
+        """The snapshot is created at the exact base SHA before switching to
+        the target branch, ensuring no subject code can shadow it."""
+        text = WORKFLOW_PATH.read_text(encoding="utf-8")
+        execute_section = text.split("  execute:", 1)[1].split("  publish-target:", 1)[0]
+        # Snapshot comes before target branch creation
+        snapshot_index = execute_section.index("Create immutable control snapshot before executor")
+        branch_index = execute_section.index("git switch --create")
+        self.assertLess(snapshot_index, branch_index)
+        # Snapshot step verifies we're at base SHA
+        snapshot_step = text.split("Create immutable control snapshot before executor", 1)[1].split("Create exact target branch", 1)[0]
+        self.assertIn('test "$(git rev-parse HEAD)" = "$BASE_SHA"', snapshot_step)
+
+    def test_snapshot_made_read_only_before_executor_runs(self) -> None:
+        """The snapshot is made read-only before the executor runs, preventing
+        tampering."""
+        text = WORKFLOW_PATH.read_text(encoding="utf-8")
+        execute_section = text.split("  execute:", 1)[1].split("  publish-target:", 1)[0]
+        snapshot_index = execute_section.index("chmod -R a-w /tmp/p0-immutable-control")
+        executor_index = execute_section.index("Claude edits files only")
+        self.assertLess(snapshot_index, executor_index)
+
+    def test_snapshot_hash_mismatch_fails_before_import(self) -> None:
+        """Hash mismatch causes immediate failure before any trusted import."""
+        text = WORKFLOW_PATH.read_text(encoding="utf-8")
+        self.assertIn("immutable snapshot adapter hash mismatch", text)
+        self.assertIn("immutable_snapshot_integrity_failed", text)
+        # Verification happens in separate step before postconditions
+        verification_step = text.split("Verify immutable snapshot integrity before postconditions", 1)[1].split("Enforce scope, run registered argv", 1)[0]
+        self.assertIn('test "$adapter_hash" = "$EXPECTED_ADAPTER_SHA256" || snapshot_integrity_failed=true', verification_step)
+        self.assertIn('if [ "$snapshot_integrity_failed" = true ]', verification_step)
+
+    def test_no_workspace_imports_after_target_checkout_in_trusted_code(self) -> None:
+        """After switching to the target branch, no trusted verification code
+        imports from the workspace."""
+        text = WORKFLOW_PATH.read_text(encoding="utf-8")
+        # After "git switch --create" in execute job, all imports use snapshot
+        postcondition = text.split("git switch --create", 1)[1].split("Upload executor evidence", 1)[0]
+        # Should have snapshot import, not workspace import
+        self.assertIn("sys.path.insert(0, '/tmp/p0-immutable-control')", postcondition)
+        # Explicitly check the postcondition doesn't have workspace import
+        lines_with_pathinsert = [line for line in postcondition.split('\n') if 'sys.path.insert' in line]
+        for line in lines_with_pathinsert:
+            if '/tmp/p0-immutable-control' not in line:
+                self.fail(f"Found workspace import in postcondition: {line}")
+
+    def test_publisher_recreates_snapshot_from_base_not_target(self) -> None:
+        """The publisher creates its own snapshot from base SHA, not from the
+        target branch that contains candidate code."""
+        text = WORKFLOW_PATH.read_text(encoding="utf-8")
+        publisher = text.split("publish-target:", 1)[1].split("finalize-and-verify:", 1)[0]
+        snapshot_step = publisher.split("Create immutable control snapshot before publisher verification", 1)[1].split("uses: actions/download-artifact", 1)[0]
+        self.assertIn('test "$(git rev-parse HEAD)" = "$BASE_SHA"', snapshot_step)
+        self.assertIn("cp tools/p0_actions_adapter.py /tmp/p0-immutable-control/tools/p0_actions_adapter.py", snapshot_step)
+
+
 class CodexControlCleanupTests(unittest.TestCase):
     """Issue #43 correction: .p0-codex-control cleanup validates structure,
     byte-identity, non-symlink state, restores write permission, removes the
