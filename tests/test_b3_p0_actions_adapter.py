@@ -1750,5 +1750,207 @@ class CodexControlCleanupTests(unittest.TestCase):
         self.assertEqual(1, cleanup_section.count("shutil.rmtree(codex_control)"))
 
 
+class CorrectionSeedEvidenceTests(unittest.TestCase):
+    """Issue #54: failed candidates survive and can only be replayed by
+    exact immutable evidence binding."""
+
+    def _task_and_candidate(self):
+        task = _load_exact_issue_40_task()
+        path = ".github/workflows/p0-actions-adapter.yml"
+        patch = (
+            b"diff --git a/.github/workflows/p0-actions-adapter.yml "
+            b"b/.github/workflows/p0-actions-adapter.yml\n"
+            b"index 1111111..2222222 100644\n"
+            b"--- a/.github/workflows/p0-actions-adapter.yml\n"
+            b"+++ b/.github/workflows/p0-actions-adapter.yml\n"
+            b"@@ -1 +1 @@\n-old\n+new\n"
+        )
+        evidence = adapter.build_candidate_evidence(
+            task,
+            task_commit="a" * 40,
+            task_path=".ai/tasks/40/correction.v1.json",
+            workflow_run_id="29646328606",
+            workflow_run_attempt=1,
+            execution_id="session-exact-54",
+            executor_adapter="openai-codex-action",
+            patch_bytes=patch,
+            changed_paths=[path],
+        )
+        task["correction_seed"] = {
+            "repository": evidence["repository"],
+            "run_id": evidence["workflow_run_id"],
+            "run_attempt": evidence["workflow_run_attempt"],
+            "task_commit": evidence["task_commit"],
+            "task_path": evidence["task_path"],
+            "base_sha": evidence["base_sha"],
+            "execution_id": evidence["execution_id"],
+            "executor_adapter": evidence["executor_adapter"],
+            "patch_sha256": evidence["patch_sha256"],
+            "changed_paths": evidence["changed_paths"],
+        }
+        source_manifest = {
+            "adapter_outcome": "success",
+            "postconditions_passed": False,
+            "postcondition_failure": "required_check_failed",
+            "candidate_patch": evidence,
+        }
+        return task, evidence, source_manifest, patch, path
+
+    def test_schema_and_relational_admission_accept_exact_seed(self) -> None:
+        task, _, _, _, _ = self._task_and_candidate()
+        self.assertIsNone(adapter.validate_task_document(task))
+        self.assertIsNone(
+            adapter.validate_correction_seed(task, task["repository"])
+        )
+
+    def test_seed_repository_base_path_and_scope_fail_closed(self) -> None:
+        task, _, _, _, _ = self._task_and_candidate()
+        task["correction_seed"]["repository"] = "other/repository"
+        self.assertEqual(
+            "correction_seed_invalid",
+            adapter.validate_correction_seed(task, task["repository"]),
+        )
+        task, _, _, _, _ = self._task_and_candidate()
+        task["correction_seed"]["changed_paths"] = ["README.md"]
+        self.assertEqual(
+            "correction_seed_scope_violation",
+            adapter.validate_correction_seed(task, task["repository"]),
+        )
+
+    def test_exact_evidence_digest_paths_and_modes_are_required(self) -> None:
+        task, evidence, source_manifest, patch, path = self._task_and_candidate()
+        self.assertIsNone(
+            adapter.validate_correction_seed_evidence(
+                task, evidence, source_manifest, patch, [path], {path: "100644"}, task["repository"]
+            )
+        )
+        changed = dict(evidence); changed["workflow_run_id"] = "1"
+        self.assertEqual(
+            "correction_seed_evidence_mismatch",
+            adapter.validate_correction_seed_evidence(
+                task, changed, source_manifest, patch, [path], {path: "100644"}, task["repository"]
+            ),
+        )
+        self.assertEqual(
+            "correction_seed_digest_mismatch",
+            adapter.validate_correction_seed_evidence(
+                task, evidence, source_manifest, patch + b"tamper", [path], {path: "100644"}, task["repository"]
+            ),
+        )
+        self.assertEqual(
+            "correction_seed_unsafe_patch",
+            adapter.validate_correction_seed_evidence(
+                task, evidence, source_manifest, patch, [path], {path: "120000"}, task["repository"]
+            ),
+        )
+        for terminal_state in (
+            {"postconditions_passed": True, "postcondition_failure": None},
+            {"postconditions_passed": False, "postcondition_failure": "changed_paths_not_allowed"},
+            {"postconditions_passed": False, "postcondition_failure": "prohibited_tool_use"},
+        ):
+            invalid_source = dict(source_manifest)
+            invalid_source.update(terminal_state)
+            self.assertEqual(
+                "correction_seed_evidence_mismatch",
+                adapter.validate_correction_seed_evidence(
+                    task, evidence, invalid_source, patch, [path], {path: "100644"},
+                    task["repository"],
+                ),
+            )
+
+    def test_binary_rename_copy_symlink_and_submodule_markers_fail_closed(self) -> None:
+        task, evidence, source_manifest, patch, path = self._task_and_candidate()
+        for marker in (
+            b"\nGIT binary patch",
+            b"\nrename from old",
+            b"\ncopy to new",
+            b"\nnew file mode 120000",
+            b"\nnew file mode 160000",
+        ):
+            tampered = patch + marker
+            task["correction_seed"]["patch_sha256"] = adapter.sha256_bytes(tampered)
+            evidence["patch_sha256"] = adapter.sha256_bytes(tampered)
+            self.assertEqual(
+                "correction_seed_unsafe_patch",
+                adapter.validate_correction_seed_evidence(
+                    task, evidence, source_manifest, tampered, [path], {path: "100644"}, task["repository"]
+                ),
+            )
+
+    def test_candidate_bytes_persist_before_a_later_check_failure(self) -> None:
+        task, _, _, patch, path = self._task_and_candidate()
+        out = _tmp_dir()
+        evidence = adapter.persist_candidate_evidence(
+            out,
+            task,
+            task_commit="b" * 40,
+            task_path=".ai/tasks/54/task.v1.json",
+            workflow_run_id="29646328606",
+            workflow_run_attempt=1,
+            execution_id="session-before-failing-check",
+            executor_adapter="human-supervised-claude-code",
+            patch_bytes=patch,
+            changed_paths=[path],
+        )
+        simulated_registered_check_exit_code = 1
+        self.assertNotEqual(0, simulated_registered_check_exit_code)
+        self.assertEqual(patch, (out / "candidate.patch").read_bytes())
+        self.assertEqual(
+            evidence,
+            json.loads((out / "candidate-evidence.json").read_text(encoding="utf-8")),
+        )
+
+    def test_workflow_orders_capture_before_check_and_keeps_provider_secret_late(self) -> None:
+        text = WORKFLOW_PATH.read_text(encoding="utf-8")
+        self.assertIn("actions: read", text)
+        self.assertLess(
+            text.index("Validate and apply exact correction seed before provider access"),
+            text.index("claude_code_oauth_token:"),
+        )
+        self.assertLess(
+            text.index("adapter.persist_candidate_evidence("),
+            text.index("completed = subprocess.run(argv"),
+        )
+        self.assertIn("/tmp/p0-trusted-repo/tools/p0_actions_adapter.py", text)
+        self.assertIn("correction-seed-binding.json", text)
+
+    def test_stable_evidence_preserves_candidate_patch_exact_bytes(self) -> None:
+        task = _load(DOCUMENTS_DIR / "task-issue-20-canary.json")
+        signal = _load(DOCUMENTS_DIR / "executor-signal-accept.json")
+        review = _load(DOCUMENTS_DIR / "review-accept.json")
+        patch = b"diff --git a/a b/a\n--- a/a\n+++ b/a\n@@ -1 +1 @@\n-old\n+new\n"
+        signal["candidate_patch_b64"] = base64.b64encode(patch).decode("ascii")
+        signal["candidate_evidence_raw"] = json.dumps(
+            {"patch_sha256": hashlib.sha256(patch).hexdigest()}, sort_keys=True
+        )
+        decision = evaluate(
+            {
+                "task_commit": signal["executor_task_commit"],
+                "task_path": signal["executor_task_path"],
+                "target_branch": task["branch"],
+                "default_branch": "main",
+                "attempt": 1,
+                "mode": "execute",
+            },
+            task,
+            signal,
+            review,
+        )
+        self.assertTrue(decision.accepted, decision.failure_code)
+        workdir = _tmp_dir()
+        docs = build_documents(
+            decision,
+            {
+                "verification_id": "90000000-0000-4000-8000-000000000054",
+                "evaluated_at": "2026-07-21T12:00:00Z",
+                "verifier_identity": _load(DOCUMENTS_DIR / "verifier-identity.json"),
+            },
+            workdir,
+        )
+        self.assertIn("candidate-patch", docs["artifact_ids"])
+        self.assertIn("candidate-evidence", docs["artifact_ids"])
+        self.assertEqual(patch, (workdir / "evidence/candidate.patch").read_bytes())
+
+
 if __name__ == "__main__":
     unittest.main()
