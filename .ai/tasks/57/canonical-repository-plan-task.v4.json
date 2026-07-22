@@ -3,7 +3,7 @@
   "task_id": "yurikuchumov-ux/ai-operating-system#57",
   "repository": "yurikuchumov-ux/ai-operating-system",
   "issue_number": 57,
-  "objective": "Final corrective Actions-backed attempt 3/3 for the owner-authorized bounded B4-B redesign. Implement a finite raw-source grammar for the exact governed Section 3.1 inventory block, preserve the stage-A registry bindings and exact documentation replacement, and make no claim about rendered Markdown semantics. Start from protected main; do not copy the rejected CommonMark emulation from Draft PR #60 or rely on the locally authored PR #61 as execution evidence. Run 29903957551 proved attempt 1 fail-closed because the generated test module imported unavailable pytest. Run 29904531362 produced candidate 06f7a2ea172feecbc24b6b69c81e5075e56139aa, but independent verification proved it false-succeeds when a cell has more than the single permitted ASCII padding space. Use stdlib unittest.TestCase regressions only, add no dependency, and enforce raw row equality without strip-based normalization.",
+  "objective": "Executor-switched bounded B4-B implementation after three exhausted Claude attempts. Use the pinned openai-codex-action once to implement the finite raw-source grammar for the exact governed Section 3.1 inventory block, preserve the stage-A registry bindings and exact documentation replacement, and make no claim about rendered Markdown semantics. Start from protected main. Preserve the independently approved behavioral quality of PR #61 without treating that locally authored PR as Actions execution evidence. Runs 29903957551, 29904531362 and 29905181439 are immutable corrective evidence: use stdlib unittest.TestCase only, enforce exact raw-row reconstruction without strip-based normalization, and follow the explicit diagnostic contract so implementation and regressions cannot disagree about rejection codes.",
   "change_policy": {
     "change_required": true,
     "policy_exception_id": null,
@@ -15,7 +15,7 @@
   },
   "base_ref": "main",
   "base_sha": "e1ce7b0d2881c019cd0768f6b89ddb421db407c3",
-  "branch": "agent/issue-57-bounded-raw-grammar-v4-actions-attempt-3",
+  "branch": "agent/issue-57-bounded-raw-grammar-v5-codex-actions",
   "allowed_paths": [
     "tools/canonical_repository_plan.py",
     "tests/test_b3_canonical_repository_plan.py",
@@ -45,9 +45,9 @@
   ],
   "risk_class": "L2",
   "executor": {
-    "adapter": "human-supervised-claude-code",
-    "version": "claude-code-oauth-actions-issue-57-bounded-raw-v4",
-    "max_attempts": 3,
+    "adapter": "openai-codex-action",
+    "version": "codex-action-0.144.5-gpt-5.3-codex-high-issue-57-v5",
+    "max_attempts": 1,
     "timeout_seconds": 1800
   },
   "acceptance_criteria": [
@@ -88,7 +88,25 @@
               "result": "rejected_by_independent_postcondition_verification",
               "material_evidence": "replacing the exact first row prefix '| Governance and shared contracts |' with '|  Governance and shared contracts  |' returned [] because strip-based normalization erased forbidden padding; the declared raw-source grammar requires exact single-ASCII-space cell padding"
             },
-            "reuse_policy": "requirements and adversarial evidence only; do not copy rejected implementation code or treat local PR #61 as execution evidence"
+            "actions_attempt_3": {
+              "run_id": 29905181439,
+              "result": "required_check_failed",
+              "material_evidence": "all four extra-space/tab adversarial inputs were rejected, but tests demanded INVALID_CELL_PADDING while the implementation returned other stable failure codes; the prior contract required rejection but left that diagnostic classification ambiguous",
+              "target_branch_published": false
+            },
+            "executor_transition": {
+              "reason": "three Claude attempts exhausted",
+              "from": "human-supervised-claude-code",
+              "to": "openai-codex-action",
+              "new_executor_attempt_limit": 1
+            },
+            "approved_behavioral_reference": {
+              "pr": 61,
+              "reviewed_sha": "4f04f039c7d28379f3165e8fe58f70d3d2b588d9",
+              "review_attestation_commit": "295bc2925f1570c6167b8501029ae5d21da5df04",
+              "use": "behavioral requirements and diagnostic taxonomy only; the new Actions run remains the sole execution evidence for its exact candidate"
+            },
+            "reuse_policy": "requirements, adversarial evidence and independently approved PR #61 behavior may be reused; rejected PR #60 semantic-parser code remains forbidden; no prior PR or local run is Actions execution evidence for the new candidate"
           },
           "stage_boundary": {
             "stage": "B4-B",
@@ -173,6 +191,27 @@
             "labels_unique": true,
             "invalid_structure_must_fail_before_plan_semantics": true
           },
+          "diagnostic_contract": {
+            "non_string_plan": "plan_input_invalid",
+            "invalid_registry_structure": "registry_input_invalid",
+            "missing_sentinel": "plan_section_missing",
+            "duplicate_sentinel": "plan_section_duplicate",
+            "wrong_heading_level": "plan_section_wrong_level",
+            "heading_suffix": "plan_section_heading_suffix",
+            "blank_or_header_mismatch": "plan_header_mismatch",
+            "separator_mismatch": "plan_separator_mismatch",
+            "row_count_or_contiguity_mismatch": "plan_row_count_mismatch",
+            "column_count_or_cell_padding_mismatch": "plan_row_column_count_mismatch",
+            "repository_link_count_mismatch": "plan_repository_link_count_mismatch",
+            "repository_link_outside_repository_cell": "plan_repository_link_outside_repository_cell",
+            "duplicate_label": "plan_duplicate_label",
+            "label_set_mismatch": "plan_label_set_mismatch",
+            "full_name_mismatch": "plan_full_name_mismatch",
+            "url_mismatch": "plan_url_mismatch",
+            "visibility_mismatch": "plan_visibility_mismatch",
+            "sha_mismatch": "plan_main_sha_invalid",
+            "boundary_mismatch": "plan_boundary_mismatch"
+          },
           "expected_inventory_rows": [
             {
               "role_cell": "Governance and shared contracts",
@@ -203,7 +242,7 @@
             "exact committed plan plus exact committed registry returns an empty list",
             "missing and duplicate raw sentinel return their specific codes",
             "the exact blank/header/separator sequence is mandatory and raw whitespace variants fail",
-            "for each of the five data-row cells, one extra leading ASCII space, one extra trailing ASCII space, a leading tab after the required padding and a trailing tab before the required padding each fail; no strip-based normalization is permitted",
+            "for each of the five data-row cells, one extra leading ASCII space, one extra trailing ASCII space, a leading tab after the required padding and a trailing tab before the required padding each fail specifically with plan_row_column_count_mismatch; no strip-based normalization is permitted",
             "fewer or more than five preserved interior cells fail",
             "ordinary and empty sixth cells fail before semantic field validation",
             "a fourth contiguous leading-pipe row fails",
