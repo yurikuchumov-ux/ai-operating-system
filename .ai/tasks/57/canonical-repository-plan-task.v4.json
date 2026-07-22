@@ -3,7 +3,7 @@
   "task_id": "yurikuchumov-ux/ai-operating-system#57",
   "repository": "yurikuchumov-ux/ai-operating-system",
   "issue_number": 57,
-  "objective": "Owner-authorized bounded redesign of B4-B after the v3 and Codex corrective reviews proved that semantic Markdown wording implied an unbounded bespoke CommonMark/GFM parser. Implement a finite raw-source grammar for the exact governed Section 3.1 inventory block, preserve the stage-A registry bindings and exact documentation replacement, and make no claim about rendered Markdown semantics. Start from protected main; do not copy the rejected CommonMark emulation from Draft PR #60.",
+  "objective": "Actions-backed execution of the owner-authorized bounded B4-B redesign. Implement a finite raw-source grammar for the exact governed Section 3.1 inventory block, preserve the stage-A registry bindings and exact documentation replacement, and make no claim about rendered Markdown semantics. Start from protected main; do not copy the rejected CommonMark emulation from Draft PR #60 or rely on the locally authored PR #61 as execution evidence.",
   "change_policy": {
     "change_required": true,
     "policy_exception_id": null,
@@ -15,7 +15,7 @@
   },
   "base_ref": "main",
   "base_sha": "e1ce7b0d2881c019cd0768f6b89ddb421db407c3",
-  "branch": "agent/issue-57-bounded-raw-grammar-v4",
+  "branch": "agent/issue-57-bounded-raw-grammar-v4-actions",
   "allowed_paths": [
     "tools/canonical_repository_plan.py",
     "tests/test_b3_canonical_repository_plan.py",
@@ -45,8 +45,8 @@
   ],
   "risk_class": "L2",
   "executor": {
-    "adapter": "human-supervised-codex",
-    "version": "codex-desktop-issue-57-bounded-raw-v4",
+    "adapter": "human-supervised-claude-code",
+    "version": "claude-code-oauth-actions-issue-57-bounded-raw-v4",
     "max_attempts": 3,
     "timeout_seconds": 1800
   },
@@ -76,7 +76,7 @@
               "3bfdafa3cd3cece1c69e9dfe699c46e9e0a651a3"
             ],
             "draft_pr": 60,
-            "reuse_policy": "requirements and adversarial evidence only; do not copy the rejected semantic-Markdown parser"
+            "reuse_policy": "requirements and adversarial evidence only; do not copy rejected implementation code or treat local PR #61 as execution evidence"
           },
           "stage_boundary": {
             "stage": "B4-B",
