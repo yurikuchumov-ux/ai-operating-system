@@ -1275,8 +1275,9 @@ class WorkflowInvariantTests(unittest.TestCase):
         self.assertIn("if not is_codex and provider_transient.is_file():", self.text)
 
     def test_control_hash_failure_is_preserved_before_python_import(self) -> None:
-        self.assertIn("control_integrity_failed=false", self.text)
-        self.assertIn('d["postcondition_failure"]="control_integrity_failed"', self.text)
+        self.assertIn("observed != os.environ['EXPECTED_TASK_SHA256']", self.text)
+        self.assertIn("data['postcondition_failure'] = 'control_integrity_failed'", self.text)
+        self.assertNotIn("control_integrity_failed=false", self.text)
         self.assertIn('manifest.get(\'postcondition_failure\')', self.text)
 
     def test_workflow_dispatch_inputs_present(self) -> None:
@@ -1403,7 +1404,12 @@ class WorkflowInvariantTests(unittest.TestCase):
         self.assertIn("hashFiles('p0-adapter-output/manifest.json') == ''", self.text)
 
     def test_workflow_owns_check_commit_and_exact_target_push(self) -> None:
-        self.assertIn("subprocess.run(argv", self.text)
+        # The workflow still owns command execution, but never executes the
+        # registry argv directly with the privileged trusted interpreter.
+        # Every required-check boundary must use the env-cleared, no-sudo
+        # sandbox command assembled by trusted workflow code.
+        self.assertEqual(3, self.text.count("subprocess.run(sandbox_command"))
+        self.assertNotIn("subprocess.run(argv", self.text)
         self.assertIn("HEAD:refs/heads/{}", self.text)
         self.assertIn("changed_paths_within_scope", self.text)
         self.assertIn("postconditions_passed", self.text)
@@ -1591,12 +1597,15 @@ class ImmutableVerifierBootstrapTests(unittest.TestCase):
                 self.assertIn(f"cp {file_path} /tmp/p0-immutable-control/{file_path}", snapshot_section)
 
     def test_candidate_registered_command_runs_on_candidate_checkout(self) -> None:
-        """The candidate registered check runs in the workspace (cwd='.'),
-        not in the snapshot, so candidate tests can import candidate code."""
+        """The registered command is interpreted against the candidate root,
+        while its process runs under the isolated unprivileged sandbox."""
         text = WORKFLOW_PATH.read_text(encoding="utf-8")
-        # The executor postcondition check runs in cwd='.'
         postcondition = text.split("Enforce scope, run registered argv", 1)[1].split("Upload executor evidence", 1)[0]
-        self.assertIn("subprocess.run(argv, cwd='.'", postcondition)
+        self.assertIn("subprocess.run(sandbox_command, cwd='.'", postcondition)
+        self.assertIn("json.dumps(argv), os.getcwd()", postcondition)
+        self.assertIn("sys.path.insert(0, root)", postcondition)
+        self.assertIn("unittest.main(module=None", postcondition)
+        self.assertIn("runpy.run_path", postcondition)
 
     def test_prepare_step_uses_snapshot_for_task_parsing(self) -> None:
         text = WORKFLOW_PATH.read_text(encoding="utf-8")
@@ -1746,19 +1755,27 @@ raise SystemExit(adapter.main([
     def test_trusted_tools_is_regular_root_owned_package(self) -> None:
         text = WORKFLOW_PATH.read_text(encoding="utf-8")
         self.assertEqual(3, text.count(": > /tmp/p0-immutable-control/tools/__init__.py"))
-        self.assertEqual(3, text.count("sudo chown -R root:root /tmp/p0-immutable-control"))
-        self.assertEqual(3, text.count("sudo chmod -R a-w /tmp/p0-immutable-control"))
+        self.assertEqual(3, text.count("/usr/bin/sudo -n -- /usr/bin/chown -R root:root /tmp/p0-immutable-control"))
+        self.assertEqual(3, text.count("/usr/bin/sudo -n -- /usr/bin/chmod -R a-w /tmp/p0-immutable-control"))
         self.assertIn("trusted tools package exact-path mismatch", text)
         self.assertIn("trusted adapter exact-path mismatch", text)
 
-    def test_adapter_hash_is_checked_before_every_post_snapshot_boundary(self) -> None:
+    def test_full_bundle_hash_is_checked_before_every_post_snapshot_boundary(self) -> None:
         text = WORKFLOW_PATH.read_text(encoding="utf-8")
         boundary_check = (
-            "test \"$(shasum -a 256 /tmp/p0-immutable-control/tools/"
-            "p0_actions_adapter.py | awk '{print $1}')\" = \"$P0_EXPECTED_ADAPTER_SHA256\""
+            '"${{ steps.trusted-python.outputs.python-path }}" -I /tmp/p0-immutable-guard.py '
+            '"$P0_EXPECTED_CONTROL_BUNDLE_SHA256"'
         )
         self.assertGreaterEqual(text.count(boundary_check), 9)
-        self.assertEqual(3, text.count("P0_EXPECTED_ADAPTER_SHA256: ${{ needs.admission.outputs.adapter_sha256 }}"))
+        self.assertEqual(
+            5,
+            text.count(
+                "P0_EXPECTED_CONTROL_BUNDLE_SHA256: "
+                "${{ needs.admission.outputs.control_bundle_sha256 }}"
+            ),
+        )
+        self.assertEqual(3, text.count("/usr/bin/sudo -n -- /usr/bin/chown root:root /tmp/p0-immutable-guard.py"))
+        self.assertEqual(3, text.count("/usr/bin/sudo -n -- /usr/bin/chmod 0444 /tmp/p0-immutable-guard.py"))
 
     def test_missing_subject_never_runs_required_command_on_base(self) -> None:
         text = WORKFLOW_PATH.read_text(encoding="utf-8")
@@ -1778,10 +1795,128 @@ raise SystemExit(adapter.main([
         # Should have snapshot import, not workspace import
         self._assert_exact_snapshot_loader(postcondition)
         # Explicitly check the postcondition doesn't have workspace import
-        lines_with_pathinsert = [line for line in postcondition.split('\n') if 'sys.path.insert' in line]
-        for line in lines_with_pathinsert:
-            if 'trusted_root' not in line:
-                self.fail(f"Found workspace import in postcondition: {line}")
+        self.assertNotIn("sys.path.insert(0, '.')", postcondition)
+
+    def test_late_snapshot_revalidation_accepts_and_hashes_package_marker(self) -> None:
+        text = WORKFLOW_PATH.read_text(encoding="utf-8")
+        verification = text.split("Verify immutable snapshot integrity before postconditions", 1)[1].split(
+            "Enforce scope, run registered argv", 1
+        )[0]
+        self.assertIn("'tools/__init__.py'", verification)
+        self.assertIn("snapshot_manifest.get('files', {}).get(rel_path)", verification)
+
+    def test_registered_commands_drop_privileges_and_sanitize_environment(self) -> None:
+        text = WORKFLOW_PATH.read_text(encoding="utf-8")
+        self.assertEqual(3, text.count("'/usr/bin/sudo', '-n', '-u', 'nobody'"))
+        self.assertEqual(3, text.count("'/usr/bin/env', '-i'"))
+        self.assertEqual(3, text.count("'PYTHONDONTWRITEBYTECODE=1'"))
+        self.assertEqual(3, text.count("'PYTHONNOUSERSITE=1'"))
+        self.assertEqual(3, text.count("/usr/bin/sudo -n -u nobody -- /usr/bin/test ! -w \"$PWD\""))
+        self.assertEqual(3, text.count("untrusted check identity unexpectedly has sudo"))
+        self.assertEqual(3, text.count("/usr/bin/chmod go-rwx \"$GITHUB_ENV\" \"$GITHUB_PATH\""))
+        self.assertEqual(3, text.count("if registered[2] != 'unittest': raise SystemExit(126)"))
+        self.assertEqual(3, text.count("guard = subprocess.run(["))
+
+    def test_registered_unittest_runtime_cannot_be_shadowed_at_startup(self) -> None:
+        """The candidate may provide tests, but cannot replace Python startup
+        hooks or the trusted unittest command driver used by the registry."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            tests = root / "tests"
+            tests.mkdir()
+            (root / "sitecustomize.py").write_text(
+                "from pathlib import Path\nPath('sitecustomize-ran').write_text('bad')\n",
+                encoding="utf-8",
+            )
+            (root / "unittest.py").write_text(
+                "from pathlib import Path\nPath('unittest-shadowed').write_text('bad')\n",
+                encoding="utf-8",
+            )
+            (tests / "test_ok.py").write_text(
+                "import unittest\nclass T(unittest.TestCase):\n"
+                "    def test_ok(self): self.assertTrue(True)\n",
+                encoding="utf-8",
+            )
+            runner = """
+import json, os, runpy, sys, unittest
+registered = json.loads(sys.argv[1]); root = os.path.realpath(sys.argv[2])
+if not registered or registered[0] != 'python3': raise SystemExit(126)
+if registered[1:2] == ['-m'] and len(registered) >= 3:
+    if registered[2] != 'unittest': raise SystemExit(126)
+    sys.path.insert(0, root)
+    unittest.main(module=None, argv=[registered[2], *registered[3:]])
+else: raise SystemExit(126)
+"""
+            run = subprocess.run(
+                [
+                    sys.executable,
+                    "-I",
+                    "-c",
+                    runner,
+                    json.dumps(["python3", "-m", "unittest", "discover", "-s", "tests"]),
+                    str(root),
+                ],
+                cwd=root,
+                env={
+                    "HOME": str(root),
+                    "PATH": "/usr/bin:/bin",
+                    "PYTHONDONTWRITEBYTECODE": "1",
+                    "PYTHONNOUSERSITE": "1",
+                },
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                timeout=30,
+            )
+            self.assertEqual(0, run.returncode, run.stdout)
+            self.assertFalse((root / "sitecustomize-ran").exists())
+            self.assertFalse((root / "unittest-shadowed").exists())
+
+    def test_all_post_snapshot_trusted_python_is_isolated(self) -> None:
+        text = WORKFLOW_PATH.read_text(encoding="utf-8")
+        boundary = (
+            '"${{ steps.trusted-python.outputs.python-path }}" -I /tmp/p0-immutable-guard.py '
+            '"$P0_EXPECTED_CONTROL_BUNDLE_SHA256"\n'
+            '          "${{ steps.trusted-python.outputs.python-path }}" -I -'
+        )
+        # Six simple boundaries are adjacent; the three registered-check
+        # boundaries insert privilege-drop setup between guard and Python.
+        self.assertGreaterEqual(text.count(boundary), 6)
+        post_checkout = text.split("git switch --create", 1)[1]
+        self.assertNotIn("\n          python3 - <<'PY'", post_checkout)
+        self.assertNotIn("$pythonLocation", text)
+        self.assertEqual(5, text.count("id: trusted-python"))
+
+    def test_write_credentials_are_not_persisted_into_candidate_checkouts(self) -> None:
+        text = WORKFLOW_PATH.read_text(encoding="utf-8")
+        publisher = text.split("  publish-target:", 1)[1].split("  finalize-and-verify:", 1)[0]
+        finalizer = text.split("  finalize-and-verify:", 1)[1]
+        self.assertIn("persist-credentials: false", publisher)
+        self.assertIn("persist-credentials: false", finalizer)
+        self.assertIn("PUBLISH_TOKEN: ${{ github.token }}", publisher)
+        self.assertIn("'/usr/bin/env', '-i'", publisher)
+        self.assertNotIn("http.https://github.com/.extraheader=AUTHORIZATION", publisher)
+        self.assertIn("'GIT_CONFIG_KEY_0': 'http.https://github.com/.extraheader'", publisher)
+        self.assertIn("'GIT_CONFIG_VALUE_0': 'AUTHORIZATION: basic ' + auth", publisher)
+        self.assertIn("credential_env={", publisher)
+        self.assertNotIn("subprocess.run(['git'", text)
+
+    def test_post_executor_boundaries_rebind_and_sanitize_trusted_environment(self) -> None:
+        text = WORKFLOW_PATH.read_text(encoding="utf-8")
+        execute = text.split("  execute:", 1)[1].split("  publish-target:", 1)[0]
+        post_executor = execute.split("Preserve real adapter output", 1)[1]
+        self.assertGreaterEqual(
+            post_executor.count(
+                "P0_EXPECTED_CONTROL_BUNDLE_SHA256: "
+                "${{ needs.admission.outputs.control_bundle_sha256 }}"
+            ),
+            2,
+        )
+        for assignment in (
+            'BASH_ENV: ""', 'ENV: ""', 'LD_PRELOAD: ""',
+            'PYTHONHOME: ""', 'PYTHONPATH: ""', 'PATH: /usr/bin:/bin',
+        ):
+            self.assertGreaterEqual(post_executor.count(assignment), 2, assignment)
 
     def test_snapshot_declares_complete_local_python_dependency_closure(self) -> None:
         """Every local tools.* import reachable from the trusted adapter is

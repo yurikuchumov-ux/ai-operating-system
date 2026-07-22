@@ -65,7 +65,8 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
           persist-credentials: false
-      - uses: actions/setup-python@v5
+      - id: trusted-python
+        uses: actions/setup-python@v5
         with:
           python-version: "3.11"
       - run: python3 -m pip install --disable-pip-version-check --no-input -r requirements-p0-actions.txt
@@ -114,7 +115,8 @@ jobs:
         with:
           ref: ${{ github.event.repository.default_branch }}
           fetch-depth: 0
-      - uses: actions/setup-python@v5
+      - id: trusted-python
+        uses: actions/setup-python@v5
         with:
           python-version: "3.11"
       - run: python3 -m pip install --disable-pip-version-check --no-input -r requirements-p0-actions.txt
@@ -126,7 +128,7 @@ jobs:
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           MODE: ${{ github.event.inputs.mode }}
         run: |
-          python3 - <<'PY'
+          "${{ steps.trusted-python.outputs.python-path }}" -I - <<'PY'
           import os
           from tools import p0_actions_adapter as adapter
           failures = [
@@ -170,7 +172,7 @@ jobs:
           REPOSITORY: ${{ github.repository }}
           ATTEMPT: ${{ github.event.inputs.attempt }}
         run: |
-          python3 - <<'PY'
+          "${{ steps.trusted-python.outputs.python-path }}" -I - <<'PY'
           import hashlib, json, os
           from pathlib import Path
           from tools import p0_actions_adapter as adapter
@@ -252,6 +254,7 @@ jobs:
     needs: admission
     env:
       P0_EXPECTED_ADAPTER_SHA256: ${{ needs.admission.outputs.adapter_sha256 }}
+      P0_EXPECTED_CONTROL_BUNDLE_SHA256: ${{ needs.admission.outputs.control_bundle_sha256 }}
     if: >-
       github.event_name == 'workflow_dispatch' &&
       github.event.inputs.mode == 'execute' &&
@@ -267,7 +270,8 @@ jobs:
           ref: ${{ needs.admission.outputs.base_sha }}
           fetch-depth: 0
           persist-credentials: false
-      - uses: actions/setup-python@v5
+      - id: trusted-python
+        uses: actions/setup-python@v5
         with:
           python-version: "3.11"
       - run: python3 -m pip install --disable-pip-version-check --no-input -r requirements-p0-actions.txt
@@ -296,7 +300,7 @@ jobs:
           registry_hash="$(shasum -a 256 /tmp/p0-immutable-control/contracts/registries/commands.v1.json | awk '{print $1}')"
           test "$adapter_hash" = "$EXPECTED_ADAPTER_SHA256" || { echo "::error::immutable snapshot adapter hash mismatch"; exit 1; }
           test "$registry_hash" = "$EXPECTED_REGISTRY_SHA256" || { echo "::error::immutable snapshot registry hash mismatch"; exit 1; }
-          python3 - <<'PY'
+          "${{ steps.trusted-python.outputs.python-path }}" -I - <<'PY'
           import hashlib, json, os
           from pathlib import Path
           root = Path('/tmp/p0-immutable-control')
@@ -346,8 +350,48 @@ jobs:
               json.dumps(manifest, sort_keys=True), encoding='utf-8'
           )
           PY
-          sudo chown -R root:root /tmp/p0-immutable-control
-          sudo chmod -R a-w /tmp/p0-immutable-control
+          cat > /tmp/p0-immutable-guard.py <<'PY'
+          import hashlib, os, stat, sys
+          from pathlib import Path
+          root = Path('/tmp/p0-immutable-control')
+          files = (
+              'tools/__init__.py', 'tools/p0_actions_adapter.py',
+              'tools/propagate_b3.py', 'tools/finalize_b1.py', 'tools/verify_b2.py',
+              'contracts/registries/commands.v1.json',
+              'contracts/registries/predicates.v1.json',
+              'contracts/schemas/task.v1.schema.json',
+              'contracts/schemas/result.v1.schema.json',
+              'contracts/schemas/verification.v1.schema.json',
+              'contracts/schemas/review-attestation.v1.schema.json',
+          )
+          observed = {p.relative_to(root).as_posix() for p in root.rglob('*')
+                      if p.is_file() or p.is_symlink()}
+          expected = set(files)
+          if (root / 'snapshot-manifest.json').is_file():
+              expected.add('snapshot-manifest.json')
+          if observed != expected:
+              raise SystemExit('immutable snapshot guard file-set mismatch')
+          digest = hashlib.sha256()
+          for rel_path in files:
+              path = root / rel_path
+              info = path.lstat()
+              if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o222:
+                  raise SystemExit('immutable snapshot guard ownership/mode mismatch')
+              data = path.read_bytes()
+              digest.update(rel_path.encode('utf-8') + b'\0')
+              digest.update(len(data).to_bytes(8, 'big'))
+              digest.update(data)
+          if digest.hexdigest() != sys.argv[1]:
+              raise SystemExit('immutable snapshot guard bundle hash mismatch')
+          guard_info = Path(__file__).lstat()
+          if guard_info.st_uid != 0 or guard_info.st_mode & 0o222:
+              raise SystemExit('immutable snapshot guard self-integrity mismatch')
+          PY
+          /usr/bin/sudo -n -- /usr/bin/chown -R root:root /tmp/p0-immutable-control
+          /usr/bin/sudo -n -- /usr/bin/chmod -R a-w /tmp/p0-immutable-control
+          /usr/bin/sudo -n -- /usr/bin/chown root:root /tmp/p0-immutable-guard.py
+          /usr/bin/sudo -n -- /usr/bin/chmod 0444 /tmp/p0-immutable-guard.py
+          "${{ steps.trusted-python.outputs.python-path }}" -I /tmp/p0-immutable-guard.py "$EXPECTED_CONTROL_BUNDLE_SHA256"
       - name: Create exact target branch and materialize bounded control inputs
         id: prepare
         env:
@@ -367,8 +411,8 @@ jobs:
           git fetch --no-tags --depth=1 origin "$TASK_COMMIT"
           test "$(git rev-parse --verify "${TASK_COMMIT}^{commit}")" = "$TASK_COMMIT"
           git show "${TASK_COMMIT}:${TASK_PATH}" > /tmp/p0-control/task.json
-          test "$(shasum -a 256 /tmp/p0-immutable-control/tools/p0_actions_adapter.py | awk '{print $1}')" = "$P0_EXPECTED_ADAPTER_SHA256"
-          python3 - <<'PY'
+          "${{ steps.trusted-python.outputs.python-path }}" -I /tmp/p0-immutable-guard.py "$P0_EXPECTED_CONTROL_BUNDLE_SHA256"
+          "${{ steps.trusted-python.outputs.python-path }}" -I - <<'PY'
           import json, sys
           from pathlib import Path
           import importlib.util
@@ -464,8 +508,16 @@ jobs:
           TASK_PATH: ${{ github.event.inputs.task_path }}
           EXECUTION_RUN_ID: ${{ github.run_id }}
           STARTED_AT: ${{ steps.prepare.outputs.started_at }}
+          P0_EXPECTED_CONTROL_BUNDLE_SHA256: ${{ needs.admission.outputs.control_bundle_sha256 }}
+          BASH_ENV: ""
+          ENV: ""
+          LD_PRELOAD: ""
+          PYTHONHOME: ""
+          PYTHONPATH: ""
+          PATH: /usr/bin:/bin
         run: |
-          python3 - <<'PY'
+          "${{ steps.trusted-python.outputs.python-path }}" -I /tmp/p0-immutable-guard.py "$P0_EXPECTED_CONTROL_BUNDLE_SHA256"
+          "${{ steps.trusted-python.outputs.python-path }}" -I - <<'PY'
           import json, os
           from datetime import datetime, timezone
           from pathlib import Path
@@ -610,13 +662,20 @@ jobs:
         if: always()
         env:
           EXPECTED_CONTROL_BUNDLE_SHA256: ${{ needs.admission.outputs.control_bundle_sha256 }}
+          BASH_ENV: ""
+          ENV: ""
+          LD_PRELOAD: ""
+          PYTHONHOME: ""
+          PYTHONPATH: ""
+          PATH: /usr/bin:/bin
         run: |
-          python3 -I - <<'PY'
+          "${{ steps.trusted-python.outputs.python-path }}" -I - <<'PY'
           import hashlib, json, os
           from pathlib import Path
           root = Path('/tmp/p0-immutable-control')
           manifest_path = Path('p0-adapter-output/manifest.json')
           control_files = (
+              'tools/__init__.py',
               'tools/p0_actions_adapter.py',
               'tools/propagate_b3.py',
               'tools/finalize_b1.py',
@@ -667,16 +726,41 @@ jobs:
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           BASE_SHA: ${{ needs.admission.outputs.base_sha }}
           EXPECTED_TASK_SHA256: ${{ needs.admission.outputs.task_sha256 }}
+          P0_EXPECTED_CONTROL_BUNDLE_SHA256: ${{ needs.admission.outputs.control_bundle_sha256 }}
+          BASH_ENV: ""
+          ENV: ""
+          GIT_CONFIG_COUNT: "0"
+          GIT_CONFIG_GLOBAL: /dev/null
+          GIT_CONFIG_NOSYSTEM: "1"
+          LD_PRELOAD: ""
+          PYTHONHOME: ""
+          PYTHONPATH: ""
+          PATH: /usr/bin:/bin
         run: |
-          control_integrity_failed=false
-          test "$(shasum -a 256 /tmp/p0-control/task.json | awk '{print $1}')" = "$EXPECTED_TASK_SHA256" || control_integrity_failed=true
-          if [ "$control_integrity_failed" = true ]; then
-            python3 -I -c 'import json,pathlib; p=pathlib.Path("p0-adapter-output/manifest.json"); d=json.loads(p.read_text()); d["postcondition_failure"]="control_integrity_failed"; p.write_text(json.dumps(d,sort_keys=True))'
-            exit 1
+          "${{ steps.trusted-python.outputs.python-path }}" -I - <<'PY'
+          import hashlib, json, os
+          from pathlib import Path
+          task_path = Path('/tmp/p0-control/task.json')
+          manifest_path = Path('p0-adapter-output/manifest.json')
+          observed = hashlib.sha256(task_path.read_bytes()).hexdigest() if task_path.is_file() else ''
+          if observed != os.environ['EXPECTED_TASK_SHA256']:
+              data = json.loads(manifest_path.read_text(encoding='utf-8'))
+              data['postcondition_failure'] = 'control_integrity_failed'
+              manifest_path.write_text(json.dumps(data, sort_keys=True), encoding='utf-8')
+              raise SystemExit(1)
+          PY
+          "${{ steps.trusted-python.outputs.python-path }}" -I /tmp/p0-immutable-guard.py "$P0_EXPECTED_CONTROL_BUNDLE_SHA256"
+          /usr/bin/sudo -n -- /usr/bin/install -d -o nobody -g nogroup -m 0700 /tmp/p0-check-home
+          printf '[safe]\n\tdirectory = %s\n' "$PWD" | /usr/bin/sudo -n -- /usr/bin/tee /tmp/p0-check-safe.gitconfig >/dev/null
+          /usr/bin/sudo -n -- /usr/bin/chown root:root /tmp/p0-check-safe.gitconfig
+          /usr/bin/sudo -n -- /usr/bin/chmod 0444 /tmp/p0-check-safe.gitconfig
+          /usr/bin/chmod go-rwx "$GITHUB_ENV" "$GITHUB_PATH" "$GITHUB_OUTPUT" "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
+          if /usr/bin/sudo -n -u nobody -- /usr/bin/sudo -n true >/dev/null 2>&1; then
+            echo '::error::untrusted check identity unexpectedly has sudo'; exit 1
           fi
-          test "$(shasum -a 256 /tmp/p0-immutable-control/tools/p0_actions_adapter.py | awk '{print $1}')" = "$P0_EXPECTED_ADAPTER_SHA256"
-          python3 -I - <<'PY'
-          import json, os, subprocess, sys
+          /usr/bin/sudo -n -u nobody -- /usr/bin/test ! -w "$PWD"
+          "${{ steps.trusted-python.outputs.python-path }}" -I - <<'PY'
+          import json, os, subprocess, sys, textwrap
           from pathlib import Path
           import importlib.util
           trusted_root = Path('/tmp/p0-immutable-control').resolve()
@@ -700,7 +784,13 @@ jobs:
           base = os.environ['BASE_SHA']; target = os.environ['TARGET_BRANCH']
 
           def git(*args, check=True):
-              return subprocess.run(['git', *args], check=check, text=True, capture_output=True)
+              clean_env = {
+                  'PATH': '/usr/bin:/bin', 'HOME': '/tmp/p0-check-home',
+                  'GIT_CONFIG_GLOBAL': '/dev/null', 'GIT_CONFIG_NOSYSTEM': '1',
+                  'LANG': 'C.UTF-8',
+              }
+              return subprocess.run(['/usr/bin/git', *args], check=check, text=True,
+                                    capture_output=True, env=clean_env)
           def save():
               manifest_path.write_text(json.dumps(manifest, sort_keys=True), encoding='utf-8')
           def reject(reason):
@@ -756,8 +846,33 @@ jobs:
 
           argv = check_spec['argv']
           timed_out = False
+          if not argv or argv[0] != 'python3':
+              reject('registered_check_runtime_not_sandboxable')
+          sandbox_runner = textwrap.dedent(r'''
+          import json, os, runpy, sys, unittest
+          registered = json.loads(sys.argv[1]); root = os.path.realpath(sys.argv[2])
+          if not registered or registered[0] != 'python3': raise SystemExit(126)
+          if registered[1:2] == ['-m'] and len(registered) >= 3:
+              if registered[2] != 'unittest': raise SystemExit(126)
+              sys.path.insert(0, root)
+              unittest.main(module=None, argv=[registered[2], *registered[3:]])
+          elif len(registered) >= 2:
+              sys.path.insert(0, root)
+              script = os.path.realpath(os.path.join(root, registered[1]))
+              if os.path.commonpath([root, script]) != root: raise SystemExit(126)
+              sys.argv = [script, *registered[2:]]
+              runpy.run_path(script, run_name='__main__')
+          else: raise SystemExit(126)
+          ''')
+          sandbox_command = [
+              '/usr/bin/sudo', '-n', '-u', 'nobody', '--', '/usr/bin/env', '-i',
+              'HOME=/tmp/p0-check-home', 'PATH=/usr/bin:/bin',
+              'PYTHONDONTWRITEBYTECODE=1', 'PYTHONNOUSERSITE=1',
+              'GIT_CONFIG_GLOBAL=/tmp/p0-check-safe.gitconfig',
+              sys.executable, '-I', '-c', sandbox_runner, json.dumps(argv), os.getcwd(),
+          ]
           try:
-              completed = subprocess.run(argv, cwd='.', text=True, stdout=subprocess.PIPE,
+              completed = subprocess.run(sandbox_command, cwd='.', text=True, stdout=subprocess.PIPE,
                                          stderr=subprocess.STDOUT, timeout=300)
               exit_code = completed.returncode
               log = completed.stdout[-1024 * 1024:]
@@ -768,8 +883,15 @@ jobs:
           manifest['executor_check'] = {
               'command_id': check_spec['command_id'], 'argv': argv,
               'exit_code': exit_code, 'timed_out': timed_out,
+              'sandbox_identity': 'nobody', 'isolated_python': True,
           }
           save()
+          guard = subprocess.run([
+              sys.executable, '-I', '/tmp/p0-immutable-guard.py',
+              os.environ['P0_EXPECTED_CONTROL_BUNDLE_SHA256'],
+          ], text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+          if guard.returncode != 0:
+              reject('immutable_snapshot_integrity_failed_after_required_check')
           if timed_out or exit_code != 0:
               reject('required_check_failed')
 
@@ -818,6 +940,7 @@ jobs:
     needs: [admission, execute]
     env:
       P0_EXPECTED_ADAPTER_SHA256: ${{ needs.admission.outputs.adapter_sha256 }}
+      P0_EXPECTED_CONTROL_BUNDLE_SHA256: ${{ needs.admission.outputs.control_bundle_sha256 }}
     if: >-
       github.event_name == 'workflow_dispatch' &&
       github.event.inputs.mode == 'execute' &&
@@ -832,7 +955,9 @@ jobs:
         with:
           ref: ${{ needs.admission.outputs.base_sha }}
           fetch-depth: 0
-      - uses: actions/setup-python@v5
+          persist-credentials: false
+      - id: trusted-python
+        uses: actions/setup-python@v5
         with:
           python-version: "3.11"
       - run: python3 -m pip install --disable-pip-version-check --no-input -r requirements-p0-actions.txt
@@ -860,7 +985,7 @@ jobs:
           registry_hash="$(shasum -a 256 /tmp/p0-immutable-control/contracts/registries/commands.v1.json | awk '{print $1}')"
           test "$adapter_hash" = "$EXPECTED_ADAPTER_SHA256" || { echo "::error::publisher snapshot adapter hash mismatch"; exit 1; }
           test "$registry_hash" = "$EXPECTED_REGISTRY_SHA256" || { echo "::error::publisher snapshot registry hash mismatch"; exit 1; }
-          python3 - <<'PY'
+          "${{ steps.trusted-python.outputs.python-path }}" -I - <<'PY'
           import hashlib, os
           from pathlib import Path
           root = Path('/tmp/p0-immutable-control')
@@ -889,8 +1014,45 @@ jobs:
           if digest.hexdigest() != os.environ['EXPECTED_CONTROL_BUNDLE_SHA256']:
               raise SystemExit('publisher snapshot bundle hash mismatch')
           PY
-          sudo chown -R root:root /tmp/p0-immutable-control
-          sudo chmod -R a-w /tmp/p0-immutable-control
+          cat > /tmp/p0-immutable-guard.py <<'PY'
+          import hashlib, stat, sys
+          from pathlib import Path
+          root = Path('/tmp/p0-immutable-control')
+          files = (
+              'tools/__init__.py', 'tools/p0_actions_adapter.py',
+              'tools/propagate_b3.py', 'tools/finalize_b1.py', 'tools/verify_b2.py',
+              'contracts/registries/commands.v1.json',
+              'contracts/registries/predicates.v1.json',
+              'contracts/schemas/task.v1.schema.json',
+              'contracts/schemas/result.v1.schema.json',
+              'contracts/schemas/verification.v1.schema.json',
+              'contracts/schemas/review-attestation.v1.schema.json',
+          )
+          observed = {p.relative_to(root).as_posix() for p in root.rglob('*')
+                      if p.is_file() or p.is_symlink()}
+          if observed != set(files):
+              raise SystemExit('immutable snapshot guard file-set mismatch')
+          digest = hashlib.sha256()
+          for rel_path in files:
+              path = root / rel_path
+              info = path.lstat()
+              if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o222:
+                  raise SystemExit('immutable snapshot guard ownership/mode mismatch')
+              data = path.read_bytes()
+              digest.update(rel_path.encode('utf-8') + b'\0')
+              digest.update(len(data).to_bytes(8, 'big'))
+              digest.update(data)
+          if digest.hexdigest() != sys.argv[1]:
+              raise SystemExit('immutable snapshot guard bundle hash mismatch')
+          guard_info = Path(__file__).lstat()
+          if guard_info.st_uid != 0 or guard_info.st_mode & 0o222:
+              raise SystemExit('immutable snapshot guard self-integrity mismatch')
+          PY
+          /usr/bin/sudo -n -- /usr/bin/chown -R root:root /tmp/p0-immutable-control
+          /usr/bin/sudo -n -- /usr/bin/chmod -R a-w /tmp/p0-immutable-control
+          /usr/bin/sudo -n -- /usr/bin/chown root:root /tmp/p0-immutable-guard.py
+          /usr/bin/sudo -n -- /usr/bin/chmod 0444 /tmp/p0-immutable-guard.py
+          "${{ steps.trusted-python.outputs.python-path }}" -I /tmp/p0-immutable-guard.py "$EXPECTED_CONTROL_BUNDLE_SHA256"
       - uses: actions/download-artifact@v4
         with:
           name: p0-adapter-output
@@ -902,13 +1064,23 @@ jobs:
           BASE_SHA: ${{ needs.admission.outputs.base_sha }}
           TASK_COMMIT: ${{ github.event.inputs.task_commit }}
           TASK_PATH: ${{ github.event.inputs.task_path }}
+          PUBLISH_TOKEN: ${{ github.token }}
         run: |
           git fetch --no-tags --depth=1 origin "$TASK_COMMIT"
           test "$(git rev-parse --verify "${TASK_COMMIT}^{commit}")" = "$TASK_COMMIT"
           git show "${TASK_COMMIT}:${TASK_PATH}" > /tmp/immutable-task.json
-          test "$(shasum -a 256 /tmp/p0-immutable-control/tools/p0_actions_adapter.py | awk '{print $1}')" = "$P0_EXPECTED_ADAPTER_SHA256"
-          python3 - <<'PY'
-          import json, os, subprocess, sys
+          "${{ steps.trusted-python.outputs.python-path }}" -I /tmp/p0-immutable-guard.py "$P0_EXPECTED_CONTROL_BUNDLE_SHA256"
+          /usr/bin/sudo -n -- /usr/bin/install -d -o nobody -g nogroup -m 0700 /tmp/p0-check-home
+          printf '[safe]\n\tdirectory = %s\n' "$PWD" | /usr/bin/sudo -n -- /usr/bin/tee /tmp/p0-check-safe.gitconfig >/dev/null
+          /usr/bin/sudo -n -- /usr/bin/chown root:root /tmp/p0-check-safe.gitconfig
+          /usr/bin/sudo -n -- /usr/bin/chmod 0444 /tmp/p0-check-safe.gitconfig
+          /usr/bin/chmod go-rwx "$GITHUB_ENV" "$GITHUB_PATH" "$GITHUB_OUTPUT" "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
+          if /usr/bin/sudo -n -u nobody -- /usr/bin/sudo -n true >/dev/null 2>&1; then
+            echo '::error::untrusted check identity unexpectedly has sudo'; exit 1
+          fi
+          /usr/bin/sudo -n -u nobody -- /usr/bin/test ! -w "$PWD"
+          "${{ steps.trusted-python.outputs.python-path }}" -I - <<'PY'
+          import base64, json, os, subprocess, sys, textwrap
           from pathlib import Path
           import importlib.util
           trusted_root = Path('/tmp/p0-immutable-control').resolve()
@@ -931,8 +1103,16 @@ jobs:
                         'argv': adapter.resolve_registered_check(adapter.bounded_required_check(task)['command_id'])}
           base = os.environ['BASE_SHA']; target = os.environ['TARGET_BRANCH']
 
-          def git(*args, check=True):
-              return subprocess.run(['git', *args], check=check, text=True, capture_output=True)
+          def git(*args, check=True, credential_env=None):
+              clean_env = {
+                  'PATH': '/usr/bin:/bin', 'HOME': '/tmp/p0-check-home',
+                  'GIT_CONFIG_GLOBAL': '/dev/null', 'GIT_CONFIG_NOSYSTEM': '1',
+                  'LANG': 'C.UTF-8',
+              }
+              if credential_env:
+                  clean_env.update(credential_env)
+              return subprocess.run(['/usr/bin/git', *args], check=check, text=True,
+                                    capture_output=True, env=clean_env)
           def reject(reason):
               manifest['publication_failure'] = reason
               (out / 'manifest.json').write_text(json.dumps(manifest, sort_keys=True), encoding='utf-8')
@@ -970,15 +1150,49 @@ jobs:
           if not adapter.changed_paths_within_scope(changed, task['allowed_paths'], task['denied_paths']):
               reject('patch_scope_violation')
 
+          registered_argv = check_spec['argv']
+          if not registered_argv or registered_argv[0] != 'python3':
+              reject('registered_check_runtime_not_sandboxable')
+          sandbox_runner = textwrap.dedent(r'''
+          import json, os, runpy, sys, unittest
+          registered = json.loads(sys.argv[1]); root = os.path.realpath(sys.argv[2])
+          if not registered or registered[0] != 'python3': raise SystemExit(126)
+          if registered[1:2] == ['-m'] and len(registered) >= 3:
+              if registered[2] != 'unittest': raise SystemExit(126)
+              sys.path.insert(0, root)
+              unittest.main(module=None, argv=[registered[2], *registered[3:]])
+          elif len(registered) >= 2:
+              sys.path.insert(0, root)
+              script = os.path.realpath(os.path.join(root, registered[1]))
+              if os.path.commonpath([root, script]) != root: raise SystemExit(126)
+              sys.argv = [script, *registered[2:]]
+              runpy.run_path(script, run_name='__main__')
+          else: raise SystemExit(126)
+          ''')
+          sandbox_command = [
+              '/usr/bin/sudo', '-n', '-u', 'nobody', '--', '/usr/bin/env', '-i',
+              'HOME=/tmp/p0-check-home', 'PATH=/usr/bin:/bin',
+              'PYTHONDONTWRITEBYTECODE=1', 'PYTHONNOUSERSITE=1',
+              'GIT_CONFIG_GLOBAL=/tmp/p0-check-safe.gitconfig',
+              sys.executable, '-I', '-c', sandbox_runner,
+              json.dumps(registered_argv), os.getcwd(),
+          ]
           try:
-              run = subprocess.run(check_spec['argv'], text=True, stdout=subprocess.PIPE,
+              run = subprocess.run(sandbox_command, text=True, stdout=subprocess.PIPE,
                                    stderr=subprocess.STDOUT, timeout=300)
               exit_code = run.returncode; log = run.stdout; timed_out = False
           except subprocess.TimeoutExpired as exc:
               exit_code = 124; log = (exc.stdout or '') + (exc.stderr or ''); timed_out = True
           (out / 'publisher-required-check.log').write_text((log or '<empty output>')[-1024 * 1024:], encoding='utf-8')
           manifest['publisher_check'] = {'command_id': check['command_id'], 'argv': check_spec['argv'],
-                                         'exit_code': exit_code, 'timed_out': timed_out}
+                                         'exit_code': exit_code, 'timed_out': timed_out,
+                                         'sandbox_identity': 'nobody', 'isolated_python': True}
+          guard = subprocess.run([
+              sys.executable, '-I', '/tmp/p0-immutable-guard.py',
+              os.environ['P0_EXPECTED_CONTROL_BUNDLE_SHA256'],
+          ], text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+          if guard.returncode != 0:
+              reject('immutable_snapshot_integrity_failed_after_required_check')
           if timed_out or exit_code != 0:
               reject('publisher_required_check_failed')
 
@@ -996,7 +1210,15 @@ jobs:
           remote_before = remote_before_words[0] if remote_before_words else ''
           if default_before != base or remote_before not in {'', base}:
               reject('remote_ref_changed_before_publication')
-          git('push', 'origin', 'HEAD:refs/heads/{}'.format(target))
+          publish_token = os.environ.get('PUBLISH_TOKEN') or ''
+          if not publish_token:
+              reject('publisher_write_credential_missing')
+          auth = base64.b64encode(('x-access-token:' + publish_token).encode('utf-8')).decode('ascii')
+          git('push', 'origin', 'HEAD:refs/heads/{}'.format(target), credential_env={
+              'GIT_CONFIG_COUNT': '1',
+              'GIT_CONFIG_KEY_0': 'http.https://github.com/.extraheader',
+              'GIT_CONFIG_VALUE_0': 'AUTHORIZATION: basic ' + auth,
+          })
           default_after = git('ls-remote', '--heads', 'origin', 'refs/heads/{}'.format(os.environ['DEFAULT_BRANCH'])).stdout.split()[0]
           target_after = git('ls-remote', '--heads', 'origin', 'refs/heads/{}'.format(target)).stdout.split()[0]
           if default_after != base or target_after != subject:
@@ -1026,6 +1248,7 @@ jobs:
     needs: [admission, execute, publish-target]
     env:
       P0_EXPECTED_ADAPTER_SHA256: ${{ needs.admission.outputs.adapter_sha256 }}
+      P0_EXPECTED_CONTROL_BUNDLE_SHA256: ${{ needs.admission.outputs.control_bundle_sha256 }}
     if: always() && github.event_name == 'workflow_dispatch' && needs.admission.result != 'skipped'
     runs-on: ubuntu-latest
     permissions:
@@ -1039,7 +1262,9 @@ jobs:
         with:
           ref: ${{ needs.admission.outputs.base_sha || github.sha }}
           fetch-depth: 0
-      - uses: actions/setup-python@v5
+          persist-credentials: false
+      - id: trusted-python
+        uses: actions/setup-python@v5
         with:
           python-version: "3.11"
       - run: python3 -m pip install --disable-pip-version-check --no-input -r requirements-p0-actions.txt
@@ -1067,7 +1292,7 @@ jobs:
           registry_hash="$(shasum -a 256 /tmp/p0-immutable-control/contracts/registries/commands.v1.json | awk '{print $1}')"
           test "$adapter_hash" = "$EXPECTED_ADAPTER_SHA256" || { echo "::error::finalize snapshot adapter hash mismatch"; exit 1; }
           test "$registry_hash" = "$EXPECTED_REGISTRY_SHA256" || { echo "::error::finalize snapshot registry hash mismatch"; exit 1; }
-          python3 - <<'PY'
+          "${{ steps.trusted-python.outputs.python-path }}" -I - <<'PY'
           import hashlib, os
           from pathlib import Path
           root = Path('/tmp/p0-immutable-control')
@@ -1096,8 +1321,45 @@ jobs:
           if digest.hexdigest() != os.environ['EXPECTED_CONTROL_BUNDLE_SHA256']:
               raise SystemExit('finalizer snapshot bundle hash mismatch')
           PY
-          sudo chown -R root:root /tmp/p0-immutable-control
-          sudo chmod -R a-w /tmp/p0-immutable-control
+          cat > /tmp/p0-immutable-guard.py <<'PY'
+          import hashlib, stat, sys
+          from pathlib import Path
+          root = Path('/tmp/p0-immutable-control')
+          files = (
+              'tools/__init__.py', 'tools/p0_actions_adapter.py',
+              'tools/propagate_b3.py', 'tools/finalize_b1.py', 'tools/verify_b2.py',
+              'contracts/registries/commands.v1.json',
+              'contracts/registries/predicates.v1.json',
+              'contracts/schemas/task.v1.schema.json',
+              'contracts/schemas/result.v1.schema.json',
+              'contracts/schemas/verification.v1.schema.json',
+              'contracts/schemas/review-attestation.v1.schema.json',
+          )
+          observed = {p.relative_to(root).as_posix() for p in root.rglob('*')
+                      if p.is_file() or p.is_symlink()}
+          if observed != set(files):
+              raise SystemExit('immutable snapshot guard file-set mismatch')
+          digest = hashlib.sha256()
+          for rel_path in files:
+              path = root / rel_path
+              info = path.lstat()
+              if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o222:
+                  raise SystemExit('immutable snapshot guard ownership/mode mismatch')
+              data = path.read_bytes()
+              digest.update(rel_path.encode('utf-8') + b'\0')
+              digest.update(len(data).to_bytes(8, 'big'))
+              digest.update(data)
+          if digest.hexdigest() != sys.argv[1]:
+              raise SystemExit('immutable snapshot guard bundle hash mismatch')
+          guard_info = Path(__file__).lstat()
+          if guard_info.st_uid != 0 or guard_info.st_mode & 0o222:
+              raise SystemExit('immutable snapshot guard self-integrity mismatch')
+          PY
+          /usr/bin/sudo -n -- /usr/bin/chown -R root:root /tmp/p0-immutable-control
+          /usr/bin/sudo -n -- /usr/bin/chmod -R a-w /tmp/p0-immutable-control
+          /usr/bin/sudo -n -- /usr/bin/chown root:root /tmp/p0-immutable-guard.py
+          /usr/bin/sudo -n -- /usr/bin/chmod 0444 /tmp/p0-immutable-guard.py
+          "${{ steps.trusted-python.outputs.python-path }}" -I /tmp/p0-immutable-guard.py "$EXPECTED_CONTROL_BUNDLE_SHA256"
       - name: Download current execution evidence
         if: github.event.inputs.mode == 'execute'
         continue-on-error: true
@@ -1143,8 +1405,8 @@ jobs:
           TASK_PATH: ${{ github.event.inputs.task_path }}
         run: |
           mkdir -p p0-output
-          test "$(shasum -a 256 /tmp/p0-immutable-control/tools/p0_actions_adapter.py | awk '{print $1}')" = "$P0_EXPECTED_ADAPTER_SHA256"
-          python3 - <<'PY'
+          "${{ steps.trusted-python.outputs.python-path }}" -I /tmp/p0-immutable-guard.py "$P0_EXPECTED_CONTROL_BUNDLE_SHA256"
+          "${{ steps.trusted-python.outputs.python-path }}" -I - <<'PY'
           import os, sys
           from pathlib import Path
           import importlib.util
@@ -1172,8 +1434,8 @@ jobs:
           REVIEW_COMMIT: ${{ github.event.inputs.review_ref }}
           REVIEW_PATH: ${{ github.event.inputs.review_path }}
         run: |
-          test "$(shasum -a 256 /tmp/p0-immutable-control/tools/p0_actions_adapter.py | awk '{print $1}')" = "$P0_EXPECTED_ADAPTER_SHA256"
-          python3 - <<'PY'
+          "${{ steps.trusted-python.outputs.python-path }}" -I /tmp/p0-immutable-guard.py "$P0_EXPECTED_CONTROL_BUNDLE_SHA256"
+          "${{ steps.trusted-python.outputs.python-path }}" -I - <<'PY'
           import os, sys
           from pathlib import Path
           import importlib.util
@@ -1196,7 +1458,7 @@ jobs:
           test "$(git rev-parse --verify "${REVIEW_COMMIT}^{commit}")" = "$REVIEW_COMMIT"
           git show "${REVIEW_COMMIT}:${REVIEW_PATH}" > p0-output/review.json
           test -s p0-output/review.json
-          python3 -c 'import json,os; json.dump({"commit":os.environ["REVIEW_COMMIT"],"path":os.environ["REVIEW_PATH"]},open("p0-output/review-binding.json","w"))'
+          "${{ steps.trusted-python.outputs.python-path }}" -I -c 'import json,os; json.dump({"commit":os.environ["REVIEW_COMMIT"],"path":os.environ["REVIEW_PATH"]},open("p0-output/review-binding.json","w"))'
       - name: Observe exact target/default refs and checkout target SHA detached
         id: observe
         if: always()
@@ -1205,8 +1467,8 @@ jobs:
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           BASE_SHA: ${{ needs.admission.outputs.base_sha }}
         run: |
-          test "$(shasum -a 256 /tmp/p0-immutable-control/tools/p0_actions_adapter.py | awk '{print $1}')" = "$P0_EXPECTED_ADAPTER_SHA256"
-          python3 - <<'PY'
+          "${{ steps.trusted-python.outputs.python-path }}" -I /tmp/p0-immutable-guard.py "$P0_EXPECTED_CONTROL_BUNDLE_SHA256"
+          "${{ steps.trusted-python.outputs.python-path }}" -I - <<'PY'
           import os, sys
           from pathlib import Path
           import importlib.util
@@ -1246,9 +1508,18 @@ jobs:
         env:
           SUBJECT_SHA: ${{ steps.observe.outputs.subject_sha }}
         run: |
-          test "$(shasum -a 256 /tmp/p0-immutable-control/tools/p0_actions_adapter.py | awk '{print $1}')" = "$P0_EXPECTED_ADAPTER_SHA256"
-          python3 - <<'PY'
-          import json, os, subprocess, sys
+          "${{ steps.trusted-python.outputs.python-path }}" -I /tmp/p0-immutable-guard.py "$P0_EXPECTED_CONTROL_BUNDLE_SHA256"
+          /usr/bin/sudo -n -- /usr/bin/install -d -o nobody -g nogroup -m 0700 /tmp/p0-check-home
+          printf '[safe]\n\tdirectory = %s\n' "$PWD" | /usr/bin/sudo -n -- /usr/bin/tee /tmp/p0-check-safe.gitconfig >/dev/null
+          /usr/bin/sudo -n -- /usr/bin/chown root:root /tmp/p0-check-safe.gitconfig
+          /usr/bin/sudo -n -- /usr/bin/chmod 0444 /tmp/p0-check-safe.gitconfig
+          /usr/bin/chmod go-rwx "$GITHUB_ENV" "$GITHUB_PATH" "$GITHUB_OUTPUT" "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
+          if /usr/bin/sudo -n -u nobody -- /usr/bin/sudo -n true >/dev/null 2>&1; then
+            echo '::error::untrusted check identity unexpectedly has sudo'; exit 1
+          fi
+          /usr/bin/sudo -n -u nobody -- /usr/bin/test ! -w "$PWD"
+          "${{ steps.trusted-python.outputs.python-path }}" -I - <<'PY'
+          import json, os, subprocess, sys, textwrap
           from pathlib import Path
           import importlib.util
           trusted_root = Path('/tmp/p0-immutable-control').resolve()
@@ -1280,9 +1551,34 @@ jobs:
           if check is None or not adapter.acceptance_is_supported(task):
               raise SystemExit('unsupported acceptance/check shape')
           argv = adapter.resolve_registered_check(check['command_id'])
+          if not argv or argv[0] != 'python3':
+              raise SystemExit('registered check runtime is not sandboxable')
+          sandbox_runner = textwrap.dedent(r'''
+          import json, os, runpy, sys, unittest
+          registered = json.loads(sys.argv[1]); root = os.path.realpath(sys.argv[2])
+          if not registered or registered[0] != 'python3': raise SystemExit(126)
+          if registered[1:2] == ['-m'] and len(registered) >= 3:
+              if registered[2] != 'unittest': raise SystemExit(126)
+              sys.path.insert(0, root)
+              unittest.main(module=None, argv=[registered[2], *registered[3:]])
+          elif len(registered) >= 2:
+              sys.path.insert(0, root)
+              script = os.path.realpath(os.path.join(root, registered[1]))
+              if os.path.commonpath([root, script]) != root: raise SystemExit(126)
+              sys.argv = [script, *registered[2:]]
+              runpy.run_path(script, run_name='__main__')
+          else: raise SystemExit(126)
+          ''')
+          sandbox_command = [
+              '/usr/bin/sudo', '-n', '-u', 'nobody', '--', '/usr/bin/env', '-i',
+              'HOME=/tmp/p0-check-home', 'PATH=/usr/bin:/bin',
+              'PYTHONDONTWRITEBYTECODE=1', 'PYTHONNOUSERSITE=1',
+              'GIT_CONFIG_GLOBAL=/tmp/p0-check-safe.gitconfig',
+              sys.executable, '-I', '-c', sandbox_runner, json.dumps(argv), os.getcwd(),
+          ]
           timed_out = False
           try:
-              run = subprocess.run(argv, text=True, stdout=subprocess.PIPE,
+              run = subprocess.run(sandbox_command, text=True, stdout=subprocess.PIPE,
                                    stderr=subprocess.STDOUT, timeout=300)
               exit_code = run.returncode; log = run.stdout
           except subprocess.TimeoutExpired as exc:
@@ -1295,7 +1591,14 @@ jobs:
               'source': 'workflow_controlled_process_exit_code',
               'subject_sha': os.environ['SUBJECT_SHA'],
               'exit_code': exit_code, 'timed_out': timed_out,
+              'sandbox_identity': 'nobody', 'isolated_python': True,
           }, sort_keys=True), encoding='utf-8')
+          guard = subprocess.run([
+              sys.executable, '-I', '/tmp/p0-immutable-guard.py',
+              os.environ['P0_EXPECTED_CONTROL_BUNDLE_SHA256'],
+          ], text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+          if guard.returncode != 0:
+              raise SystemExit('immutable snapshot integrity failed after required check')
           raise SystemExit(0 if exit_code == 0 and not timed_out else 1)
           PY
       - name: Assemble trusted signal only from observed files and Git
@@ -1308,8 +1611,8 @@ jobs:
           RUN_ID: ${{ github.run_id }}
           RUN_ATTEMPT: ${{ github.run_attempt }}
         run: |
-          test "$(shasum -a 256 /tmp/p0-immutable-control/tools/p0_actions_adapter.py | awk '{print $1}')" = "$P0_EXPECTED_ADAPTER_SHA256"
-          python3 - <<'PY'
+          "${{ steps.trusted-python.outputs.python-path }}" -I /tmp/p0-immutable-guard.py "$P0_EXPECTED_CONTROL_BUNDLE_SHA256"
+          "${{ steps.trusted-python.outputs.python-path }}" -I - <<'PY'
           import json, os, subprocess, sys
           from pathlib import Path
           import importlib.util
@@ -1341,8 +1644,15 @@ jobs:
           check = load('p0-output/required-check.json')
           check['log'] = read('p0-output/required-check.log')
           review_binding = load('p0-output/review-binding.json')
-          authored = subprocess.run(['git','rev-list','{}..{}'.format(base, subject)], text=True, capture_output=True).stdout.split()
-          changed = subprocess.run(['git','diff','--name-only',base,subject], text=True, capture_output=True).stdout.splitlines()
+          clean_git_env = {
+              'PATH': '/usr/bin:/bin', 'HOME': '/tmp/p0-check-home',
+              'GIT_CONFIG_GLOBAL': '/dev/null', 'GIT_CONFIG_NOSYSTEM': '1',
+              'LANG': 'C.UTF-8',
+          }
+          authored = subprocess.run(['/usr/bin/git','rev-list','{}..{}'.format(base, subject)],
+                                    text=True, capture_output=True, env=clean_git_env).stdout.split()
+          changed = subprocess.run(['/usr/bin/git','diff','--name-only',base,subject],
+                                   text=True, capture_output=True, env=clean_git_env).stdout.splitlines()
           # The executor manifest's own earliest recorded terminal failure --
           # the `execute` job's pre-push rejection if there was one, else the
           # credential-separated publisher's own rejection -- takes
@@ -1410,8 +1720,8 @@ jobs:
           MODE: ${{ github.event.inputs.mode }}
           EXECUTION_RUN_ID: ${{ github.event.inputs.execution_run_id }}
         run: |
-          test "$(shasum -a 256 /tmp/p0-immutable-control/tools/p0_actions_adapter.py | awk '{print $1}')" = "$P0_EXPECTED_ADAPTER_SHA256"
-          python3 - <<'PY'
+          "${{ steps.trusted-python.outputs.python-path }}" -I /tmp/p0-immutable-guard.py "$P0_EXPECTED_CONTROL_BUNDLE_SHA256"
+          "${{ steps.trusted-python.outputs.python-path }}" -I - <<'PY'
           import importlib.util, os, sys, uuid
           from datetime import datetime, timezone
           from pathlib import Path
@@ -1487,4 +1797,5 @@ jobs:
             });
       - name: Gate job on verifier result
         if: always()
-        run: python3 -c 'import json,sys; m=json.load(open("p0-output/pipeline/workflow-run-metadata.json")); sys.exit(0 if m["verification_passed"] is True and m["check_run_conclusion"] == "success" else 1)'
+        run: |
+          "${{ steps.trusted-python.outputs.python-path }}" -I -c 'import json,sys; m=json.load(open("p0-output/pipeline/workflow-run-metadata.json")); sys.exit(0 if m["verification_passed"] is True and m["check_run_conclusion"] == "success" else 1)'
