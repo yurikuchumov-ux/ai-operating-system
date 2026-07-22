@@ -1,0 +1,54 @@
+name: Claude Implement - Executor Orchestrator
+
+on:
+  pull_request:
+    types: [synchronize]
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+  id-token: write
+
+jobs:
+  implement:
+    if: github.event.pull_request.number == 13
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out PR branch
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Implement requested architecture changes
+        uses: anthropics/claude-code-action@6902c227aaa9536481b99d56f3014bbbad6c6da8
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ github.token }}
+          prompt: |
+            You are the implementation agent for PR #13 and Issue #12.
+            Work only on the existing branch design/issue-12-executor-orchestrator.
+            Read Issue #12, PR #13, the latest REQUEST_CHANGES review, and docs/EXECUTOR_ORCHESTRATOR.md.
+
+            Update the architecture document to resolve every blocking review finding:
+            1. add a normative state-transition table with allowed transitions, triggers, guards, side effects, and terminal states;
+            2. define one authoritative operational store and classify GitHub records as projections/evidence;
+            3. prevent late writes after lease loss with fencing tokens or equivalent generation checks;
+            4. define exact adapter input/output schemas, error taxonomy, acknowledgement semantics, heartbeat protocol, and cancellation guarantees;
+            5. model executor lineage and reviewer independence as persisted data;
+            6. define command authorization, actor verification, replay protection, and audit requirements;
+            7. define repository write boundaries, protected paths, workflow-file policy, and branch protection interaction;
+            8. make the MVP autonomy boundary internally consistent and fail closed when a real reviewer adapter is unavailable;
+            9. define deployment topology, ownership, migrations, backup/restore, availability, and disaster recovery;
+            10. extend acceptance tests for races, stale callbacks, lease fencing, replay attacks, unauthorized commands, partial failures, and recovery.
+
+            Preserve the core decision: standalone GitHub App orchestrator, durable operational state, GitHub as project source of truth, no automatic merge, and no self-review.
+
+            Do not create a new branch or PR. Do not merge. Modify only documentation needed for Issue #12. Run any relevant checks available in the repository. Commit and push the completed changes to the current PR branch. Then update the existing Claude comment with a concise completion report containing the commit SHA, files changed, checks run, and remaining risks.
+          claude_args: |
+            --max-turns 30
+            --allowedTools "Read,Glob,Grep,Edit,Write,Bash(git status:*),Bash(git diff:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(git log:*),Bash(gh issue view:*),Bash(gh pr view:*),Bash(gh pr diff:*)"
+            --disallowedTools "NotebookEditCell"
