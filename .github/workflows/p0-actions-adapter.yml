@@ -446,7 +446,6 @@ jobs:
           import json, os
           from datetime import datetime, timezone
           from pathlib import Path
-          from tools.p0_actions_adapter import PROVIDER_TRANSIENT_OUTPUT_PATH
           out = Path('p0-adapter-output'); out.mkdir(exist_ok=True)
           executor_adapter = os.environ.get('EXECUTOR_ADAPTER') or ''
           is_codex = executor_adapter == 'openai-codex-action'
@@ -473,7 +472,11 @@ jobs:
           # below. This is narrow and provenance-aware: no other untracked
           # path is ever touched, and allowed_paths/denied_paths are never
           # weakened.
-          provider_transient = Path(PROVIDER_TRANSIENT_OUTPUT_PATH)
+          # This step runs after the candidate checkout, so it must not import
+          # even a constant from candidate-controlled adapter code.  The
+          # pinned provider action contract owns this exact workspace path;
+          # keep the path in the immutable workflow program for this run.
+          provider_transient = Path('output.txt')
           if not is_codex and provider_transient.is_file():
               raw = provider_transient.read_bytes()
               if len(raw) <= 1024 * 1024:

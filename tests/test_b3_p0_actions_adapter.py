@@ -1383,7 +1383,8 @@ class WorkflowInvariantTests(unittest.TestCase):
     def test_provider_transient_output_is_isolated_narrowly(self) -> None:
         self.assertIn("Assert provider-owned transient output.txt is absent before invocation", self.text)
         self.assertIn("test ! -e output.txt", self.text)
-        self.assertIn("PROVIDER_TRANSIENT_OUTPUT_PATH", self.text)
+        self.assertIn("provider_transient = Path('output.txt')", self.text)
+        self.assertNotIn("from tools.p0_actions_adapter import PROVIDER_TRANSIENT_OUTPUT_PATH", self.text)
         self.assertIn("provider_transient.unlink()", self.text)
 
     def test_observed_changed_paths_persisted_before_scope_decisions(self) -> None:
@@ -1520,6 +1521,18 @@ class ImmutableVerifierBootstrapTests(unittest.TestCase):
         self.assertIn("from tools import p0_actions_adapter as adapter", postcondition_section)
         # Must not import from workspace after subject checkout
         self.assertNotIn("sys.path.insert(0, '.')", postcondition_section)
+
+    def test_evidence_preservation_does_not_import_candidate_adapter(self) -> None:
+        """The first always-run step after executor edits must not resolve
+        constants through the candidate checkout before trusted postconditions
+        execute."""
+        text = WORKFLOW_PATH.read_text(encoding="utf-8")
+        preserve = text.split(
+            "Preserve real adapter output before any postcondition decision", 1
+        )[1].split("Verify immutable snapshot integrity before postconditions", 1)[0]
+        self.assertNotIn("from tools.p0_actions_adapter", preserve)
+        self.assertNotIn("from tools import p0_actions_adapter", preserve)
+        self.assertIn("provider_transient = Path('output.txt')", preserve)
 
     def test_publisher_imports_from_snapshot_not_workspace(self) -> None:
         text = WORKFLOW_PATH.read_text(encoding="utf-8")
