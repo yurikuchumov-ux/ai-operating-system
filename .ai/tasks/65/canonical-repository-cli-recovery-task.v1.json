@@ -1,0 +1,208 @@
+{
+  "schema_version": "1.0.0",
+  "task_id": "yurikuchumov-ux/ai-operating-system#65",
+  "repository": "yurikuchumov-ux/ai-operating-system",
+  "issue_number": 65,
+  "objective": "Recover the final P0/B4-C fail-closed canonical repository CLI after Issue 58 exhausted Claude attempts 1/3 through 3/3. Preserve the behavior proven working in attempt 2, correct the deterministic test harness, and deliver exactly two implementation files. Local Codex subscription runtime only; paid API fallback is forbidden.",
+  "change_policy": {
+    "change_required": true,
+    "policy_exception_id": null,
+    "no_change": {
+      "allowed": false,
+      "reason_codes": [],
+      "required_evidence_types": []
+    }
+  },
+  "base_ref": "main",
+  "base_sha": "d4f10b714de3afae84d48dfcd3daa6405092a973",
+  "branch": "agent/issue-65-canonical-repository-cli-recovery",
+  "allowed_paths": [
+    "tools/validate_canonical_repositories.py",
+    "tests/test_b3_canonical_repository_cli.py"
+  ],
+  "denied_paths": [
+    ".ai/**",
+    ".github/**",
+    "AI_OS.md",
+    "README.md",
+    "CHANGELOG.md",
+    "contracts/**",
+    "docs/**",
+    "fixtures/**",
+    "requirements-*.txt",
+    "standards/**",
+    "templates/**",
+    "tools/canonical_repository_registry.py",
+    "tools/canonical_repository_plan.py",
+    "tools/p0_actions_adapter.py",
+    "tools/validate_b0.py",
+    "tools/verify_b2.py",
+    "tests/test_b3_canonical_repository_contract.py",
+    "tests/test_b3_canonical_repository_plan.py",
+    "tests/test_b3_p0_actions_adapter.py",
+    "tests/test_b3_terminal_propagation.py"
+  ],
+  "risk_class": "L2",
+  "executor": {
+    "adapter": "local-codex-desktop",
+    "version": "codex-subscription-issue-65-bounded-recovery-v1",
+    "max_attempts": 1,
+    "timeout_seconds": 1800
+  },
+  "acceptance_criteria": [
+    {
+      "id": "AC-CANONICAL-REPOSITORY-CLI-RECOVERY",
+      "predicate_id": "process.exit_code.equals",
+      "parameters": {
+        "component": "issue-65-canonical-repository-cli-recovery",
+        "value": 0,
+        "trusted_evidence_source": "independently_observed_process_exit_code",
+        "forbidden_sources": [
+          "executor_self_report",
+          "actions_job_conclusion"
+        ],
+        "specification": {
+          "lineage": {
+            "source_issue": 58,
+            "exhausted_executor": "human-supervised-claude-code",
+            "owner_decision": "change executor after attempt 3/3 and create a separate bounded recovery",
+            "preserve_from_attempt_2": [
+              "repository-root imports and defaults",
+              "direct execution from repository root and another cwd",
+              "non-printing argument errors with empty stderr",
+              "explicit repeated-option rejection",
+              "strict UTF-8 and JSON file loading",
+              "fixed validation order and delegation to merged validators",
+              "deterministic compact JSON output"
+            ],
+            "do_not_repeat_from_attempt_3": [
+              "default argparse error printing",
+              "cwd-relative defaults",
+              "a test that accepts failure from another cwd",
+              "recursive calls to an already patched Path.read_bytes",
+              "using __builtins__.__import__ when __builtins__ may be a dict"
+            ]
+          },
+          "production": {
+            "entrypoint": "main(argv=None) returns an integer exit code",
+            "direct_invocation": "python3 tools/validate_canonical_repositories.py",
+            "repo_root": "Path(__file__).resolve().parents[1]",
+            "defaults": {
+              "registry": "contracts/canonical-repositories.v1.json",
+              "schema": "contracts/schemas/canonical-repositories.v1.schema.json",
+              "plan": "docs/AI_DEVELOPMENT_STUDIO_EXECUTION_PLAN.md"
+            },
+            "arguments_only": [
+              "--registry PATH",
+              "--schema PATH",
+              "--plan PATH"
+            ],
+            "argument_failures": "positional, unknown, abbreviated, missing, empty or repeated named options return exit 2 and exact cli_argument_invalid JSON with empty stderr",
+            "validation_order": [
+              "parse arguments",
+              "load registry as strict UTF-8 JSON",
+              "load schema as strict UTF-8 JSON",
+              "call tools.canonical_repository_registry.validate_registry",
+              "only on registry success load plan as strict UTF-8 text",
+              "call tools.canonical_repository_plan.validate_execution_plan",
+              "emit exactly one result"
+            ],
+            "success_exact": "{\"errors\":[],\"valid\":true}\n",
+            "failure_output": "exactly one compact JSON object with keys errors and valid, sorted unique non-empty errors, valid false, one trailing newline and empty stderr",
+            "exit_codes": {
+              "success": 0,
+              "input_dependency_validation_or_internal": 1,
+              "arguments": 2
+            },
+            "file_codes": [
+              "registry_file_missing",
+              "registry_file_unreadable",
+              "registry_file_is_directory",
+              "registry_file_unicode_invalid",
+              "registry_json_invalid",
+              "schema_file_missing",
+              "schema_file_unreadable",
+              "schema_file_is_directory",
+              "schema_file_unicode_invalid",
+              "schema_json_invalid",
+              "plan_file_missing",
+              "plan_file_unreadable",
+              "plan_file_is_directory",
+              "plan_file_unicode_invalid"
+            ],
+            "validator_codes": "preserve real merged validator codes, including jsonschema_dependency_missing, schema_definition_invalid, schema_validation_failed and plan codes",
+            "unexpected_exception": "exit 1, exact cli_internal_error JSON, empty stderr and no traceback"
+          },
+          "tests": {
+            "framework": "stdlib unittest only",
+            "subprocess_harness": "real script with sys.executable and absolute path; defaults succeed from repository root and a different cwd; test arguments, overrides, ordinary file failures and validator composition",
+            "in_process_harness": "load exact production module with importlib.util and call main(argv) under redirected stdout/stderr for deterministic fault injection",
+            "fault_injection": [
+              "retain the original unpatched Path.read_bytes before applying patch and call that saved callable for non-target paths",
+              "retain builtins.__import__ before applying patch and call that saved callable for non-jsonschema imports",
+              "patch each real merged validator before production main imports it"
+            ],
+            "mandatory_cases": "complete argument and override matrices; file missing/directory/unreadable/invalid UTF-8/malformed JSON as applicable; schema/registry/plan composition; dependency missing; both validator exceptions; exactly one JSON line and empty stderr",
+            "forbidden": [
+              "parent-process mocks expected to cross subprocess boundaries",
+              "pass placeholders",
+              "chmod-only unreadable tests",
+              "generic any-error assertions",
+              "new dependencies"
+            ]
+          },
+          "security": {
+            "production_subprocess_network_environment_secret_file_write_git_github_calls_forbidden": true,
+            "workflow_dependency_contract_registry_plan_documentation_changes_forbidden": true,
+            "commonmark_or_gfm_scope_forbidden": true,
+            "paid_api_fallback_forbidden": true,
+            "automatic_merge_forbidden": true
+          },
+          "postconditions": {
+            "changed_paths_equal_allowed_paths": true,
+            "git_diff_check": true,
+            "direct_cli_suite": true,
+            "all_canonical_repository_tests": true,
+            "b3_suite": true,
+            "full_repository_suite": true,
+            "targeted_mutation_checks": true,
+            "fresh_independent_exact_sha_chatgpt_pro_maximum_review": true,
+            "draft_pr_only": true
+          }
+        }
+      },
+      "required": true,
+      "linked_checks": [
+        "issue-65-canonical-repository-cli-recovery-tests"
+      ]
+    }
+  ],
+  "required_checks": [
+    {
+      "id": "issue-65-canonical-repository-cli-recovery-tests",
+      "command_id": "repo.contracts.b3.tests",
+      "required": true,
+      "expected_postconditions": [
+        {
+          "predicate_id": "process.exit_code.equals",
+          "parameters": {
+            "value": 0
+          }
+        }
+      ]
+    }
+  ],
+  "review_policy": {
+    "reviewer_class": "independent-engineering",
+    "policy_id": "review-independence.v1",
+    "forbidden_lineage_overlaps": [
+      "agent_runtime_id",
+      "credential_principal",
+      "authored_commits"
+    ],
+    "minimum_distinct_human_operators": 1
+  },
+  "external_side_effects": "owner_approved",
+  "created_by": "github:yurykuchumov-ux/codex-control-plane",
+  "created_at": "2026-07-22T12:26:44Z"
+}
