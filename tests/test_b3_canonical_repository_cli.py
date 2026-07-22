@@ -35,6 +35,7 @@ class _SubprocessHarness:
             check=False,
             env=environment,
             text=True,
+            timeout=10,
         )
         return completed.returncode, completed.stdout, completed.stderr
 
@@ -95,6 +96,23 @@ class CanonicalRepositoryCliTests(unittest.TestCase):
         self.assertEqual(stdout.count("\n"), 1)
         self.assertEqual(set(json.loads(stdout)), {"errors", "valid"})
 
+    @contextlib.contextmanager
+    def _exact_validator_modules(self):
+        cli = self.in_process_cli.module
+        registry_module = cli._load_repo_module(cli._REGISTRY_VALIDATOR)
+        plan_module = cli._load_repo_module(cli._PLAN_VALIDATOR)
+
+        def controlled_loader(path: Path):
+            resolved = path.resolve()
+            if resolved == cli._REGISTRY_VALIDATOR.resolve():
+                return registry_module
+            if resolved == cli._PLAN_VALIDATOR.resolve():
+                return plan_module
+            raise AssertionError(f"unexpected validator path: {path}")
+
+        with patch.object(cli, "_load_repo_module", side_effect=controlled_loader):
+            yield registry_module, plan_module
+
     def _canonical_copies(self, root: Path) -> tuple[Path, Path, Path]:
         registry = root / "registry.json"
         schema = root / "schema.json"
@@ -128,6 +146,8 @@ class CanonicalRepositoryCliTests(unittest.TestCase):
             "empty_registry": ["--registry="],
             "empty_schema": ["--schema="],
             "empty_plan": ["--plan="],
+            "option_as_equals_value": ["--registry=--schema"],
+            "extra_equals_value": ["--registry==value"],
             "repeat_space": ["--registry", "one", "--registry", "two"],
             "repeat_equals": ["--schema=one", "--schema=two"],
             "repeat_mixed": ["--plan", "one", "--plan=two"],
@@ -182,6 +202,23 @@ class CanonicalRepositoryCliTests(unittest.TestCase):
                 with self.subTest(label=label):
                     self.assert_result(self.subprocess_cli.run(arguments), 1, [error])
 
+    @unittest.skipUnless(hasattr(os, "mkfifo"), "FIFO requires POSIX")
+    def test_special_file_matrix(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            fifo = Path(temporary) / "input.fifo"
+            os.mkfifo(fifo)
+            for kind, option, error in (
+                ("registry", "--registry", "registry_file_unreadable"),
+                ("schema", "--schema", "schema_file_unreadable"),
+                ("plan", "--plan", "plan_file_unreadable"),
+            ):
+                with self.subTest(kind=kind):
+                    self.assert_result(
+                        self.subprocess_cli.run([option, str(fifo)]),
+                        1,
+                        [error],
+                    )
+
     def test_invalid_utf8_matrix(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             invalid = Path(temporary) / "invalid"
@@ -210,7 +247,7 @@ class CanonicalRepositoryCliTests(unittest.TestCase):
     def test_non_finite_json_number_matrix(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            for constant in ("NaN", "Infinity", "-Infinity"):
+            for constant in ("NaN", "Infinity", "-Infinity", "1e400", "-1e400"):
                 for kind, option, error in (
                     ("registry", "--registry", "registry_json_invalid"),
                     ("schema", "--schema", "schema_json_invalid"),
@@ -227,12 +264,31 @@ class CanonicalRepositoryCliTests(unittest.TestCase):
                             [error],
                         )
 
+    def test_duplicate_json_key_matrix(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            duplicate = Path(temporary) / "duplicate.json"
+            duplicate.write_text('{"duplicate":1,"duplicate":2}', encoding="utf-8")
+            for kind, option, error in (
+                ("registry", "--registry", "registry_json_invalid"),
+                ("schema", "--schema", "schema_json_invalid"),
+            ):
+                with self.subTest(kind=kind):
+                    self.assert_result(
+                        self.subprocess_cli.run([option, str(duplicate)]),
+                        1,
+                        [error],
+                    )
+
     def test_pythonpath_validator_shadowing_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             attacker_tools = root / "attacker" / "tools"
             attacker_tools.mkdir(parents=True)
-            (attacker_tools / "__init__.py").write_text("", encoding="utf-8")
+            marker = root / "attacker-package-executed"
+            (attacker_tools / "__init__.py").write_text(
+                f"from pathlib import Path\nPath({str(marker)!r}).write_text('executed')\n",
+                encoding="utf-8",
+            )
             (attacker_tools / "canonical_repository_registry.py").write_text(
                 "def validate_registry(registry, schema):\n    return []\n",
                 encoding="utf-8",
@@ -261,8 +317,64 @@ class CanonicalRepositoryCliTests(unittest.TestCase):
                     environment=environment,
                 ),
                 1,
-                ["cli_internal_error"],
+                ["schema_validation_failed"],
             )
+            self.assertFalse(marker.exists())
+
+    def test_pythonpath_jsonschema_shadowing_is_ignored(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            attacker = root / "attacker"
+            fake_jsonschema = attacker / "jsonschema"
+            fake_jsonschema.mkdir(parents=True)
+            (fake_jsonschema / "__init__.py").write_text(
+                "class _Validator:\n"
+                "    @staticmethod\n"
+                "    def check_schema(schema): pass\n"
+                "    def __init__(self, *args, **kwargs): pass\n"
+                "    def iter_errors(self, registry): return []\n"
+                "Draft202012Validator = _Validator\n"
+                "class FormatChecker: pass\n"
+                "class SchemaError(Exception): pass\n"
+                "class exceptions:\n"
+                "    SchemaError = SchemaError\n",
+                encoding="utf-8",
+            )
+            invalid_registry = root / "registry.json"
+            invalid_registry.write_text("{}", encoding="utf-8")
+            environment = os.environ.copy()
+            environment["PYTHONPATH"] = str(attacker)
+            self.assert_result(
+                self.subprocess_cli.run(
+                    ["--registry", str(invalid_registry)],
+                    environment=environment,
+                ),
+                1,
+                ["schema_validation_failed"],
+            )
+
+    def test_pythonpath_stdlib_shadowing_is_ignored(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            attacker = root / "attacker"
+            attacker.mkdir()
+            marker = root / "stdlib-shadow-executed"
+            payload = f"from builtins import open\nopen({str(marker)!r}, 'w').write('x')\n"
+            (attacker / "json.py").write_text(payload, encoding="utf-8")
+            (attacker / "pathlib.py").write_text(payload, encoding="utf-8")
+            invalid_registry = root / "registry.json"
+            invalid_registry.write_text("{}", encoding="utf-8")
+            environment = os.environ.copy()
+            environment["PYTHONPATH"] = str(attacker)
+            self.assert_result(
+                self.subprocess_cli.run(
+                    ["--registry", str(invalid_registry)],
+                    environment=environment,
+                ),
+                1,
+                ["schema_validation_failed"],
+            )
+            self.assertFalse(marker.exists())
 
     def test_invalid_schema_definition_is_preserved(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -355,8 +467,9 @@ class CanonicalRepositoryCliTests(unittest.TestCase):
             )
 
     def test_registry_validator_exception_fails_closed(self) -> None:
-        with patch(
-            "tools.canonical_repository_registry.validate_registry",
+        with self._exact_validator_modules() as (registry_module, _), patch.object(
+            registry_module,
+            "validate_registry",
             side_effect=RuntimeError("registry validator failed"),
         ):
             self.assert_result(
@@ -366,8 +479,9 @@ class CanonicalRepositoryCliTests(unittest.TestCase):
             )
 
     def test_plan_validator_exception_fails_closed(self) -> None:
-        with patch(
-            "tools.canonical_repository_plan.validate_execution_plan",
+        with self._exact_validator_modules() as (_, plan_module), patch.object(
+            plan_module,
+            "validate_execution_plan",
             side_effect=RuntimeError("plan validator failed"),
         ):
             self.assert_result(
@@ -377,40 +491,86 @@ class CanonicalRepositoryCliTests(unittest.TestCase):
             )
 
     def test_invalid_validator_result_fails_closed(self) -> None:
-        for label, invalid_result in (
-            ("none", None),
-            ("string", "schema_validation_failed"),
-            ("mapping", {"error": "schema_validation_failed"}),
-            ("empty_code", [""]),
-        ):
-            with self.subTest(label=label), patch(
-                "tools.canonical_repository_registry.validate_registry",
-                return_value=invalid_result,
+        with self._exact_validator_modules() as (registry_module, _):
+            for label, invalid_result in (
+                ("none", None),
+                ("string", "schema_validation_failed"),
+                ("mapping", {"error": "schema_validation_failed"}),
+                ("empty_code", [""]),
             ):
-                self.assert_result(
-                    self.in_process_cli.run(),
-                    1,
-                    ["cli_internal_error"],
-                )
+                with self.subTest(label=label), patch.object(
+                    registry_module,
+                    "validate_registry",
+                    return_value=invalid_result,
+                ):
+                    self.assert_result(
+                        self.in_process_cli.run(),
+                        1,
+                        ["cli_internal_error"],
+                    )
 
     def test_invalid_plan_validator_result_fails_closed(self) -> None:
-        for label, invalid_result in (
-            ("none", None),
-            ("string", "plan_section_missing"),
-            ("mapping", {"error": "plan_section_missing"}),
-            ("empty_code", [""]),
-        ):
-            with self.subTest(label=label), patch(
-                "tools.canonical_repository_plan.validate_execution_plan",
-                return_value=invalid_result,
+        with self._exact_validator_modules() as (_, plan_module):
+            for label, invalid_result in (
+                ("none", None),
+                ("string", "plan_section_missing"),
+                ("mapping", {"error": "plan_section_missing"}),
+                ("empty_code", [""]),
             ):
+                with self.subTest(label=label), patch.object(
+                    plan_module,
+                    "validate_execution_plan",
+                    return_value=invalid_result,
+                ):
+                    self.assert_result(
+                        self.in_process_cli.run(),
+                        1,
+                        ["cli_internal_error"],
+                    )
+
+    def test_cached_registry_module_with_spoofed_origin_is_ignored(self) -> None:
+        module_name = "tools.canonical_repository_registry"
+        attacker_module = types.ModuleType(module_name)
+        attacker_module.__file__ = str(
+            self.in_process_cli.module._REGISTRY_VALIDATOR
+        )
+        attacker_module.validate_registry = lambda registry, schema: []
+        with tempfile.TemporaryDirectory() as temporary:
+            invalid = Path(temporary) / "registry.json"
+            invalid.write_text("{}", encoding="utf-8")
+            with patch.dict(sys.modules, {module_name: attacker_module}):
                 self.assert_result(
-                    self.in_process_cli.run(),
+                    self.in_process_cli.run(["--registry", str(invalid)]),
                     1,
-                    ["cli_internal_error"],
+                    ["schema_validation_failed"],
                 )
 
-    def test_cached_registry_module_with_wrong_origin_fails_closed(self) -> None:
+    def test_cached_plan_module_with_spoofed_origin_is_ignored(self) -> None:
+        module_name = "tools.canonical_repository_plan"
+        attacker_module = types.ModuleType(module_name)
+        attacker_module.__file__ = str(self.in_process_cli.module._PLAN_VALIDATOR)
+        attacker_module.validate_execution_plan = lambda plan, registry: []
+        with tempfile.TemporaryDirectory() as temporary:
+            invalid = Path(temporary) / "plan.md"
+            invalid.write_text("not a canonical plan", encoding="utf-8")
+            with patch.dict(sys.modules, {module_name: attacker_module}):
+                self.assert_result(
+                    self.in_process_cli.run(["--plan", str(invalid)]),
+                    1,
+                    ["plan_section_missing"],
+                )
+
+    def test_private_modules_are_loaded_fresh_from_exact_path(self) -> None:
+        cli = self.in_process_cli.module
+        registry_module = cli._load_repo_module(cli._REGISTRY_VALIDATOR)
+        second_module = cli._load_repo_module(cli._REGISTRY_VALIDATOR)
+        self.assertEqual(
+            Path(registry_module.__file__).resolve(),
+            cli._REGISTRY_VALIDATOR.resolve(),
+        )
+        self.assertIsNot(registry_module, second_module)
+
+    def test_cached_registry_module_with_wrong_origin_is_irrelevant(self) -> None:
         module_name = "tools.canonical_repository_registry"
         attacker_module = types.ModuleType(module_name)
         attacker_module.__file__ = "/tmp/attacker/canonical_repository_registry.py"
@@ -418,25 +578,14 @@ class CanonicalRepositoryCliTests(unittest.TestCase):
         with patch.dict(sys.modules, {module_name: attacker_module}):
             self.assert_result(
                 self.in_process_cli.run(),
-                1,
-                ["cli_internal_error"],
-            )
-
-    def test_cached_plan_module_with_wrong_origin_fails_closed(self) -> None:
-        module_name = "tools.canonical_repository_plan"
-        attacker_module = types.ModuleType(module_name)
-        attacker_module.__file__ = "/tmp/attacker/canonical_repository_plan.py"
-        attacker_module.validate_execution_plan = lambda plan, registry: []
-        with patch.dict(sys.modules, {module_name: attacker_module}):
-            self.assert_result(
-                self.in_process_cli.run(),
-                1,
-                ["cli_internal_error"],
+                0,
+                [],
             )
 
     def test_validator_errors_are_sorted_and_deduplicated(self) -> None:
-        with patch(
-            "tools.canonical_repository_registry.validate_registry",
+        with self._exact_validator_modules() as (registry_module, _), patch.object(
+            registry_module,
+            "validate_registry",
             return_value=["z_error", "a_error", "z_error"],
         ):
             self.assert_result(
@@ -453,15 +602,17 @@ class CanonicalRepositoryCliTests(unittest.TestCase):
                 raise AssertionError("plan must not be read")
             return original_read_bytes(path)
 
-        with patch.object(Path, "read_bytes", new=forbid_plan_read), patch(
-            "tools.canonical_repository_registry.validate_registry",
-            return_value=["schema_validation_failed"],
-        ):
-            self.assert_result(
-                self.in_process_cli.run(),
-                1,
-                ["schema_validation_failed"],
-            )
+        with self._exact_validator_modules() as (registry_module, _):
+            with patch.object(Path, "read_bytes", new=forbid_plan_read), patch.object(
+                registry_module,
+                "validate_registry",
+                return_value=["schema_validation_failed"],
+            ):
+                self.assert_result(
+                    self.in_process_cli.run(),
+                    1,
+                    ["schema_validation_failed"],
+                )
 
 
 if __name__ == "__main__":

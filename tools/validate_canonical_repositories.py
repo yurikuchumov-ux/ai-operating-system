@@ -3,9 +3,33 @@
 
 from __future__ import annotations
 
-import importlib
-import json
+import os
 import sys
+
+
+def _strip_pythonpath_entries() -> None:
+    """Remove interpreter search paths supplied through ``PYTHONPATH``."""
+
+    configured = os.environ.get("PYTHONPATH")
+    if configured is None:
+        return
+    untrusted = {
+        os.path.realpath(entry or os.curdir)
+        for entry in configured.split(os.pathsep)
+    }
+    sys.path[:] = [
+        entry
+        for entry in sys.path
+        if os.path.realpath(entry or os.curdir) not in untrusted
+    ]
+
+
+_strip_pythonpath_entries()
+
+import importlib.util
+import json
+import math
+import stat
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -35,12 +59,21 @@ def _bind_repo_root() -> None:
     sys.path.insert(0, root)
 
 
-def _import_repo_module(name: str, expected_path: Path) -> Any:
-    module = importlib.import_module(name)
-    origin = getattr(module, "__file__", None)
-    if origin is None or Path(origin).resolve() != expected_path.resolve():
-        raise ImportError(f"unexpected module origin for {name}")
+def _load_repo_module(expected_path: Path) -> Any:
+    resolved = expected_path.resolve(strict=True)
+    module_name = f"_ai_os_exact_{resolved.stem}"
+    spec = importlib.util.spec_from_file_location(module_name, resolved)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"could not load repository module {resolved}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
     return module
+
+
+def _purge_dependency_modules(name: str) -> None:
+    for module_name in tuple(sys.modules):
+        if module_name == name or module_name.startswith(name + "."):
+            del sys.modules[module_name]
 
 
 def _emit(errors: Sequence[str], exit_code: int) -> int:
@@ -85,7 +118,12 @@ def _parse_arguments(argv: Sequence[str]) -> dict[str, Path]:
             consumed = 2
 
         destination = _OPTIONS.get(option)
-        if destination is None or destination in seen or not value:
+        if (
+            destination is None
+            or destination in seen
+            or not value
+            or value.startswith(("-", "="))
+        ):
             raise _ArgumentError
 
         seen.add(destination)
@@ -97,8 +135,11 @@ def _parse_arguments(argv: Sequence[str]) -> dict[str, Path]:
 
 def _read_bytes(path: Path, kind: str) -> tuple[bytes | None, list[str]]:
     try:
-        if path.is_dir():
+        mode = path.stat().st_mode
+        if stat.S_ISDIR(mode):
             return None, [f"{kind}_file_is_directory"]
+        if not stat.S_ISREG(mode):
+            return None, [f"{kind}_file_unreadable"]
         return path.read_bytes(), []
     except FileNotFoundError:
         return None, [f"{kind}_file_missing"]
@@ -119,6 +160,22 @@ def _reject_json_constant(value: str) -> None:
     raise ValueError(f"non-finite JSON number: {value}")
 
 
+def _parse_json_float(value: str) -> float:
+    parsed = float(value)
+    if not math.isfinite(parsed):
+        raise ValueError(f"non-finite JSON number: {value}")
+    return parsed
+
+
+def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate JSON key: {key}")
+        result[key] = value
+    return result
+
+
 def _load_json(path: Path, kind: str) -> tuple[Any | None, list[str]]:
     content, errors = _read_bytes(path, kind)
     if errors:
@@ -132,6 +189,8 @@ def _load_json(path: Path, kind: str) -> tuple[Any | None, list[str]]:
         return json.loads(
             text,
             parse_constant=_reject_json_constant,
+            parse_float=_parse_json_float,
+            object_pairs_hook=_reject_duplicate_keys,
         ), []
     except (json.JSONDecodeError, ValueError):
         return None, [f"{kind}_json_invalid"]
@@ -174,10 +233,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         if errors:
             return _emit(errors, 1)
 
-        registry_module = _import_repo_module(
-            "tools.canonical_repository_registry",
-            _REGISTRY_VALIDATOR,
-        )
+        _purge_dependency_modules("jsonschema")
+        registry_module = _load_repo_module(_REGISTRY_VALIDATOR)
         errors = _normalized_validator_errors(
             registry_module.validate_registry(registry, schema)
         )
@@ -188,10 +245,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         if errors:
             return _emit(errors, 1)
 
-        plan_module = _import_repo_module(
-            "tools.canonical_repository_plan",
-            _PLAN_VALIDATOR,
-        )
+        plan_module = _load_repo_module(_PLAN_VALIDATOR)
         errors = _normalized_validator_errors(
             plan_module.validate_execution_plan(plan, registry)
         )
