@@ -1,0 +1,152 @@
+name: P0 v2 runner feasibility Gate 1
+
+on:
+  pull_request:
+    types:
+      - ready_for_review
+      - reopened
+      - labeled
+
+permissions: {}
+
+concurrency:
+  group: p0-v2-runner-feasibility-global
+  cancel-in-progress: false
+
+jobs:
+  gate1:
+    if: >-
+      always() &&
+      github.repository == 'yurikuchumov-ux/ai-operating-system' &&
+      github.event.pull_request.head.repo.full_name == 'yurikuchumov-ux/ai-operating-system' &&
+      github.event.pull_request.head.ref == 'agent/issue-70-p0-v2-feasibility-gate1' &&
+      (github.event.action != 'labeled' || github.event.label.name == 'p0-v2-cancel-canary')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      EXPECTED_REPOSITORY: yurikuchumov-ux/ai-operating-system
+      EXPECTED_HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+      EXPECTED_HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
+      EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      EXPECTED_MERGE_SHA: ${{ github.sha }}
+      EXPECTED_BASE_SHA: d4f10b714de3afae84d48dfcd3daa6405092a973
+      CONTROL_TASK_COMMIT: e0587c2e3134c30f761206689191f6de822c491a
+      CONTROL_TASK_SHA256: 0886b8125c66d3ad9fa22f271978ebc3e8cab726cacbaff0cab65caf0e604934
+      CANCEL_CANARY: ${{ contains(github.event.pull_request.labels.*.name, 'p0-v2-cancel-canary') }}
+
+    steps:
+      - name: Reject mismatched GitHub context before checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "${GITHUB_REPOSITORY}" == "${EXPECTED_REPOSITORY}" ]]
+          [[ "${EXPECTED_HEAD_REPOSITORY}" == "${EXPECTED_REPOSITORY}" ]]
+          [[ "${EXPECTED_HEAD_BRANCH}" == "agent/issue-70-p0-v2-feasibility-gate1" ]]
+          [[ "${EXPECTED_HEAD_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          [[ "${EXPECTED_MERGE_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          [[ "${CONTROL_TASK_COMMIT}" =~ ^[0-9a-f]{40}$ ]]
+          [[ "${CONTROL_TASK_SHA256}" =~ ^[0-9a-f]{64}$ ]]
+
+      - name: Check out the exact same-repository PR head
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Bind checkout and change scope before sudo
+        shell: bash
+        run: |
+          set -euo pipefail
+          observed_head="$(git rev-parse HEAD)"
+          [[ "${observed_head}" == "${EXPECTED_HEAD_SHA}" ]]
+          git merge-base --is-ancestor "${EXPECTED_BASE_SHA}" "${observed_head}"
+          mapfile -t changed_paths < <(git diff --name-only "${EXPECTED_BASE_SHA}...${observed_head}")
+          [[ "${#changed_paths[@]}" -eq 4 ]]
+          expected_paths=(
+            ".github/workflows/p0-v2-runner-feasibility.yml"
+            "contracts/schemas/p0-v2-runner-feasibility-evidence.v1.schema.json"
+            "tests/test_b3_p0_v2_runner_feasibility.py"
+            "tools/p0_v2_runner_probe.py"
+          )
+          mapfile -t expected_sorted < <(printf '%s\n' "${expected_paths[@]}" | LC_ALL=C sort)
+          mapfile -t observed_sorted < <(printf '%s\n' "${changed_paths[@]}" | LC_ALL=C sort)
+          [[ "$(printf '%s\n' "${expected_sorted[@]}")" == "$(printf '%s\n' "${observed_sorted[@]}")" ]]
+          [[ -z "$(git status --porcelain=v1 --untracked-files=all)" ]]
+
+      - name: Run deterministic Gate 1 contract tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          /usr/bin/python3 -m unittest discover -s tests -p 'test_b3_p0_v2_runner_feasibility.py'
+
+      - name: Prepare trusted evidence destination
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence_dir="${RUNNER_TEMP}/p0-v2-gate1-evidence"
+          install -d -m 0700 "${evidence_dir}"
+          printf 'P0_V2_EVIDENCE_DIR=%s\n' "${evidence_dir}" >> "${GITHUB_ENV}"
+          printf 'P0_V2_RUNNER_UID=%s\n' "$(id -u)" >> "${GITHUB_ENV}"
+          printf 'P0_V2_RUNNER_GID=%s\n' "$(id -g)" >> "${GITHUB_ENV}"
+
+      - name: Execute secretless hostile runner probe
+        id: hostile-probe
+        shell: bash
+        timeout-minutes: 60
+        run: |
+          set -euo pipefail
+          extra_args=()
+          if [[ "${CANCEL_CANARY}" == "true" ]]; then
+            extra_args+=(--cancel-canary)
+          fi
+          sudo -n /usr/bin/python3 -I tools/p0_v2_runner_probe.py supervisor \
+            --run-id "${GITHUB_RUN_ID}" \
+            --run-attempt "${GITHUB_RUN_ATTEMPT}" \
+            --head-sha "${EXPECTED_HEAD_SHA}" \
+            --merge-sha "${EXPECTED_MERGE_SHA}" \
+            --repository "${EXPECTED_REPOSITORY}" \
+            --workflow "${GITHUB_WORKFLOW}" \
+            --event-name "${GITHUB_EVENT_NAME}" \
+            --runner-image "${ImageOS:-ubuntu24}" \
+            --runner-arch "${RUNNER_ARCH}" \
+            --source-path "${GITHUB_WORKSPACE}/tools/p0_v2_runner_probe.py" \
+            --schema-path "${GITHUB_WORKSPACE}/contracts/schemas/p0-v2-runner-feasibility-evidence.v1.schema.json" \
+            --evidence-dir "${P0_V2_EVIDENCE_DIR}" \
+            --evidence-uid "${P0_V2_RUNNER_UID}" \
+            --evidence-gid "${P0_V2_RUNNER_GID}" \
+            "${extra_args[@]}"
+
+      - name: Same-VM ordinary-cancellation finalizer
+        if: always() && cancelled()
+        shell: bash
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          sudo -n /usr/bin/python3 -I tools/p0_v2_runner_probe.py finalize \
+            --run-id "${GITHUB_RUN_ID}" \
+            --run-attempt "${GITHUB_RUN_ATTEMPT}" \
+            --head-sha "${EXPECTED_HEAD_SHA}" \
+            --merge-sha "${EXPECTED_MERGE_SHA}" \
+            --repository "${EXPECTED_REPOSITORY}" \
+            --workflow "${GITHUB_WORKFLOW}" \
+            --event-name "${GITHUB_EVENT_NAME}" \
+            --runner-image "${ImageOS:-ubuntu24}" \
+            --runner-arch "${RUNNER_ARCH}" \
+            --source-path "${GITHUB_WORKSPACE}/tools/p0_v2_runner_probe.py" \
+            --schema-path "${GITHUB_WORKSPACE}/contracts/schemas/p0-v2-runner-feasibility-evidence.v1.schema.json" \
+            --evidence-dir "${P0_V2_EVIDENCE_DIR}" \
+            --evidence-uid "${P0_V2_RUNNER_UID}" \
+            --evidence-gid "${P0_V2_RUNNER_GID}"
+
+      - name: Upload canonical candidate evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: p0-v2-gate1-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ env.P0_V2_EVIDENCE_DIR }}/candidate-evidence.json
+            ${{ env.P0_V2_EVIDENCE_DIR }}/candidate-evidence.json.sha256
+          if-no-files-found: error
+          retention-days: 7
+          include-hidden-files: false
