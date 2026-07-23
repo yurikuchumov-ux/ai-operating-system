@@ -188,8 +188,14 @@
             "fatal_signal_crash_storm_probe_required": true,
             "coredump_configuration_and_package_state_recorded": true,
             "coredump_helper_unit_journal_and_storage_side_effect_deltas_recorded": true,
-            "active_piped_coredump_handler_without_authorized_suppression_fails_closed": true,
-            "host_global_mutation_or_compiled_helper_requires_a_superseding_task": true
+            "narrow_reversible_core_pattern_suppression_is_authorized": true,
+            "original_core_pattern_recorded_before_any_write": true,
+            "piped_core_pattern_replaced_by_verified_non_piped_pattern_before_hostile_release": true,
+            "limit_core_zero_required_in_every_hostile_unit": true,
+            "original_core_pattern_restored_and_verified_during_normal_cleanup_and_cancellation_finalizer": true,
+            "restoration_failure_is_a_cleanup_failure_and_never_success": true,
+            "force_cancellation_may_prevent_restoration_on_the_ephemeral_vm_and_remains_unproved": true,
+            "all_other_host_global_mutation_or_any_compiled_helper_requires_a_superseding_task": true
           },
           "attack_cases": {
             "sudo_n_true": "denied",
