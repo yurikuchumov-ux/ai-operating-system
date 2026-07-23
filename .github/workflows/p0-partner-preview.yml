@@ -1,0 +1,396 @@
+name: "UNTRUSTED PREVIEW — P0 Partner Preview"
+
+on:
+  workflow_dispatch:
+    inputs:
+      task_commit:
+        description: "Full immutable task commit SHA"
+        required: true
+        type: string
+      task_path:
+        description: "Exact .ai/tasks/...json path at task_commit"
+        required: true
+        type: string
+      expected_implementation_sha:
+        description: "Independently reviewed workflow implementation commit"
+        required: true
+        type: string
+      expected_repository_id:
+        description: "Numeric GitHub repository ID"
+        required: true
+        type: string
+      expected_owner_id:
+        description: "Numeric GitHub owner ID"
+        required: true
+        type: string
+      expected_operator:
+        description: "Exact owner-approved GitHub login"
+        required: true
+        type: string
+      acknowledgement:
+        description: "Type: I UNDERSTAND THIS IS AN UNTRUSTED PREVIEW"
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: p0-partner-untrusted-preview
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: "UNTRUSTED PREVIEW — prepare sanitized input"
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: "UNTRUSTED PREVIEW — fail-closed admission gate"
+        shell: bash
+        env:
+          ACKNOWLEDGEMENT: ${{ inputs.acknowledgement }}
+          ACTOR: ${{ github.actor }}
+          ENABLED: ${{ vars.P0_PARTNER_PREVIEW_ENABLED }}
+          EXPECTED_IMPLEMENTATION_SHA: ${{ inputs.expected_implementation_sha }}
+          EXPECTED_OPERATOR: ${{ inputs.expected_operator }}
+          EXPECTED_OWNER_ID: ${{ inputs.expected_owner_id }}
+          EXPECTED_REPOSITORY_ID: ${{ inputs.expected_repository_id }}
+          OWNER_ID: ${{ github.repository_owner_id }}
+          REPOSITORY_ID: ${{ github.repository_id }}
+          TASK_COMMIT: ${{ inputs.task_commit }}
+          TASK_PATH: ${{ inputs.task_path }}
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+          import sys
+
+          required = {
+              "ENABLED": "true",
+              "ACKNOWLEDGEMENT": "I UNDERSTAND THIS IS AN UNTRUSTED PREVIEW",
+              "REPOSITORY_ID": os.environ["EXPECTED_REPOSITORY_ID"],
+              "OWNER_ID": os.environ["EXPECTED_OWNER_ID"],
+              "ACTOR": os.environ["EXPECTED_OPERATOR"],
+              "TRIGGERING_ACTOR": os.environ["EXPECTED_OPERATOR"],
+              "WORKFLOW_SHA": os.environ["EXPECTED_IMPLEMENTATION_SHA"],
+          }
+          failures = [
+              key for key, expected in required.items()
+              if os.environ.get(key, "") != expected
+          ]
+          sha = os.environ.get("TASK_COMMIT", "")
+          path = os.environ.get("TASK_PATH", "")
+          if not re.fullmatch(r"[0-9a-f]{40}", sha):
+              failures.append("TASK_COMMIT")
+          if not re.fullmatch(
+              r"\.ai/tasks/[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*\.json",
+              path,
+          ):
+              failures.append("TASK_PATH")
+          if failures:
+              print(json.dumps({
+                  "code": "E_ADMISSION",
+                  "label": "UNTRUSTED PREVIEW",
+                  "failed_fields": sorted(set(failures)),
+              }, sort_keys=True), file=sys.stderr)
+              raise SystemExit(2)
+          PY
+
+      - name: "UNTRUSTED PREVIEW — checkout exact implementation"
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: implementation
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: "UNTRUSTED PREVIEW — checkout exact immutable task"
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ inputs.task_commit }}
+          path: control
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: "UNTRUSTED PREVIEW — install task validator without provider credentials"
+        shell: bash
+        run: |
+          python3 -m pip install \
+            --disable-pip-version-check \
+            --requirement implementation/requirements-b0.txt
+
+      - id: task
+        name: "UNTRUSTED PREVIEW — validate task and bind base"
+        shell: bash
+        env:
+          REPOSITORY: ${{ github.repository }}
+          TASK_FILE: control/${{ inputs.task_path }}
+        run: |
+          python3 implementation/tools/validate_b0.py validate \
+            --type task \
+            --document "$TASK_FILE"
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+
+          with open(os.environ["TASK_FILE"], "r", encoding="utf-8") as handle:
+              task = json.load(handle)
+          if task["repository"] != os.environ["REPOSITORY"]:
+              raise SystemExit("E_TASK: repository mismatch")
+          if not re.fullmatch(r"[0-9a-f]{40}", task["base_sha"]):
+              raise SystemExit("E_TASK: invalid base_sha")
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as handle:
+              handle.write("base_sha={}\n".format(task["base_sha"]))
+          PY
+
+      - name: "UNTRUSTED PREVIEW — checkout exact clean base"
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ steps.task.outputs.base_sha }}
+          path: baseline
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: "UNTRUSTED PREVIEW — construct sanitized provider tree"
+        shell: bash
+        env:
+          TASK_FILE: control/${{ inputs.task_path }}
+        run: |
+          python3 implementation/tools/p0_partner_preview.py prepare \
+            --task "$TASK_FILE" \
+            --schema implementation/contracts/schemas/task.v1.schema.json \
+            --baseline baseline \
+            --output provider-input
+          test ! -e provider-input/.git
+          test ! -e provider-input/.mcp.json
+          test ! -e provider-input/.claude
+
+      - name: "UNTRUSTED PREVIEW — upload sanitized input"
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: UNTRUSTED-PREVIEW-input-${{ github.run_id }}-${{ github.run_attempt }}
+          path: provider-input
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 1
+
+  author:
+    name: "UNTRUSTED PREVIEW — isolated OAuth author"
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions: {}
+    steps:
+      - name: "UNTRUSTED PREVIEW — reject debug execution before OAuth"
+        shell: bash
+        env:
+          RUNNER_DEBUG_CONTEXT: ${{ runner.debug }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import sys
+
+          debug_values = {
+              "ACTIONS_STEP_DEBUG": os.environ.get("ACTIONS_STEP_DEBUG", ""),
+              "RUNNER_DEBUG": os.environ.get("RUNNER_DEBUG", ""),
+              "RUNNER_DEBUG_CONTEXT": os.environ.get("RUNNER_DEBUG_CONTEXT", ""),
+          }
+          enabled = [
+              key for key, value in debug_values.items()
+              if value.strip().lower() in {"1", "true", "yes", "on"}
+          ]
+          if enabled:
+              print(json.dumps({
+                  "code": "E_DEBUG",
+                  "label": "UNTRUSTED PREVIEW",
+                  "enabled": enabled,
+              }, sort_keys=True), file=sys.stderr)
+              raise SystemExit(2)
+          PY
+
+      - name: "UNTRUSTED PREVIEW — fixed warning before provider"
+        shell: bash
+        run: |
+          {
+            echo "# UNTRUSTED PREVIEW"
+            echo
+            echo "Provider action/runtime output is untrusted."
+            echo "Tool restrictions are not an OS or action sandbox."
+            echo "No result from this job is a correctness, security, provenance, or test claim."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: "UNTRUSTED PREVIEW — download sanitized input only"
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: UNTRUSTED-PREVIEW-input-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .
+
+      - id: claude
+        name: "UNTRUSTED PREVIEW — run pinned Claude author"
+        uses: anthropics/claude-code-action@6902c227aaa9536481b99d56f3014bbbad6c6da8
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ github.token }}
+          anthropic_api_key: ""
+          use_bedrock: "false"
+          use_vertex: "false"
+          settings: ""
+          plugins: ""
+          plugin_marketplaces: ""
+          additional_permissions: ""
+          show_full_output: "false"
+          prompt: |
+            UNTRUSTED PREVIEW author task.
+            Read TASK.json and INSTRUCTIONS.md.
+            Read context only from context/.
+            Edit only files below candidate/ and only at exact TASK.json allowed_paths.
+            Do not run tests, use Git, commit, push, call GitHub, change settings, or claim success.
+            Your output is hostile candidate data until a human reviews every changed byte.
+          claude_args: >-
+            --tools Read,Edit,Write,Glob,Grep
+            --disallowedTools Bash,WebFetch,WebSearch,Task,NotebookEdit,mcp__github__*
+            --max-turns 24
+
+      - name: "UNTRUSTED PREVIEW — serialize one hostile candidate snapshot"
+        shell: bash
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          python3 control/p0_partner_preview.py snapshot \
+            --task TASK.json \
+            --candidate candidate \
+            --output candidate.snapshot.json \
+            --forbid-env CLAUDE_CODE_OAUTH_TOKEN \
+            --forbid-env GITHUB_TOKEN
+
+      - name: "UNTRUSTED PREVIEW — upload hostile candidate snapshot"
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: UNTRUSTED-PREVIEW-candidate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: candidate.snapshot.json
+          if-no-files-found: error
+          include-hidden-files: false
+          retention-days: 1
+
+  package:
+    name: "UNTRUSTED PREVIEW — fresh structural packager"
+    needs: author
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: "UNTRUSTED PREVIEW — checkout exact implementation for packaging"
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: implementation
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: "UNTRUSTED PREVIEW — checkout exact immutable task for packaging"
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ inputs.task_commit }}
+          path: control
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: "UNTRUSTED PREVIEW — install packager validator without OAuth"
+        shell: bash
+        run: |
+          python3 -m pip install \
+            --disable-pip-version-check \
+            --requirement implementation/requirements-b0.txt
+
+      - id: task
+        name: "UNTRUSTED PREVIEW — independently bind package base"
+        shell: bash
+        env:
+          REPOSITORY: ${{ github.repository }}
+          TASK_FILE: control/${{ inputs.task_path }}
+        run: |
+          python3 implementation/tools/validate_b0.py validate \
+            --type task \
+            --document "$TASK_FILE"
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+
+          with open(os.environ["TASK_FILE"], "r", encoding="utf-8") as handle:
+              task = json.load(handle)
+          if task["repository"] != os.environ["REPOSITORY"]:
+              raise SystemExit("E_TASK: repository mismatch")
+          if not re.fullmatch(r"[0-9a-f]{40}", task["base_sha"]):
+              raise SystemExit("E_TASK: invalid base_sha")
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as handle:
+              handle.write("base_sha={}\n".format(task["base_sha"]))
+          PY
+
+      - name: "UNTRUSTED PREVIEW — checkout exact clean package base"
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ steps.task.outputs.base_sha }}
+          path: baseline
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: "UNTRUSTED PREVIEW — download exact-attempt hostile snapshot"
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: UNTRUSTED-PREVIEW-candidate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: incoming
+
+      - name: "UNTRUSTED PREVIEW — package structure and task scope only"
+        shell: bash
+        env:
+          ACTOR: ${{ github.actor }}
+          OPERATOR: ${{ inputs.expected_operator }}
+          OWNER_ID: ${{ github.repository_owner_id }}
+          REPOSITORY_ID: ${{ github.repository_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          RUN_ID: ${{ github.run_id }}
+          TASK_COMMIT: ${{ inputs.task_commit }}
+          TASK_FILE: control/${{ inputs.task_path }}
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+        run: |
+          WORKFLOW_BLOB_SHA256="$(
+            sha256sum implementation/.github/workflows/p0-partner-preview.yml |
+              cut -d ' ' -f 1
+          )"
+          python3 implementation/tools/p0_partner_preview.py package \
+            --task "$TASK_FILE" \
+            --schema implementation/contracts/schemas/task.v1.schema.json \
+            --baseline baseline \
+            --snapshot incoming/candidate.snapshot.json \
+            --output final-package \
+            --repository-id "$REPOSITORY_ID" \
+            --owner-id "$OWNER_ID" \
+            --workflow-sha "$WORKFLOW_SHA" \
+            --workflow-blob-sha256 "$WORKFLOW_BLOB_SHA256" \
+            --task-commit "$TASK_COMMIT" \
+            --operator "$OPERATOR" \
+            --actor "$ACTOR" \
+            --triggering-actor "$TRIGGERING_ACTOR" \
+            --run-id "$RUN_ID" \
+            --run-attempt "$RUN_ATTEMPT"
+          test "$(find final-package -mindepth 1 -maxdepth 1 -type f | wc -l)" -eq 3
+          test "$(find final-package -mindepth 1 -maxdepth 1 ! -type f | wc -l)" -eq 0
+
+      - name: "UNTRUSTED PREVIEW — upload final manual-review package"
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: UNTRUSTED-PREVIEW-${{ github.run_id }}-${{ github.run_attempt }}
+          path: final-package/*
+          if-no-files-found: error
+          include-hidden-files: false
+          retention-days: 1
