@@ -1,0 +1,276 @@
+{
+  "schema_version": "1.0.0",
+  "task_id": "yurikuchumov-ux/ai-operating-system#70",
+  "repository": "yurikuchumov-ux/ai-operating-system",
+  "issue_number": 70,
+  "objective": "Implement only P0 v2 feasibility Gate 1 on GitHub-hosted ubuntu-24.04: a secretless, non-publishing runner-substrate probe and its deterministic contract tests. The probe must establish or falsify the availability of a dedicated unprivileged provider identity, systemd/cgroup-v2 subtree containment, namespace and privilege restrictions, full descendant cleanup for success, nonzero, timeout, signal, setsid, double-fork and retained-pipe cases, and verifier-owned bounded evidence. It must fail closed without fallback when a required host capability is absent. It must not invoke Claude or Codex, receive provider OAuth, execute repository candidate code, publish a branch or Check Run, modify default branch or protection, merge, deploy, or claim that later P0 v2 gates are feasible.",
+  "change_policy": {
+    "change_required": true,
+    "policy_exception_id": null,
+    "no_change": {
+      "allowed": false,
+      "reason_codes": [],
+      "required_evidence_types": []
+    }
+  },
+  "base_ref": "main",
+  "base_sha": "d4f10b714de3afae84d48dfcd3daa6405092a973",
+  "branch": "agent/issue-70-p0-v2-feasibility-gate1",
+  "allowed_paths": [
+    ".github/workflows/p0-v2-runner-feasibility.yml",
+    "contracts/schemas/p0-v2-runner-feasibility-evidence.v1.schema.json",
+    "tests/test_b3_p0_v2_runner_feasibility.py",
+    "tools/p0_v2_runner_probe.py"
+  ],
+  "denied_paths": [
+    ".ai/**",
+    ".github/workflows/p0-actions-adapter.yml",
+    ".github/workflows/p0-partner-preview.yml",
+    "AI_OS.md",
+    "CHANGELOG.md",
+    "README.md",
+    "contracts/p0-runtime-lock.v1.json",
+    "contracts/registries/**",
+    "contracts/schemas/result.v1.schema.json",
+    "contracts/schemas/review-attestation.v1.schema.json",
+    "contracts/schemas/task.v1.schema.json",
+    "contracts/schemas/verification.v1.schema.json",
+    "docs/**",
+    "fixtures/**",
+    "requirements-*.txt",
+    "standards/**",
+    "templates/**",
+    "tests/test_b0_contracts.py",
+    "tests/test_b3_p0_actions_adapter.py",
+    "tools/p0_actions_adapter.py",
+    "tools/p0_actions_boundary.py",
+    "tools/p0_partner_preview.py"
+  ],
+  "risk_class": "L3",
+  "executor": {
+    "adapter": "human-supervised-codex",
+    "version": "p0-v2-feasibility-gate1-v1",
+    "max_attempts": 2,
+    "timeout_seconds": 7200
+  },
+  "acceptance_criteria": [
+    {
+      "id": "AC-P0-V2-GITHUB-RUNNER-FEASIBILITY-V1",
+      "predicate_id": "process.exit_code.equals",
+      "parameters": {
+        "component": "p0-v2-github-runner-feasibility-gate1",
+        "value": 0,
+        "trusted_evidence_source": "probe_supervisor_observed_process_and_kernel_state",
+        "forbidden_sources": [
+          "probe_child_self_report",
+          "actions_job_conclusion",
+          "workflow_log_prose",
+          "pull_request_body",
+          "provider_transcript"
+        ],
+        "specification": {
+          "authorization": {
+            "issue_url": "https://github.com/yurikuchumov-ux/ai-operating-system/issues/70",
+            "supersedes_issue_68_corrective_task_commit": "2637db7953dcf28d938c06d6811bcdb1ebf3ac05",
+            "reviewed_legacy_head": "31fbd7b07e1e1b63b400f61fa5da3037dde04e86",
+            "legacy_pr_69_remains_draft_and_unmerged": true,
+            "legacy_architecture_review_result_sha256": "a8a2d604913487d0ad6ff39b48fbeb7f078cf376d04d9c4cc94d16f5bfd4826f",
+            "legacy_architecture_verdict": "REDESIGN",
+            "owner_platform_decision_sha256": "67fb64643bec6e369d90b7e7ce713c26333bf5f44fa964340126ad39bed4d77c",
+            "new_independent_chatgpt_pro_architecture_review_prompt_sha256": "27a5ca386401b714342d5bf3fd7d43c3d6da4f9a8cc7b776420fba68644e53a4",
+            "new_independent_chatgpt_pro_architecture_review_result_sha256": "a0c2e330921ebdeca867e3be8dc1f21205d8fc9c4d25500b00efd6ad9f0070b1",
+            "new_independent_chatgpt_pro_architecture_verdict": "REQUEST_CHANGES",
+            "new_independent_chatgpt_pro_gate1_outcome": "GATE1_INCONCLUSIVE",
+            "all_nine_blocking_findings_are_mandatory_acceptance_conditions": true,
+            "published_task_commit_and_exact_content_digest_required_before_material_implementation": true,
+            "merge_forbidden_without_explicit_owner_approval": true
+          },
+          "scope_boundary": {
+            "gate": "github-hosted-runner-substrate-only",
+            "fixed_runner_label": "ubuntu-24.04",
+            "core_v2_feasibility_not_claimed": true,
+            "claude_lane_not_invoked_or_claimed": true,
+            "codex_lane_not_invoked_or_claimed": true,
+            "candidate_transport_not_implemented_or_claimed": true,
+            "artifact_identity_not_implemented_or_claimed": true,
+            "publisher_and_check_run_not_implemented_or_claimed": true
+          },
+          "workflow_admission": {
+            "pull_request_target_forbidden": true,
+            "fork_provider_execution_forbidden": true,
+            "permissions_empty": true,
+            "secrets_absent": true,
+            "github_actions_runtime_oidc_publisher_and_provider_credentials_absent_from_probe_child": true,
+            "no_default_branch_or_repository_setting_write": true,
+            "all_nonlocal_actions_use_full_commit_sha": true,
+            "one_global_non_cancelling_concurrency_group": true,
+            "exact_same_repository_head_sha_admission_before_checkout_or_sudo": true,
+            "job_level_normal_cancellation_continuation_required": true,
+            "same_vm_always_and_cancelled_finalizer_required": true,
+            "force_cancellation_runner_loss_and_vm_loss_never_claimed_as_proven": true,
+            "premerge_runs_use_explicit_exact_sha_dispatch_or_equivalent_immutable_binding": true
+          },
+          "host_preflight": {
+            "record_runner_image_version_kernel_systemd_and_cgroup_mode": true,
+            "systemd_pid_1_required": true,
+            "unified_cgroup_v2_required": true,
+            "cgroup_kill_required": true,
+            "transient_service_creation_required": true,
+            "dedicated_unprivileged_uid_required": true,
+            "no_new_privileges_required": true,
+            "empty_capability_bounding_set_required": true,
+            "private_tmp_devices_home_and_network_required": true,
+            "protect_system_and_control_groups_required": true,
+            "protect_proc_and_proc_subset_required": true,
+            "address_family_namespace_kernel_interface_and_ipc_restrictions_required": true,
+            "bounded_tmpfs_cpu_memory_pids_open_files_file_size_and_total_output_required": true,
+            "swap_oom_and_syscall_controls_required_or_explicitly_failed_closed": true,
+            "manager_reported_property_equality_is_not_effective_proof": true,
+            "each_required_property_requires_an_independent_hostile_effectiveness_probe": true,
+            "filesystem_unix_socket_host_side_effects_must_be_hidden_or_falsified": true,
+            "containment_or_hardening_unavailable_fails_closed": true,
+            "killpg_pkill_pid_enumeration_or_uncontained_fallback_forbidden": true
+          },
+          "process_domain": {
+            "unique_transient_service_per_case": true,
+            "type_exec": true,
+            "kill_mode_control_group": true,
+            "send_sigkill": true,
+            "bounded_stop_timeout": true,
+            "child_cannot_use_sudo_or_gain_capabilities": true,
+            "child_cannot_write_host_control_paths": true,
+            "child_has_no_writable_cgroup_filesystem": true,
+            "child_has_no_network": true,
+            "success_nonzero_timeout_signal_background_setsid_double_fork_and_retained_pipe_cases_required": true,
+            "full_subtree_killed_on_every_outcome_including_success": true,
+            "validated_cgroup_events_handle_or_path_retained_while_bootstrap_is_live": true,
+            "direct_cgroup_kill_required": true,
+            "cgroup_events_recursive_populated_zero_required_before_unit_unload": true,
+            "removed_subtree_or_path_absence_is_never_positive_cleanup_evidence": true,
+            "descendants_reaped_before_trusted_continuation": true,
+            "root_owned_state_record_required_before_hostile_release": true,
+            "state_record_binds_unit_cgroup_run_nonce_uid_gid_and_source_digest": true,
+            "idempotent_same_vm_finalize_mode_required": true,
+            "runtime_max_seconds_is_last_resort_bound_not_cleanup_evidence": true
+          },
+          "bounded_evidence": {
+            "separate_protected_nonseekable_stdout_and_stderr_channels_required": true,
+            "root_owned_regular_output_files_forbidden": true,
+            "systemd_run_pipe_for_hostile_capture_forbidden": true,
+            "supervisor_owns_stdout_and_stderr_read_ends": true,
+            "child_output_never_reaches_actions_command_parser_directly": true,
+            "stdout_and_stderr_streamed_concurrently_as_bytes": true,
+            "maximum_retained_combined_bytes": 1048576,
+            "absolute_total_output_limit_required": true,
+            "full_stream_byte_counts_and_sha256_recorded": true,
+            "invalid_utf8_decoded_with_replacement": true,
+            "truncation_recorded": true,
+            "retained_hostile_payload_base64_only_and_never_printed_to_actions": true,
+            "drain_to_eof_after_cgroup_empty_required": true,
+            "cleanup_precedes_evidence_sealing": true,
+            "evidence_uses_canonical_json": true,
+            "evidence_schema_validation_required": true,
+            "schema_rejects_unknown_fields": true,
+            "requested_reported_and_effective_controls_are_separate": true,
+            "material_fields_record_their_observation_authority": true,
+            "github_context_child_output_and_kernel_observation_are_never_conflated": true,
+            "child_claims_are_never_authoritative": true,
+            "cancelled_run_without_sealed_evidence_is_fail_closed_not_success": true
+          },
+          "invocation_boundary": {
+            "no_shell_command_construction": true,
+            "exact_argv_rendered_as_an_array_and_recorded_by_trusted_supervisor": true,
+            "exact_minimal_environment_allowlist_recorded_by_trusted_supervisor": true,
+            "bootstrap_observes_proc_cmdline_environ_ids_capabilities_fds_mounts_and_cgroup": true,
+            "child_observation_is_adversarial_only_and_never_authoritative": true
+          },
+          "host_helper_boundary": {
+            "fatal_signal_crash_storm_probe_required": true,
+            "coredump_configuration_and_package_state_recorded": true,
+            "coredump_helper_unit_journal_and_storage_side_effect_deltas_recorded": true,
+            "active_piped_coredump_handler_without_authorized_suppression_fails_closed": true,
+            "host_global_mutation_or_compiled_helper_requires_a_superseding_task": true
+          },
+          "attack_cases": {
+            "sudo_n_true": "denied",
+            "capability_escalation": "denied",
+            "actions_workflow_command_emission": "data_only",
+            "write_actions_command_files": "objects_absent",
+            "background_child": "killed",
+            "setsid_child": "killed",
+            "double_fork_setsid_child": "killed",
+            "descendant_cgroup_attempt": "denied_or_full_subtree_killed",
+            "fork_bomb": "bounded",
+            "retained_output_pipe": "terminated_without_deadlock",
+            "regular_fd_ftruncate_lseek_dup_and_writer_handoff": "cannot_rewrite_authoritative_capture",
+            "continuous_simultaneous_stdout_stderr_flood": "bounded_total_output_limit",
+            "filesystem_unix_socket_access": "denied_or_no_host_side_effect",
+            "fatal_signal_crash_storm": "no_uncontained_host_helper_side_effect",
+            "request_key_module_autoload_bpf_perf_io_uring": "denied_or_independently_bounded",
+            "writable_path_and_unknown_binary_format_execution": "denied",
+            "timeout": "truthful_and_bounded",
+            "nonzero_exit": "truthful_and_bounded"
+          },
+          "verification": {
+            "task_schema_validation": true,
+            "workflow_yaml_parse": true,
+            "static_workflow_permissions_trigger_pin_and_secret_checks": true,
+            "deterministic_local_contract_tests": true,
+            "real_github_hosted_integration_required_for_platform_pass": true,
+            "minimum_three_fresh_runner_passes_before_feasible_verdict": true,
+            "one_real_operator_cancel_canary_required_before_final_gate1_verdict": true,
+            "three_passes_use_distinct_run_ids_fresh_vms_and_exact_unchanged_head": true,
+            "operator_cancel_canary_starts_after_trusted_fixture_active_marker": true,
+            "ordinary_cancel_evidence_requires_same_vm_finalizer_and_post_cancel_upload": true,
+            "synthetic_signal_is_never_labeled_real_github_cancellation": true,
+            "exact_run_attempt_workflow_head_image_and_source_digest_binding_required": true,
+            "successful_actions_conclusion_is_neither_necessary_nor_sufficient": true,
+            "task_specific_tests": true,
+            "full_b3_suite": true,
+            "full_repository_suite": true,
+            "git_diff_check": true,
+            "exact_allowed_path_check": true,
+            "fresh_independent_exact_head_review_required": true
+          },
+          "terminal_verdicts": [
+            "GATE1_FEASIBLE_ON_GITHUB_HOSTED",
+            "GATE1_NOT_FEASIBLE_ON_GITHUB_HOSTED",
+            "GATE1_INCONCLUSIVE"
+          ]
+        }
+      },
+      "required": true,
+      "linked_checks": [
+        "issue-70-p0-v2-runner-feasibility-tests"
+      ]
+    }
+  ],
+  "required_checks": [
+    {
+      "id": "issue-70-p0-v2-runner-feasibility-tests",
+      "command_id": "repo.contracts.b3.tests",
+      "required": true,
+      "expected_postconditions": [
+        {
+          "predicate_id": "process.exit_code.equals",
+          "parameters": {
+            "value": 0
+          }
+        }
+      ]
+    }
+  ],
+  "review_policy": {
+    "reviewer_class": "independent-security-architecture",
+    "policy_id": "review-independence.v1",
+    "forbidden_lineage_overlaps": [
+      "agent_runtime_id",
+      "credential_principal",
+      "authored_commits"
+    ],
+    "minimum_distinct_human_operators": 1
+  },
+  "external_side_effects": "owner_approved",
+  "created_by": "github:yurykuchumov-ux/codex-control-plane",
+  "created_at": "2026-07-23T15:45:00Z"
+}
