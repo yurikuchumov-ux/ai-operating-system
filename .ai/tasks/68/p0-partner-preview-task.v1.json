@@ -1,0 +1,181 @@
+{
+  "schema_version": "1.0.0",
+  "task_id": "yurikuchumov-ux/ai-operating-system#68",
+  "repository": "yurikuchumov-ux/ai-operating-system",
+  "issue_number": 68,
+  "objective": "Deliver a deliberately non-production P0 Partner Preview on a separate branch. The preview may use a pinned subscription-backed Claude Code OAuth author action to prepare bounded file edits and a human-review artifact, but it must never claim trusted execution evidence, automatically publish a branch, create a Check Run, merge, modify branch protection, expose production credentials, or become a required check. Every output must be marked UNTRUSTED PREVIEW and require manual inspection plus clean-CI revalidation by the partner.",
+  "change_policy": {
+    "change_required": true,
+    "policy_exception_id": null,
+    "no_change": {
+      "allowed": false,
+      "reason_codes": [],
+      "required_evidence_types": []
+    }
+  },
+  "base_ref": "main",
+  "base_sha": "d4f10b714de3afae84d48dfcd3daa6405092a973",
+  "branch": "agent/issue-68-partner-preview",
+  "allowed_paths": [
+    ".github/workflows/p0-partner-preview.yml",
+    "docs/p0-partner-preview-runbook.md",
+    "tests/test_b3_p0_partner_preview.py",
+    "tools/p0_partner_preview.py"
+  ],
+  "denied_paths": [
+    ".ai/**",
+    ".github/workflows/p0-actions-adapter.yml",
+    "AI_OS.md",
+    "CHANGELOG.md",
+    "README.md",
+    "contracts/**",
+    "fixtures/**",
+    "requirements-*.txt",
+    "standards/**",
+    "templates/**",
+    "tests/test_b0_contracts.py",
+    "tests/test_b3_p0_actions_adapter.py",
+    "tools/p0_actions_adapter.py",
+    "tools/p0_actions_boundary.py"
+  ],
+  "risk_class": "L3",
+  "executor": {
+    "adapter": "human-supervised-claude-code",
+    "version": "p0-partner-preview-v1",
+    "max_attempts": 2,
+    "timeout_seconds": 3600
+  },
+  "acceptance_criteria": [
+    {
+      "id": "AC-P0-PARTNER-PREVIEW-V1",
+      "predicate_id": "process.exit_code.equals",
+      "parameters": {
+        "component": "p0-partner-preview-contract-tests",
+        "value": 0,
+        "trusted_evidence_source": "local_independent_process_exit_code",
+        "forbidden_sources": [
+          "provider_self_report",
+          "preview_artifact",
+          "actions_job_conclusion",
+          "partner_acceptance_prose"
+        ],
+        "specification": {
+          "authorization": {
+            "reviewed_head": "31fbd7b07e1e1b63b400f61fa5da3037dde04e86",
+            "architecture_review_sha256": "a8a2d604913487d0ad6ff39b48fbeb7f078cf376d04d9c4cc94d16f5bfd4826f",
+            "architecture_review_verdict": "REDESIGN",
+            "preview_is_not_v2": true,
+            "preview_must_not_modify_pr_69": true,
+            "pr_69_remains_draft_and_unmerged": true,
+            "merge_forbidden_without_owner_approval": true
+          },
+          "runtime_entry": {
+            "workflow_dispatch_only": true,
+            "pull_request_and_pull_request_target_forbidden": true,
+            "explicit_preview_acknowledgement_required": true,
+            "repository_variable_p0_partner_preview_enabled_must_equal_true": true,
+            "task_commit_and_task_path_are_exact_inputs": true,
+            "base_sha_and_allowed_denied_paths_are_loaded_from_validated_task": true
+          },
+          "credential_boundary": {
+            "job_permissions_contents_read_only": true,
+            "checkout_persist_credentials_false": true,
+            "publisher_token_forbidden": true,
+            "openai_api_key_forbidden": true,
+            "paid_openai_or_anthropic_api_forbidden": true,
+            "subscription_backed_claude_code_oauth_is_the_only_provider_credential": true,
+            "github_token_passed_to_action_is_read_only": true,
+            "production_secrets_and_data_forbidden": true,
+            "dedicated_disposable_preview_repository_and_credential_required": true
+          },
+          "provider_boundary": {
+            "pinned_claude_action_full_sha_required": true,
+            "provider_tools_limited_to_read_edit_write_glob_grep": true,
+            "bash_web_network_task_notebook_and_github_api_tools_forbidden": true,
+            "provider_must_not_run_tests_or_claim_test_success": true,
+            "provider_must_not_commit_push_merge_or_change_settings": true,
+            "candidate_git_metadata_is_root_owned_read_only_before_provider": true
+          },
+          "preview_output": {
+            "filesystem_comparison_uses_root_owned_pre_provider_snapshot_and_no_post_provider_git": true,
+            "only_task_allowlisted_regular_file_bytes_or_deletions_are_reported": true,
+            "symlink_hardlink_fifo_socket_device_special_and_out_of_scope_changes_rejected": true,
+            "fixed_artifact_files": [
+              "UNTRUSTED-PREVIEW.json",
+              "changes.patch",
+              "summary.md"
+            ],
+            "all_outputs_marked_untrusted_preview": true,
+            "artifact_never_consumed_automatically": true,
+            "artifact_retention_days": 7,
+            "human_review_and_clean_ci_revalidation_required": true
+          },
+          "forbidden_capabilities": {
+            "automatic_commit": true,
+            "automatic_push": true,
+            "automatic_pull_request": true,
+            "check_run_creation": true,
+            "required_check_registration": true,
+            "default_branch_write": true,
+            "branch_protection_change": true,
+            "deployment": true,
+            "merge": true,
+            "verify_only_replay": true,
+            "trusted_execution_or_security_claim": true
+          },
+          "failure_behavior": {
+            "provider_failure_still_emits_only_untrusted_diagnostics": true,
+            "empty_diff_fails": true,
+            "scope_violation_fails": true,
+            "special_file_or_path_substitution_fails": true,
+            "timeout_or_cancellation_never_publishes": true,
+            "no_failure_path_gains_write_permissions": true
+          },
+          "verification": {
+            "task_schema_validation": true,
+            "workflow_yaml_parse": true,
+            "static_forbidden_capability_tests": true,
+            "filesystem_scanner_positive_and_adversarial_tests": true,
+            "full_b3_suite": true,
+            "full_repository_suite": true,
+            "git_diff_check": true,
+            "exact_allowed_path_check": true,
+            "fresh_independent_chatgpt_pro_architecture_review_before_implementation": true
+          }
+        }
+      },
+      "required": true,
+      "linked_checks": [
+        "issue-68-p0-partner-preview-tests"
+      ]
+    }
+  ],
+  "required_checks": [
+    {
+      "id": "issue-68-p0-partner-preview-tests",
+      "command_id": "repo.contracts.b3.tests",
+      "required": true,
+      "expected_postconditions": [
+        {
+          "predicate_id": "process.exit_code.equals",
+          "parameters": {
+            "value": 0
+          }
+        }
+      ]
+    }
+  ],
+  "review_policy": {
+    "reviewer_class": "independent-engineering",
+    "policy_id": "review-independence.v1",
+    "forbidden_lineage_overlaps": [
+      "agent_runtime_id",
+      "credential_principal",
+      "authored_commits"
+    ],
+    "minimum_distinct_human_operators": 1
+  },
+  "external_side_effects": "forbidden",
+  "created_by": "github:yurykuchumov-ux/codex-control-plane",
+  "created_at": "2026-07-23T06:54:49Z"
+}
