@@ -1,0 +1,594 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/yurikuchumov-ux/ai-operating-system/contracts/schemas/p0-v2-runner-feasibility-evidence.v1.schema.json",
+  "title": "P0 v2 GitHub-hosted runner feasibility candidate evidence v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "evidence_kind",
+    "candidate_notice",
+    "outcome",
+    "outcome_authority",
+    "identity",
+    "source",
+    "host",
+    "controls",
+    "lifecycle",
+    "cases",
+    "cancellation",
+    "errors"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0.0"
+    },
+    "evidence_kind": {
+      "const": "p0-v2-runner-feasibility-candidate"
+    },
+    "candidate_notice": {
+      "const": "candidate evidence only; an independent reviewer owns the GATE1_* decision"
+    },
+    "outcome": {
+      "$ref": "#/$defs/outcome"
+    },
+    "outcome_authority": {
+      "const": "supervisor_observed"
+    },
+    "identity": {
+      "type": "array",
+      "minItems": 19,
+      "maxItems": 19,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/observation"
+      }
+    },
+    "source": {
+      "type": "array",
+      "minItems": 6,
+      "maxItems": 6,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/observation"
+      }
+    },
+    "host": {
+      "type": "array",
+      "minItems": 8,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/observation"
+      }
+    },
+    "controls": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "requested",
+        "systemd_reported",
+        "effective_observed"
+      ],
+      "properties": {
+        "requested": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/observation"
+          }
+        },
+        "systemd_reported": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/systemd_observation"
+          }
+        },
+        "effective_observed": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/effective_observation"
+          }
+        }
+      }
+    },
+    "lifecycle": {
+      "type": "array",
+      "minItems": 4,
+      "items": {
+        "$ref": "#/$defs/lifecycle_event"
+      }
+    },
+    "cases": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 19,
+      "items": {
+        "$ref": "#/$defs/case"
+      }
+    },
+    "cancellation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "claim_type",
+        "authority",
+        "finalizer_ran",
+        "same_vm_cleanup_observed",
+        "force_cancellation_proven"
+      ],
+      "properties": {
+        "claim_type": {
+          "enum": [
+            "not_requested",
+            "synthetic_signal",
+            "ordinary_github_cancellation",
+            "force_cancellation",
+            "unobserved"
+          ]
+        },
+        "authority": {
+          "enum": [
+            "supervisor_observed",
+            "github_context_claim"
+          ]
+        },
+        "finalizer_ran": {
+          "type": "boolean"
+        },
+        "same_vm_cleanup_observed": {
+          "type": "boolean"
+        },
+        "force_cancellation_proven": {
+          "const": false
+        }
+      }
+    },
+    "errors": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/error"
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "outcome": {
+            "const": "SUCCESS"
+          }
+        },
+        "required": [
+          "outcome"
+        ]
+      },
+      "then": {
+        "properties": {
+          "cases": {
+            "minItems": 19,
+            "maxItems": 19
+          },
+          "errors": {
+            "maxItems": 0
+          },
+          "cancellation": {
+            "properties": {
+              "claim_type": {
+                "const": "not_requested"
+              },
+              "finalizer_ran": {
+                "const": false
+              },
+              "same_vm_cleanup_observed": {
+                "const": false
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "outcome": {
+            "const": "ACTIONS_CANCELLED"
+          }
+        },
+        "required": [
+          "outcome"
+        ]
+      },
+      "then": {
+        "properties": {
+          "cases": {
+            "minItems": 1,
+            "maxItems": 1
+          },
+          "errors": {
+            "maxItems": 0
+          },
+          "cancellation": {
+            "properties": {
+              "claim_type": {
+                "const": "ordinary_github_cancellation"
+              },
+              "finalizer_ran": {
+                "const": true
+              },
+              "same_vm_cleanup_observed": {
+                "const": true
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "authority": {
+      "enum": [
+        "kernel_observed",
+        "systemd_observed",
+        "supervisor_observed",
+        "platform_file_observed",
+        "github_context_claim",
+        "child_untrusted"
+      ]
+    },
+    "json_value": {
+      "type": [
+        "null",
+        "boolean",
+        "number",
+        "string",
+        "array",
+        "object"
+      ]
+    },
+    "observation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "authority",
+        "value"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_.-]*$"
+        },
+        "authority": {
+          "$ref": "#/$defs/authority"
+        },
+        "value": {
+          "$ref": "#/$defs/json_value"
+        }
+      }
+    },
+    "systemd_observation": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/observation"
+        },
+        {
+          "properties": {
+            "authority": {
+              "const": "systemd_observed"
+            }
+          }
+        }
+      ]
+    },
+    "effective_observation": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/observation"
+        },
+        {
+          "properties": {
+            "authority": {
+              "enum": [
+                "kernel_observed",
+                "platform_file_observed",
+                "systemd_observed",
+                "supervisor_observed"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "outcome": {
+      "enum": [
+        "SETUP_ERROR",
+        "SUCCESS",
+        "NONZERO_EXIT",
+        "SIGNAL",
+        "TIMEOUT",
+        "ACTIONS_CANCELLED",
+        "OUTPUT_LIMIT",
+        "RESOURCE_OOM",
+        "CLEANUP_FAILURE",
+        "EMPTY_PROOF_FAILURE",
+        "CAPTURE_FAILURE",
+        "EVIDENCE_SEAL_FAILURE",
+        "INCONCLUSIVE"
+      ]
+    },
+    "lifecycle_event": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "monotonic_ns",
+        "authority"
+      ],
+      "properties": {
+        "name": {
+          "enum": [
+            "supervisor_started",
+            "host_preflight_complete",
+            "core_pattern_suppressed",
+            "unit_created",
+            "bootstrap_observed",
+            "hostile_released",
+            "outcome_observed",
+            "cgroup_kill_written",
+            "cgroup_empty_observed",
+            "streams_eof_observed",
+            "core_pattern_restored",
+            "unit_unloaded",
+            "evidence_sealed",
+            "finalizer_started",
+            "finalizer_complete"
+          ]
+        },
+        "monotonic_ns": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "authority": {
+          "const": "supervisor_observed"
+        }
+      }
+    },
+    "stream": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "authority",
+        "payload_authority",
+        "byte_count",
+        "sha256",
+        "retained_base64",
+        "retained_byte_count",
+        "truncated",
+        "eof_observed"
+      ],
+      "properties": {
+        "authority": {
+          "const": "supervisor_observed"
+        },
+        "payload_authority": {
+          "const": "child_untrusted"
+        },
+        "byte_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "retained_base64": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9+/]*={0,2}$"
+        },
+        "retained_byte_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1048576
+        },
+        "truncated": {
+          "type": "boolean"
+        },
+        "eof_observed": {
+          "type": "boolean"
+        }
+      }
+    },
+    "cleanup": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "direct_cgroup_kill_written",
+        "direct_cgroup_kill_authority",
+        "recursive_populated_zero_observed",
+        "recursive_populated_zero_authority",
+        "path_absence_used_as_proof",
+        "streams_eof_after_empty",
+        "streams_eof_authority",
+        "unit_unloaded_after_empty",
+        "unit_unloaded_authority"
+      ],
+      "properties": {
+        "direct_cgroup_kill_written": {
+          "type": "boolean"
+        },
+        "direct_cgroup_kill_authority": {
+          "const": "kernel_observed"
+        },
+        "recursive_populated_zero_observed": {
+          "type": "boolean"
+        },
+        "recursive_populated_zero_authority": {
+          "const": "kernel_observed"
+        },
+        "path_absence_used_as_proof": {
+          "const": false
+        },
+        "streams_eof_after_empty": {
+          "type": "boolean"
+        },
+        "streams_eof_authority": {
+          "const": "supervisor_observed"
+        },
+        "unit_unloaded_after_empty": {
+          "type": "boolean"
+        },
+        "unit_unloaded_authority": {
+          "const": "systemd_observed"
+        }
+      }
+    },
+    "case": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "outcome",
+        "outcome_authority",
+        "started_monotonic_ns",
+        "finished_monotonic_ns",
+        "requested_argv",
+        "requested_argv_authority",
+        "kernel_observed_argv",
+        "kernel_observed_argv_authority",
+        "requested_environment",
+        "requested_environment_authority",
+        "kernel_observed_environment",
+        "kernel_observed_environment_authority",
+        "stdout",
+        "stderr",
+        "cleanup",
+        "observations",
+        "errors"
+      ],
+      "properties": {
+        "id": {
+          "enum": [
+            "success",
+            "nonzero",
+            "signal",
+            "timeout",
+            "background-child",
+            "setsid-child",
+            "double-fork-setsid",
+            "retained-writer",
+            "fd-tamper",
+            "writer-handoff",
+            "invalid-output",
+            "output-flood",
+            "fork-limit",
+            "memory-limit",
+            "nofile-limit",
+            "fsize-limit",
+            "tmpfs-limit",
+            "sandbox-probe",
+            "crash-storm",
+            "operator-cancel"
+          ]
+        },
+        "outcome": {
+          "$ref": "#/$defs/outcome"
+        },
+        "outcome_authority": {
+          "const": "supervisor_observed"
+        },
+        "started_monotonic_ns": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "finished_monotonic_ns": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "requested_argv": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "requested_argv_authority": {
+          "const": "supervisor_observed"
+        },
+        "kernel_observed_argv": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "kernel_observed_argv_authority": {
+          "const": "kernel_observed"
+        },
+        "requested_environment": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "requested_environment_authority": {
+          "const": "supervisor_observed"
+        },
+        "kernel_observed_environment": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "kernel_observed_environment_authority": {
+          "const": "kernel_observed"
+        },
+        "stdout": {
+          "$ref": "#/$defs/stream"
+        },
+        "stderr": {
+          "$ref": "#/$defs/stream"
+        },
+        "cleanup": {
+          "$ref": "#/$defs/cleanup"
+        },
+        "observations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/observation"
+          }
+        },
+        "errors": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/error"
+          }
+        }
+      }
+    },
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "authority",
+        "detail"
+      ],
+      "properties": {
+        "code": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9_]*$"
+        },
+        "authority": {
+          "$ref": "#/$defs/authority"
+        },
+        "detail": {
+          "type": "string",
+          "maxLength": 1000
+        }
+      }
+    }
+  }
+}
