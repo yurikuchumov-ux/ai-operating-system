@@ -61,13 +61,13 @@ jobs:
       EXPECTED_WORKFLOW_PATH: .github/workflows/p0-v2-runner-feasibility.yml
       EXPECTED_WORKFLOW_REF: ${{ github.workflow_ref }}
       EXPECTED_WORKFLOW_SHA: ${{ github.workflow_sha }}
-      EXPECTED_PROBE_SHA256: e12692efd503e94dbf3b2fbb565c9b285f886b46198910bddc928a24673ebd2b
+      EXPECTED_PROBE_SHA256: eab4fc2c2cc226d43712cb599f79c014a57410ba1bcf775a461b21b0ea671a35
       EXPECTED_SCHEMA_SHA256: fbc9d66c7dd1f6b88ba9dc62b37546aea43fb2eb60e1f77c9409a722cb8bece9
-      EXPECTED_TEST_SHA256: 1eaf1796f61c1e8c082a86eb3ba4f001f491282c20cd11ce8f050b491ef8887a
-      EXPECTED_DISCOVERY_SCHEMA_SHA256: f94fcb3d45b2754d53d16466b6a8c2867fc4e5b8bc1b321876249b751e8a8515
+      EXPECTED_TEST_SHA256: fc38500a7c0484ba4c73c3f37873942f35044db2765f241fb7fe4b4818186527
+      EXPECTED_DISCOVERY_SCHEMA_SHA256: e4d1f6c329629afcb37d19b7005f9138937db626a9dcfefd202771724023fd44
       SOURCE_AUTHORING_ANCHOR: 450b33c5963ba2b202e923b52cbc47a9b11d6db7
       F7B0_AUTHORING_TASK_SHA256: fb03ded3feeb76610a04ff25cec3aa1acdc5c1048ce7adb7852d6510933571a2
-      F7B1_HOSTED_AUTHORIZATION_SHA256: 4bb0e43fa71714b2bdbc31d474fc2903db7c39ecdab3600403681feb66125535
+      F7B3_HOSTED_AUTHORIZATION_SHA256: 498de71c3b285b41636e415f36dbeca9346998167e4ac253a17a69ced86b0215
 
     steps:
       - name: Reject mismatched discovery context before checkout
@@ -102,7 +102,7 @@ jobs:
           [[ "${EXPECTED_DISCOVERY_SCHEMA_SHA256}" =~ ^[0-9a-f]{64}$ ]]
           [[ "${SOURCE_AUTHORING_ANCHOR}" =~ ^[0-9a-f]{40}$ ]]
           [[ "${F7B0_AUTHORING_TASK_SHA256}" =~ ^[0-9a-f]{64}$ ]]
-          [[ "${F7B1_HOSTED_AUTHORIZATION_SHA256}" =~ ^[0-9a-f]{64}$ ]]
+          [[ "${F7B3_HOSTED_AUTHORIZATION_SHA256}" =~ ^[0-9a-f]{64}$ ]]
 
       - name: Check out exact discovery head without credentials
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -359,8 +359,8 @@ jobs:
             --implementation-commit "${EXPECTED_HEAD_SHA}" \
             --source-authoring-anchor "${SOURCE_AUTHORING_ANCHOR}" \
             --f7b0-authoring-task-sha256 "${F7B0_AUTHORING_TASK_SHA256}" \
-            --f7b1-hosted-authorization-sha256 \
-              "${F7B1_HOSTED_AUTHORIZATION_SHA256}" \
+            --f7b3-hosted-authorization-sha256 \
+              "${F7B3_HOSTED_AUTHORIZATION_SHA256}" \
             --evidence-dir "${P0_V2_DISCOVERY_EVIDENCE_DIR}" \
             --evidence-uid 0 \
             --evidence-gid 0
@@ -395,7 +395,7 @@ jobs:
             "${EXPECTED_DISCOVERY_SCHEMA_SHA256}" \
             "${SOURCE_AUTHORING_ANCHOR}" \
             "${F7B0_AUTHORING_TASK_SHA256}" \
-            "${F7B1_HOSTED_AUTHORIZATION_SHA256}" <<'PY'
+            "${F7B3_HOSTED_AUTHORIZATION_SHA256}" <<'PY'
           import hashlib
           import json
           import os
@@ -420,7 +420,7 @@ jobs:
               discovery_schema_sha256,
               source_anchor,
               f7b0_sha256,
-              f7b1_sha256,
+              f7b3_sha256,
           ) = sys.argv[1:]
 
           def reject_duplicates(pairs):
@@ -535,13 +535,14 @@ jobs:
               "implementation_commit": head_sha,
               "source_authoring_anchor": source_anchor,
               "f7b0_authoring_task_sha256": f7b0_sha256,
-              "f7b1_hosted_authorization_sha256": f7b1_sha256,
+              "f7b3_hosted_authorization_sha256": f7b3_sha256,
           }
           for key, expected in expected_source.items():
               if source.get(key) != expected:
                   raise SystemExit(f"source mismatch: {key}")
           if (
-              evidence["evidence_kind"]
+              evidence["schema_version"] != "2.0.0"
+              or evidence["evidence_kind"]
               != "p0-v2-runner-feasibility-discovery"
               or evidence["mode"] != "hosted_discovery"
               or evidence["outcome"] != "DISCOVERY_ONLY"
@@ -554,6 +555,152 @@ jobs:
               range(9)
           ):
               raise SystemExit("non-canonical discovery sequence")
+          expected_surfaces = [
+              "runner_image",
+              "kernel",
+              "systemd",
+              "cgroup_topology",
+              "mountinfo_topology",
+              "bpf_prog_query",
+              "device_nodes",
+              "executable_abis",
+              "field_availability",
+          ]
+          if [
+              item.get("surface") for item in evidence["records"]
+          ] != expected_surfaces:
+              raise SystemExit("non-canonical discovery surfaces")
+          field_value = evidence["records"][8].get("value")
+          expected_root_observations = [
+              {
+                  "name": "cgroup.controllers",
+                  "path": "/sys/fs/cgroup/cgroup.controllers",
+                  "scope": "observed_cgroup2_mount_root",
+                  "access": "read_only",
+                  "attempted": True,
+                  "available": True,
+                  "errno": None,
+              },
+              {
+                  "name": "cgroup.subtree_control",
+                  "path": "/sys/fs/cgroup/cgroup.subtree_control",
+                  "scope": "observed_cgroup2_mount_root",
+                  "access": "read_only",
+                  "attempted": True,
+                  "available": True,
+                  "errno": None,
+              },
+              {
+                  "name": "etc.os-release",
+                  "path": "/etc/os-release",
+                  "scope": "observed_filesystem_root",
+                  "access": "read_only",
+                  "attempted": True,
+                  "available": True,
+                  "errno": None,
+              },
+              {
+                  "name": "kernel.core_pattern",
+                  "path": "/proc/sys/kernel/core_pattern",
+                  "scope": "observed_procfs_namespace",
+                  "access": "read_only",
+                  "attempted": True,
+                  "available": True,
+                  "errno": None,
+              },
+              {
+                  "name": "proc.cgroup",
+                  "path": "/proc/self/cgroup",
+                  "scope": "observed_procfs_namespace",
+                  "access": "read_only",
+                  "attempted": True,
+                  "available": True,
+                  "errno": None,
+              },
+              {
+                  "name": "proc.mountinfo",
+                  "path": "/proc/self/mountinfo",
+                  "scope": "observed_procfs_namespace",
+                  "access": "read_only",
+                  "attempted": True,
+                  "available": True,
+                  "errno": None,
+              },
+              {
+                  "name": "proc.status",
+                  "path": "/proc/self/status",
+                  "scope": "observed_procfs_namespace",
+                  "access": "read_only",
+                  "attempted": True,
+                  "available": True,
+                  "errno": None,
+              },
+          ]
+          expected_deferred_surfaces = [
+              {
+                  "name": "cgroup.events",
+                  "scope": "future_identity_bound_non_root_cgroup",
+                  "disposition": "non_root_read_deferred",
+                  "reason": "kernel_non_root_interface",
+                  "controller": None,
+                  "attempted": False,
+                  "future_availability_claim": "none",
+                  "proof_eligible": False,
+              },
+              {
+                  "name": "cgroup.kill",
+                  "scope": "future_identity_bound_non_root_cgroup",
+                  "disposition": "non_root_destructive_deferred",
+                  "reason": (
+                      "write_only_kill_authority_requires_identity_bound_runtime"
+                  ),
+                  "controller": None,
+                  "attempted": False,
+                  "future_availability_claim": "none",
+                  "proof_eligible": False,
+              },
+              {
+                  "name": "cpu.max",
+                  "scope": "future_identity_bound_non_root_cgroup",
+                  "disposition": "non_root_controller_deferred",
+                  "reason": (
+                      "controller_interface_requires_identity_bound_runtime"
+                  ),
+                  "controller": "cpu",
+                  "attempted": False,
+                  "future_availability_claim": "none",
+                  "proof_eligible": False,
+              },
+              {
+                  "name": "memory.events",
+                  "scope": "future_identity_bound_non_root_cgroup",
+                  "disposition": "non_root_controller_deferred",
+                  "reason": (
+                      "controller_interface_requires_identity_bound_runtime"
+                  ),
+                  "controller": "memory",
+                  "attempted": False,
+                  "future_availability_claim": "none",
+                  "proof_eligible": False,
+              },
+              {
+                  "name": "memory.oom.group",
+                  "scope": "future_identity_bound_non_root_cgroup",
+                  "disposition": "non_root_controller_deferred",
+                  "reason": (
+                      "controller_interface_requires_identity_bound_runtime"
+                  ),
+                  "controller": "memory",
+                  "attempted": False,
+                  "future_availability_claim": "none",
+                  "proof_eligible": False,
+              },
+          ]
+          if field_value != {
+              "root_observations": expected_root_observations,
+              "deferred_surfaces": expected_deferred_surfaces,
+          }:
+              raise SystemExit("field availability model mismatch")
           if any(
               item.get("proof_eligible") is not False
               for item in evidence["future_witnesses"]

@@ -38,6 +38,7 @@ from typing import Any, Dict, Iterable, List, Mapping, MutableMapping, Optional,
 
 
 SCHEMA_VERSION = "1.0.0"
+DISCOVERY_SCHEMA_VERSION = "2.0.0"
 EVIDENCE_KIND = "p0-v2-runner-feasibility-candidate"
 CANDIDATE_NOTICE = (
     "candidate evidence only; an independent reviewer owns the GATE1_* decision"
@@ -112,8 +113,8 @@ DISCOVERY_SOURCE_AUTHORING_ANCHOR = (
 DISCOVERY_F7B0_AUTHORING_TASK_SHA256 = (
     "fb03ded3feeb76610a04ff25cec3aa1acdc5c1048ce7adb7852d6510933571a2"
 )
-DISCOVERY_F7B1_HOSTED_AUTHORIZATION_SHA256 = (
-    "4bb0e43fa71714b2bdbc31d474fc2903db7c39ecdab3600403681feb66125535"
+DISCOVERY_F7B3_HOSTED_AUTHORIZATION_SHA256 = (
+    "498de71c3b285b41636e415f36dbeca9346998167e4ac253a17a69ced86b0215"
 )
 DISCOVERY_IMAGE_OS_PATTERN = re.compile(r"^ubuntu24$")
 DISCOVERY_IMAGE_VERSION_PATTERN = re.compile(
@@ -321,29 +322,73 @@ LINUX_ERRNO_NAMES = {
 # the fixed producer/UAPI/platform contract was not met; both fail closed.
 DISCOVERY_BPF_PROG_QUERY_ERRNOS = frozenset({1})
 
-# Availability is probed by opening these exact, immutable paths read-only with
-# O_NOFOLLOW. Core procfs, sysctl and cgroup-v2 interface files are mandatory
-# under the already-retained Linux-v6.8/ubuntu-24.04 and live-process state.
-# Only controller-specific files may be absent, and only when their controller
-# is absent from the already-retained cgroup.controllers record.
-DISCOVERY_FIELD_OPEN_ERRNOS = {
-    "cgroup.controllers": frozenset(),
-    "cgroup.events": frozenset(),
-    "cgroup.kill": frozenset(),
-    "cgroup.subtree_control": frozenset(),
-    "cpu.max": frozenset({2}),
-    "etc.os-release": frozenset(),
-    "kernel.core_pattern": frozenset(),
-    "memory.events": frozenset({2}),
-    "memory.oom.group": frozenset({2}),
-    "proc.cgroup": frozenset(),
-    "proc.mountinfo": frozenset(),
-    "proc.status": frozenset(),
+# Root discovery and later runtime authority are separate trust domains.
+# Linux exposes cgroup.events, cgroup.kill and controller interface files only
+# on non-root cgroups.  Root discovery therefore records only exact
+# root-applicable observations.  Non-root interfaces are closed, static
+# declarations whose availability remains unclaimed until a later
+# identity-bound runtime canary creates and binds a concrete child cgroup.
+DISCOVERY_ROOT_FIELD_MODEL = {
+    "cgroup.controllers": {
+        "path": "/sys/fs/cgroup/cgroup.controllers",
+        "scope": "observed_cgroup2_mount_root",
+    },
+    "cgroup.subtree_control": {
+        "path": "/sys/fs/cgroup/cgroup.subtree_control",
+        "scope": "observed_cgroup2_mount_root",
+    },
+    "etc.os-release": {
+        "path": "/etc/os-release",
+        "scope": "observed_filesystem_root",
+    },
+    "kernel.core_pattern": {
+        "path": "/proc/sys/kernel/core_pattern",
+        "scope": "observed_procfs_namespace",
+    },
+    "proc.cgroup": {
+        "path": "/proc/self/cgroup",
+        "scope": "observed_procfs_namespace",
+    },
+    "proc.mountinfo": {
+        "path": "/proc/self/mountinfo",
+        "scope": "observed_procfs_namespace",
+    },
+    "proc.status": {
+        "path": "/proc/self/status",
+        "scope": "observed_procfs_namespace",
+    },
 }
-DISCOVERY_CONTROLLER_GATED_FIELDS = {
-    "cpu.max": "cpu",
-    "memory.events": "memory",
-    "memory.oom.group": "memory",
+DISCOVERY_DEFERRED_SURFACE_MODEL = {
+    "cgroup.events": {
+        "scope": "future_identity_bound_non_root_cgroup",
+        "disposition": "non_root_read_deferred",
+        "reason": "kernel_non_root_interface",
+        "controller": None,
+    },
+    "cgroup.kill": {
+        "scope": "future_identity_bound_non_root_cgroup",
+        "disposition": "non_root_destructive_deferred",
+        "reason": "write_only_kill_authority_requires_identity_bound_runtime",
+        "controller": None,
+    },
+    "cpu.max": {
+        "scope": "future_identity_bound_non_root_cgroup",
+        "disposition": "non_root_controller_deferred",
+        "reason": "controller_interface_requires_identity_bound_runtime",
+        "controller": "cpu",
+    },
+    "memory.events": {
+        "scope": "future_identity_bound_non_root_cgroup",
+        "disposition": "non_root_controller_deferred",
+        "reason": "controller_interface_requires_identity_bound_runtime",
+        "controller": "memory",
+    },
+    "memory.oom.group": {
+        "scope": "future_identity_bound_non_root_cgroup",
+        "disposition": "non_root_controller_deferred",
+        "reason": "controller_interface_requires_identity_bound_runtime",
+        "controller": "memory",
+    },
 }
 DISCOVERY_UUID4_HEX_PATTERN = re.compile(
     r"^[0-9a-f]{12}4[0-9a-f]{3}[89ab][0-9a-f]{15}$"
@@ -2426,23 +2471,79 @@ _DISCOVERY_VALUE_SCHEMAS: Dict[str, Mapping[str, Any]] = {
     "field_availability": {
         "type": "object",
         "additionalProperties": False,
-        "required": ["fields"],
+        "required": ["root_observations", "deferred_surfaces"],
         "properties": {
-            "fields": {
+            "root_observations": {
                 "type": "array",
                 "maxItems": DISCOVERY_MAX_FIELDS,
                 "items": {
                     "type": "object",
                     "additionalProperties": False,
-                    "required": ["name", "path", "available", "errno"],
+                    "required": [
+                        "name",
+                        "path",
+                        "scope",
+                        "access",
+                        "attempted",
+                        "available",
+                        "errno",
+                    ],
                     "properties": {
                         "name": {
                             "type": "string",
                             "pattern": "^[a-z][a-z0-9_.-]*$",
                         },
                         "path": _DISCOVERY_TEXT,
-                        "available": {"type": "boolean"},
-                        "errno": {"type": ["null", "integer"], "minimum": 1},
+                        "scope": {
+                            "enum": [
+                                "observed_cgroup2_mount_root",
+                                "observed_filesystem_root",
+                                "observed_procfs_namespace",
+                            ]
+                        },
+                        "access": {"const": "read_only"},
+                        "attempted": {"const": True},
+                        "available": {"const": True},
+                        "errno": {"const": None},
+                    },
+                },
+            },
+            "deferred_surfaces": {
+                "type": "array",
+                "maxItems": DISCOVERY_MAX_FIELDS,
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": [
+                        "name",
+                        "scope",
+                        "disposition",
+                        "reason",
+                        "controller",
+                        "attempted",
+                        "future_availability_claim",
+                        "proof_eligible",
+                    ],
+                    "properties": {
+                        "name": {
+                            "type": "string",
+                            "pattern": "^[a-z][a-z0-9_.-]*$",
+                        },
+                        "scope": {
+                            "const": "future_identity_bound_non_root_cgroup"
+                        },
+                        "disposition": {
+                            "enum": [
+                                "non_root_read_deferred",
+                                "non_root_controller_deferred",
+                                "non_root_destructive_deferred",
+                            ]
+                        },
+                        "reason": _DISCOVERY_TEXT,
+                        "controller": {"enum": [None, "cpu", "memory"]},
+                        "attempted": {"const": False},
+                        "future_availability_claim": {"const": "none"},
+                        "proof_eligible": {"const": False},
                     },
                 },
             }
@@ -2470,7 +2571,7 @@ DISCOVERY_SCHEMA: Mapping[str, Any] = {
         "errors",
     ],
     "properties": {
-        "schema_version": {"const": SCHEMA_VERSION},
+        "schema_version": {"const": DISCOVERY_SCHEMA_VERSION},
         "evidence_kind": {"const": DISCOVERY_EVIDENCE_KIND},
         "discovery_notice": {"const": DISCOVERY_NOTICE},
         "mode": {"const": "hosted_discovery"},
@@ -2559,7 +2660,7 @@ DISCOVERY_SCHEMA: Mapping[str, Any] = {
                 "implementation_commit",
                 "source_authoring_anchor",
                 "f7b0_authoring_task_sha256",
-                "f7b1_hosted_authorization_sha256",
+                "f7b3_hosted_authorization_sha256",
             ],
             "properties": {
                 "probe_sha256": _DISCOVERY_HEX64,
@@ -2577,8 +2678,8 @@ DISCOVERY_SCHEMA: Mapping[str, Any] = {
                 "f7b0_authoring_task_sha256": {
                     "const": DISCOVERY_F7B0_AUTHORING_TASK_SHA256,
                 },
-                "f7b1_hosted_authorization_sha256": {
-                    "const": DISCOVERY_F7B1_HOSTED_AUTHORIZATION_SHA256,
+                "f7b3_hosted_authorization_sha256": {
+                    "const": DISCOVERY_F7B3_HOSTED_AUTHORIZATION_SHA256,
                 },
             },
         },
@@ -2713,7 +2814,7 @@ def build_discovery_evidence(
         for index, surface in enumerate(DISCOVERY_SURFACES)
     ]
     return {
-        "schema_version": SCHEMA_VERSION,
+        "schema_version": DISCOVERY_SCHEMA_VERSION,
         "evidence_kind": DISCOVERY_EVIDENCE_KIND,
         "discovery_notice": DISCOVERY_NOTICE,
         "mode": "hosted_discovery",
@@ -3177,44 +3278,44 @@ def validate_discovery_evidence(
         raise ProbeError("DISCOVERY_CONTRADICTION", "runner ABI")
     _require_canonical_unique(binaries, "ABI binaries")
 
-    fields = by_surface["field_availability"]["fields"]
-    if [item["name"] for item in fields] != sorted(item["name"] for item in fields):
-        raise ProbeError("DISCOVERY_NONCANONICAL", "field names")
-    if [(item["name"], item["path"]) for item in fields] != sorted(
-        _DISCOVERY_FIELD_PATHS
-    ):
-        raise ProbeError("DISCOVERY_CONTRADICTION", "field identity")
-    if len({item["name"] for item in fields}) != len(fields):
-        raise ProbeError("DISCOVERY_CONTRADICTION", "duplicate field name")
-    _require_canonical_unique(fields, "field availability")
-    for item in fields:
-        if item["available"] != (item["errno"] is None):
-            raise ProbeError("DISCOVERY_CONTRADICTION", item["name"])
-        if item["errno"] is not None and item["errno"] not in (
-            DISCOVERY_FIELD_OPEN_ERRNOS.get(item["name"], frozenset())
-        ):
-            raise ProbeError("DISCOVERY_CONTRADICTION", f"{item['name']} errno")
-    fields_by_name = {item["name"]: item for item in fields}
-    for name in (
-        "cgroup.controllers",
-        "cgroup.events",
-        "cgroup.kill",
-        "cgroup.subtree_control",
-        "etc.os-release",
-        "kernel.core_pattern",
-        "proc.cgroup",
-        "proc.mountinfo",
-        "proc.status",
-    ):
-        if not fields_by_name[name]["available"]:
-            raise ProbeError("DISCOVERY_CONTRADICTION", f"{name} unavailable")
-    controllers = set(by_surface["cgroup_topology"]["controllers"])
-    for name, controller in DISCOVERY_CONTROLLER_GATED_FIELDS.items():
-        if controller in controllers and not fields_by_name[name]["available"]:
-            raise ProbeError(
-                "DISCOVERY_CONTRADICTION",
-                f"{name} unavailable with {controller} controller",
-            )
+    field_model = by_surface["field_availability"]
+    root_observations = field_model["root_observations"]
+    expected_root_observations = [
+        {
+            "name": name,
+            "path": model["path"],
+            "scope": model["scope"],
+            "access": "read_only",
+            "attempted": True,
+            "available": True,
+            "errno": None,
+        }
+        for name, model in sorted(DISCOVERY_ROOT_FIELD_MODEL.items())
+    ]
+    if root_observations != expected_root_observations:
+        raise ProbeError(
+            "DISCOVERY_CONTRADICTION",
+            "root observation model",
+        )
+    _require_canonical_unique(root_observations, "root observations")
+
+    deferred_surfaces = field_model["deferred_surfaces"]
+    expected_deferred_surfaces = [
+        {
+            "name": name,
+            **model,
+            "attempted": False,
+            "future_availability_claim": "none",
+            "proof_eligible": False,
+        }
+        for name, model in sorted(DISCOVERY_DEFERRED_SURFACE_MODEL.items())
+    ]
+    if deferred_surfaces != expected_deferred_surfaces:
+        raise ProbeError(
+            "DISCOVERY_CONTRADICTION",
+            "deferred surface model",
+        )
+    _require_canonical_unique(deferred_surfaces, "deferred surfaces")
 
     expected_witnesses = [
         {
@@ -4663,19 +4764,9 @@ _DISCOVERY_ABI_CANDIDATES = (
     "/usr/bin/python3",
     "/usr/lib/systemd/systemd",
 )
-_DISCOVERY_FIELD_PATHS = (
-    ("cgroup.controllers", "/sys/fs/cgroup/cgroup.controllers"),
-    ("cgroup.events", "/sys/fs/cgroup/cgroup.events"),
-    ("cgroup.kill", "/sys/fs/cgroup/cgroup.kill"),
-    ("cgroup.subtree_control", "/sys/fs/cgroup/cgroup.subtree_control"),
-    ("cpu.max", "/sys/fs/cgroup/cpu.max"),
-    ("etc.os-release", "/etc/os-release"),
-    ("kernel.core_pattern", "/proc/sys/kernel/core_pattern"),
-    ("memory.events", "/sys/fs/cgroup/memory.events"),
-    ("memory.oom.group", "/sys/fs/cgroup/memory.oom.group"),
-    ("proc.cgroup", "/proc/self/cgroup"),
-    ("proc.mountinfo", "/proc/self/mountinfo"),
-    ("proc.status", "/proc/self/status"),
+_DISCOVERY_ROOT_FIELD_PATHS = tuple(
+    (name, model["path"])
+    for name, model in sorted(DISCOVERY_ROOT_FIELD_MODEL.items())
 )
 
 
@@ -4774,32 +4865,16 @@ def discover_executable_abis() -> Dict[str, Any]:
     return {"binaries": sorted(binaries, key=lambda item: item["path"]), "absence_unresolved": True}
 
 
-def discover_field_availability(
-    known_available: Sequence[str] = (),
-    controllers: Sequence[str] = (),
-) -> Dict[str, Any]:
-    known = set(known_available)
-    controller_set = set(controllers)
-    if not known.issubset({name for name, _ in _DISCOVERY_FIELD_PATHS}):
-        raise ProbeError(
-            "DISCOVERY_FIELD_IDENTITY_INVALID",
-            "unknown known-available field",
-        )
-    if any(
-        not isinstance(controller, str) or not controller
-        for controller in controller_set
-    ):
-        raise ProbeError(
-            "DISCOVERY_FIELD_IDENTITY_INVALID",
-            "invalid controller identity",
-        )
-    fields: List[Dict[str, Any]] = []
-    for name, raw_path in _DISCOVERY_FIELD_PATHS:
-        if name in known:
-            fields.append(
-                {"name": name, "path": raw_path, "available": True, "errno": None}
-            )
-            continue
+def discover_field_availability() -> Dict[str, Any]:
+    """Observe only root-applicable fields and explicitly defer every
+    non-root-only surface.
+
+    Deferred entries are declarations, not probes: in particular no discovery
+    code path opens, stats, or writes cgroup.kill.  Actual child-cgroup
+    availability remains a later identity-bound runtime fact.
+    """
+    root_observations: List[Dict[str, Any]] = []
+    for name, raw_path in _DISCOVERY_ROOT_FIELD_PATHS:
         path = Path(raw_path)
         try:
             fd = os.open(
@@ -4808,32 +4883,37 @@ def discover_field_availability(
             )
         except OSError as exc:
             code = exc.errno or errno.EIO
-            required_controller = DISCOVERY_CONTROLLER_GATED_FIELDS.get(name)
-            if (
-                code not in DISCOVERY_FIELD_OPEN_ERRNOS[name]
-                or (
-                    required_controller is not None
-                    and required_controller in controller_set
-                )
-            ):
-                raise ProbeError(
-                    "DISCOVERY_FIELD_ERRNO_IMPOSSIBLE",
-                    f"{name}:{code}",
-                ) from exc
-            fields.append(
+            raise ProbeError(
+                "DISCOVERY_ROOT_FIELD_UNAVAILABLE",
+                f"{name}:{code}",
+            ) from exc
+        else:
+            os.close(fd)
+            root_observations.append(
                 {
                     "name": name,
                     "path": raw_path,
-                    "available": False,
-                    "errno": code,
+                    "scope": DISCOVERY_ROOT_FIELD_MODEL[name]["scope"],
+                    "access": "read_only",
+                    "attempted": True,
+                    "available": True,
+                    "errno": None,
                 }
             )
-        else:
-            os.close(fd)
-            fields.append(
-                {"name": name, "path": raw_path, "available": True, "errno": None}
-            )
-    return {"fields": sorted(fields, key=lambda item: item["name"])}
+    deferred_surfaces = [
+        {
+            "name": name,
+            **model,
+            "attempted": False,
+            "future_availability_claim": "none",
+            "proof_eligible": False,
+        }
+        for name, model in sorted(DISCOVERY_DEFERRED_SURFACE_MODEL.items())
+    ]
+    return {
+        "root_observations": root_observations,
+        "deferred_surfaces": deferred_surfaces,
+    }
 
 
 def collect_discovery_values(args: argparse.Namespace) -> Dict[str, Mapping[str, Any]]:
@@ -4903,15 +4983,7 @@ def collect_discovery_values(args: argparse.Namespace) -> Dict[str, Mapping[str,
         "bpf_prog_query": discover_bpf_prog_query(),
         "device_nodes": discover_device_nodes(),
         "executable_abis": discover_executable_abis(),
-        "field_availability": discover_field_availability(
-            (
-                "cgroup.controllers",
-                "etc.os-release",
-                "proc.cgroup",
-                "proc.mountinfo",
-            ),
-            controllers,
-        ),
+        "field_availability": discover_field_availability(),
     }
 
 
@@ -4948,7 +5020,7 @@ def discovery(args: argparse.Namespace) -> int:
         validate_sha40(name, getattr(args, name))
     for name in (
         "f7b0_authoring_task_sha256",
-        "f7b1_hosted_authorization_sha256",
+        "f7b3_hosted_authorization_sha256",
     ):
         if not SHA64_RE.fullmatch(getattr(args, name)):
             raise ProbeError("INVALID_INPUT", name)
@@ -4957,8 +5029,8 @@ def discovery(args: argparse.Namespace) -> int:
         or args.source_authoring_anchor != DISCOVERY_SOURCE_AUTHORING_ANCHOR
         or args.f7b0_authoring_task_sha256
         != DISCOVERY_F7B0_AUTHORING_TASK_SHA256
-        or args.f7b1_hosted_authorization_sha256
-        != DISCOVERY_F7B1_HOSTED_AUTHORIZATION_SHA256
+        or args.f7b3_hosted_authorization_sha256
+        != DISCOVERY_F7B3_HOSTED_AUTHORIZATION_SHA256
     ):
         raise ProbeError("DISCOVERY_IDENTITY_MISMATCH", "authority provenance")
     if not args.image_os or not args.image_version or not args.image_release:
@@ -5007,8 +5079,8 @@ def discovery(args: argparse.Namespace) -> int:
         "implementation_commit": args.implementation_commit,
         "source_authoring_anchor": args.source_authoring_anchor,
         "f7b0_authoring_task_sha256": args.f7b0_authoring_task_sha256,
-        "f7b1_hosted_authorization_sha256": (
-            args.f7b1_hosted_authorization_sha256
+        "f7b3_hosted_authorization_sha256": (
+            args.f7b3_hosted_authorization_sha256
         ),
     }
     evidence = build_discovery_evidence(
@@ -9311,7 +9383,7 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         "implementation-commit",
         "source-authoring-anchor",
         "f7b0-authoring-task-sha256",
-        "f7b1-hosted-authorization-sha256",
+        "f7b3-hosted-authorization-sha256",
         "evidence-dir",
     ):
         discover.add_argument(f"--{name}", required=True)

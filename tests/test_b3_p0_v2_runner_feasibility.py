@@ -1410,19 +1410,19 @@ class WorkflowTests(unittest.TestCase):
                 if line.startswith(prefix)
             ]
             self.assertEqual([hashlib.sha256(path.read_bytes()).hexdigest()], values)
-        authorization_prefix = "      F7B1_HOSTED_AUTHORIZATION_SHA256: "
+        authorization_prefix = "      F7B3_HOSTED_AUTHORIZATION_SHA256: "
         authorization_values = [
             line.removeprefix(authorization_prefix)
             for line in discovery_env.splitlines()
             if line.startswith(authorization_prefix)
         ]
         self.assertEqual(
-            [probe.DISCOVERY_F7B1_HOSTED_AUTHORIZATION_SHA256],
+            [probe.DISCOVERY_F7B3_HOSTED_AUTHORIZATION_SHA256],
             authorization_values,
         )
         self.assertEqual(
-            "4bb0e43fa71714b2bdbc31d474fc2903db7c39ecdab3600403681feb66125535",
-            probe.DISCOVERY_F7B1_HOSTED_AUTHORIZATION_SHA256,
+            "498de71c3b285b41636e415f36dbeca9346998167e4ac253a17a69ced86b0215",
+            probe.DISCOVERY_F7B3_HOSTED_AUTHORIZATION_SHA256,
         )
 
     def test_exact_pr_head_is_checked_out_without_credentials(self):
@@ -5628,15 +5628,32 @@ def _discovery_values(*, abi_present=True, bpf_success=True):
             "absence_unresolved": True,
         },
         "field_availability": {
-            "fields": [
+            "root_observations": [
                 {
                     "name": name,
-                    "path": path,
+                    "path": model["path"],
+                    "scope": model["scope"],
+                    "access": "read_only",
+                    "attempted": True,
                     "available": True,
                     "errno": None,
                 }
-                for name, path in probe._DISCOVERY_FIELD_PATHS
-            ]
+                for name, model in sorted(
+                    probe.DISCOVERY_ROOT_FIELD_MODEL.items()
+                )
+            ],
+            "deferred_surfaces": [
+                {
+                    "name": name,
+                    **model,
+                    "attempted": False,
+                    "future_availability_claim": "none",
+                    "proof_eligible": False,
+                }
+                for name, model in sorted(
+                    probe.DISCOVERY_DEFERRED_SURFACE_MODEL.items()
+                )
+            ],
         },
     }
 
@@ -5688,8 +5705,8 @@ def _discovery_evidence(*, abi_present=True, bpf_success=True):
             "f7b0_authoring_task_sha256": (
                 probe.DISCOVERY_F7B0_AUTHORING_TASK_SHA256
             ),
-            "f7b1_hosted_authorization_sha256": (
-                probe.DISCOVERY_F7B1_HOSTED_AUTHORIZATION_SHA256
+            "f7b3_hosted_authorization_sha256": (
+                probe.DISCOVERY_F7B3_HOSTED_AUTHORIZATION_SHA256
             ),
         },
         values=_discovery_values(
@@ -5712,7 +5729,7 @@ def _standalone_discovery_validator_path():
         return Path(configured)
     workspace_copy = (
         REPO_ROOT.parents[1]
-        / "artifacts/issue-70-p0-v2-f7b1-independent-discovery-validator.py"
+        / "artifacts/issue-70-p0-v2-f7b3-independent-discovery-validator.py"
     )
     return workspace_copy
 
@@ -5782,8 +5799,8 @@ def _standalone_validator_argv(validator_path, archive_path, evidence):
         source["source_authoring_anchor"],
         "--f7b0-authoring-task-sha256",
         source["f7b0_authoring_task_sha256"],
-        "--f7b1-hosted-authorization-sha256",
-        source["f7b1_hosted_authorization_sha256"],
+        "--f7b3-hosted-authorization-sha256",
+        source["f7b3_hosted_authorization_sha256"],
     ]
 
 
@@ -6016,7 +6033,7 @@ class ProofIneligibleDiscoveryContractTests(unittest.TestCase):
             with self.assertRaises(probe.ProbeError) as caught:
                 probe.discover_field_availability()
             self.assertEqual(
-                "DISCOVERY_FIELD_ERRNO_IMPOSSIBLE",
+                "DISCOVERY_ROOT_FIELD_UNAVAILABLE",
                 caught.exception.code,
             )
 
@@ -6032,25 +6049,46 @@ class ProofIneligibleDiscoveryContractTests(unittest.TestCase):
             with self.assertRaises(probe.ProbeError) as caught:
                 probe.discover_field_availability()
             self.assertEqual(
-                "DISCOVERY_FIELD_ERRNO_IMPOSSIBLE",
+                "DISCOVERY_ROOT_FIELD_UNAVAILABLE",
                 caught.exception.code,
             )
 
-        def missing_cpu_max(path, flags):
-            if str(path) == "/sys/fs/cgroup/cpu.max":
-                raise FileNotFoundError(errno.ENOENT, "impossible", str(path))
+        opened_paths = []
+
+        def root_only_open(path, flags):
+            opened_paths.append(str(path))
             return 123
 
         with (
-            mock.patch.object(probe.os, "open", side_effect=missing_cpu_max),
+            mock.patch.object(probe.os, "open", side_effect=root_only_open),
             mock.patch.object(probe.os, "close"),
         ):
-            with self.assertRaises(probe.ProbeError) as caught:
-                probe.discover_field_availability(controllers=("cpu",))
-            self.assertEqual(
-                "DISCOVERY_FIELD_ERRNO_IMPOSSIBLE",
-                caught.exception.code,
+            observed = probe.discover_field_availability()
+        self.assertEqual(
+            [path for _, path in probe._DISCOVERY_ROOT_FIELD_PATHS],
+            opened_paths,
+        )
+        self.assertNotIn("/sys/fs/cgroup/cgroup.events", opened_paths)
+        self.assertNotIn("/sys/fs/cgroup/cgroup.kill", opened_paths)
+        self.assertNotIn("/sys/fs/cgroup/cpu.max", opened_paths)
+        self.assertEqual(
+            [
+                "cgroup.events",
+                "cgroup.kill",
+                "cpu.max",
+                "memory.events",
+                "memory.oom.group",
+            ],
+            [item["name"] for item in observed["deferred_surfaces"]],
+        )
+        self.assertTrue(
+            all(
+                item["attempted"] is False
+                and item["future_availability_claim"] == "none"
+                and item["proof_eligible"] is False
+                for item in observed["deferred_surfaces"]
             )
+        )
 
     def test_mount_cgroup_device_abi_and_field_shapes_fail_closed(self):
         cgroup = _discovery_evidence()
@@ -6095,7 +6133,7 @@ class ProofIneligibleDiscoveryContractTests(unittest.TestCase):
             for item in field["records"]
             if item["surface"] == "field_availability"
         )
-        record["value"]["fields"][0]["available"] = False
+        record["value"]["root_observations"][0]["available"] = False
         _refresh_discovery_record(field, "field_availability")
         self.assertDiscoveryInvalid(field)
 
@@ -6137,14 +6175,14 @@ class ProofIneligibleDiscoveryContractTests(unittest.TestCase):
             value["source"]["f7b0_authoring_task_sha256"],
         )
         self.assertEqual(
-            probe.DISCOVERY_F7B1_HOSTED_AUTHORIZATION_SHA256,
-            value["source"]["f7b1_hosted_authorization_sha256"],
+            probe.DISCOVERY_F7B3_HOSTED_AUTHORIZATION_SHA256,
+            value["source"]["f7b3_hosted_authorization_sha256"],
         )
         for key in (
             "implementation_commit",
             "source_authoring_anchor",
             "f7b0_authoring_task_sha256",
-            "f7b1_hosted_authorization_sha256",
+            "f7b3_hosted_authorization_sha256",
         ):
             changed = _discovery_evidence()
             changed["source"][key] = (
@@ -6477,25 +6515,88 @@ class ProofIneligibleDiscoveryContractTests(unittest.TestCase):
 
         def contradictory_field(value):
             record = _refresh_discovery_record(value, "field_availability")
-            record["value"]["fields"][0]["available"] = False
+            record["value"]["root_observations"][0]["available"] = False
             _refresh_discovery_record(value, "field_availability")
 
         def empty_fields(value):
             record = _refresh_discovery_record(value, "field_availability")
-            record["value"]["fields"] = []
+            record["value"]["root_observations"] = []
             _refresh_discovery_record(value, "field_availability")
 
         def wrong_field_path(value):
             record = _refresh_discovery_record(value, "field_availability")
-            record["value"]["fields"][0]["path"] = "/tmp/not-the-field"
+            record["value"]["root_observations"][0]["path"] = (
+                "/tmp/not-the-field"
+            )
             _refresh_discovery_record(value, "field_availability")
 
         def duplicate_field_name(value):
             record = _refresh_discovery_record(value, "field_availability")
-            duplicate = dict(record["value"]["fields"][0])
+            duplicate = dict(record["value"]["root_observations"][0])
             duplicate["path"] = "/tmp/conflicting"
-            record["value"]["fields"].insert(1, duplicate)
+            record["value"]["root_observations"].insert(1, duplicate)
             _refresh_discovery_record(value, "field_availability")
+
+        def wrong_root_scope(value):
+            record = _refresh_discovery_record(value, "field_availability")
+            record["value"]["root_observations"][0]["scope"] = (
+                "observed_procfs_namespace"
+            )
+            _refresh_discovery_record(value, "field_availability")
+
+        def wrong_root_access(value):
+            record = _refresh_discovery_record(value, "field_availability")
+            record["value"]["root_observations"][0]["access"] = "read_write"
+            _refresh_discovery_record(value, "field_availability")
+
+        def unattempted_root_observation(value):
+            record = _refresh_discovery_record(value, "field_availability")
+            record["value"]["root_observations"][0]["attempted"] = False
+            _refresh_discovery_record(value, "field_availability")
+
+        def deferred_available_true(value):
+            record = _refresh_discovery_record(value, "field_availability")
+            record["value"]["deferred_surfaces"][0]["available"] = True
+            _refresh_discovery_record(value, "field_availability")
+
+        def deferred_available_false(value):
+            record = _refresh_discovery_record(value, "field_availability")
+            record["value"]["deferred_surfaces"][0]["available"] = False
+            _refresh_discovery_record(value, "field_availability")
+
+        def wrong_deferred_scope(value):
+            record = _refresh_discovery_record(value, "field_availability")
+            record["value"]["deferred_surfaces"][0]["scope"] = (
+                "observed_cgroup2_mount_root"
+            )
+            _refresh_discovery_record(value, "field_availability")
+
+        def wrong_deferred_disposition(value):
+            record = _refresh_discovery_record(value, "field_availability")
+            record["value"]["deferred_surfaces"][0]["disposition"] = (
+                "non_root_controller_deferred"
+            )
+            _refresh_discovery_record(value, "field_availability")
+
+        def missing_deferred_surface(value):
+            record = _refresh_discovery_record(value, "field_availability")
+            record["value"]["deferred_surfaces"].pop()
+            _refresh_discovery_record(value, "field_availability")
+
+        def duplicate_deferred_surface(value):
+            record = _refresh_discovery_record(value, "field_availability")
+            record["value"]["deferred_surfaces"].append(
+                dict(record["value"]["deferred_surfaces"][0])
+            )
+            _refresh_discovery_record(value, "field_availability")
+
+        def unknown_deferred_surface(value):
+            record = _refresh_discovery_record(value, "field_availability")
+            record["value"]["deferred_surfaces"][0]["name"] = "io.max"
+            _refresh_discovery_record(value, "field_availability")
+
+        def old_discovery_schema_version(value):
+            value["schema_version"] = "1.0.0"
 
         def errno_name_mismatch(value):
             record = _refresh_discovery_record(value, "bpf_prog_query")
@@ -6556,8 +6657,7 @@ class ProofIneligibleDiscoveryContractTests(unittest.TestCase):
 
         def unknown_field_errno(value):
             record = _refresh_discovery_record(value, "field_availability")
-            field = record["value"]["fields"][0]
-            field["available"] = False
+            field = record["value"]["deferred_surfaces"][0]
             field["errno"] = 999999
             _refresh_discovery_record(value, "field_availability")
 
@@ -6565,10 +6665,9 @@ class ProofIneligibleDiscoveryContractTests(unittest.TestCase):
             record = _refresh_discovery_record(value, "field_availability")
             field = next(
                 item
-                for item in record["value"]["fields"]
+                for item in record["value"]["deferred_surfaces"]
                 if item["name"] == "cgroup.events"
             )
-            field["available"] = False
             field["errno"] = 133
             _refresh_discovery_record(value, "field_availability")
 
@@ -6576,7 +6675,7 @@ class ProofIneligibleDiscoveryContractTests(unittest.TestCase):
             record = _refresh_discovery_record(value, "field_availability")
             field = next(
                 item
-                for item in record["value"]["fields"]
+                for item in record["value"]["root_observations"]
                 if item["name"] == "proc.status"
             )
             field["available"] = False
@@ -6587,22 +6686,20 @@ class ProofIneligibleDiscoveryContractTests(unittest.TestCase):
             record = _refresh_discovery_record(value, "field_availability")
             field = next(
                 item
-                for item in record["value"]["fields"]
+                for item in record["value"]["deferred_surfaces"]
                 if item["name"] == "cpu.max"
             )
-            field["available"] = False
-            field["errno"] = errno.ENOENT
+            field["attempted"] = True
             _refresh_discovery_record(value, "field_availability")
 
         def impossible_memory_events_with_controller(value):
             record = _refresh_discovery_record(value, "field_availability")
             field = next(
                 item
-                for item in record["value"]["fields"]
+                for item in record["value"]["deferred_surfaces"]
                 if item["name"] == "memory.events"
             )
-            field["available"] = False
-            field["errno"] = errno.ENOENT
+            field["controller"] = "cpu"
             _refresh_discovery_record(value, "field_availability")
 
         def contradictory_os_release(value):
@@ -6630,7 +6727,7 @@ class ProofIneligibleDiscoveryContractTests(unittest.TestCase):
             record = _refresh_discovery_record(value, "field_availability")
             field = next(
                 item
-                for item in record["value"]["fields"]
+                for item in record["value"]["root_observations"]
                 if item["name"] == "proc.mountinfo"
             )
             field["available"] = False
@@ -6639,7 +6736,7 @@ class ProofIneligibleDiscoveryContractTests(unittest.TestCase):
 
         def contradictory_read_field_availability(value):
             record = _refresh_discovery_record(value, "field_availability")
-            for field in record["value"]["fields"]:
+            for field in record["value"]["root_observations"]:
                 if field["name"] in {"etc.os-release", "proc.cgroup"}:
                     field["available"] = False
                     field["errno"] = errno.ENOENT
@@ -7163,6 +7260,17 @@ class ProofIneligibleDiscoveryContractTests(unittest.TestCase):
             "empty_fields": empty_fields,
             "wrong_field_path": wrong_field_path,
             "duplicate_field_name": duplicate_field_name,
+            "wrong_root_scope": wrong_root_scope,
+            "wrong_root_access": wrong_root_access,
+            "unattempted_root_observation": unattempted_root_observation,
+            "deferred_available_true": deferred_available_true,
+            "deferred_available_false": deferred_available_false,
+            "wrong_deferred_scope": wrong_deferred_scope,
+            "wrong_deferred_disposition": wrong_deferred_disposition,
+            "missing_deferred_surface": missing_deferred_surface,
+            "duplicate_deferred_surface": duplicate_deferred_surface,
+            "unknown_deferred_surface": unknown_deferred_surface,
+            "old_discovery_schema_version": old_discovery_schema_version,
             "empty_kernel_identity": empty_kernel_identity,
             "oversized_kernel_uts_identity": oversized_kernel_uts_identity,
             "zero_invocation_uuid": zero_invocation_uuid,
@@ -7306,15 +7414,6 @@ class ProofIneligibleDiscoveryContractTests(unittest.TestCase):
             probe._discovery_raw_base64(b"memory pids\n")
         )
         _refresh_discovery_record(evidence, "cgroup_topology")
-        field_record = _refresh_discovery_record(evidence, "field_availability")
-        optional_field = next(
-            field
-            for field in field_record["value"]["fields"]
-            if field["name"] == "cpu.max"
-        )
-        optional_field["available"] = False
-        optional_field["errno"] = 2
-        _refresh_discovery_record(evidence, "field_availability")
         mount_record = _refresh_discovery_record(
             evidence, "mountinfo_topology"
         )
