@@ -1442,7 +1442,7 @@ class WorkflowTests(unittest.TestCase):
             authorization_values,
         )
         self.assertEqual(
-            "886ee0701e65007ba5306e9cb3f145c46e9cc3e5aa33e13195e344daae3f5129",
+            "796e6bc012b184812d2962a15fb1fe7e8fcd6f17c1a37841ecb0f468ce243a30",
             probe.DISCOVERY_F7B3_HOSTED_AUTHORIZATION_SHA256,
         )
 
@@ -5881,12 +5881,542 @@ def _standalone_validator_argv(validator_path, archive_path, evidence):
     ]
 
 
+def _os_release_stat(
+    file_type,
+    *,
+    inode,
+    uid=0,
+    gid=0,
+    mode=0o644,
+    nlink=1,
+    size=32,
+    mtime_ns=100,
+    ctime_ns=200,
+):
+    return SimpleNamespace(
+        st_dev=7,
+        st_ino=inode,
+        st_mode=file_type | mode,
+        st_uid=uid,
+        st_gid=gid,
+        st_nlink=nlink,
+        st_size=size,
+        st_mtime_ns=mtime_ns,
+        st_ctime_ns=ctime_ns,
+    )
+
+
+class _FakeOsReleaseFdKernel:
+    ROOT_FD = 10
+    ETC_FD = 11
+    USR_FD = 12
+    LIB_FD = 13
+    ETC_CONTENT_FD = 20
+    ETC_VERIFY_FD = 21
+    LINK_FD = 30
+    LINK_VERIFY_FD = 31
+    TARGET_CONTENT_FD = 40
+    TARGET_VERIFY_FD = 41
+
+    def __init__(
+        self,
+        *,
+        layout="relative_alias",
+        raw=b'ID=ubuntu\nVERSION_ID="24.04"\n',
+        link_uid=0,
+        target_type=stat.S_IFREG,
+        target_uid=0,
+        target_mode=0o644,
+        target_nlink=1,
+        target_size=None,
+        bad_directory_fd=None,
+        directory_type=stat.S_IFDIR,
+        directory_uid=0,
+        directory_mode=0o755,
+        directory_nlink=2,
+        mutate_link=False,
+        mutate_target=False,
+        unstable_read=False,
+    ):
+        self.layout = layout
+        self.raw = raw
+        self.path_flag = 0x200000
+        self.link_uid = link_uid
+        self.target_type = target_type
+        self.target_uid = target_uid
+        self.target_mode = target_mode
+        self.target_nlink = target_nlink
+        self.target_size = len(raw) if target_size is None else target_size
+        self.bad_directory_fd = bad_directory_fd
+        self.directory_type = directory_type
+        self.directory_uid = directory_uid
+        self.directory_mode = directory_mode
+        self.directory_nlink = directory_nlink
+        self.mutate_link = mutate_link
+        self.mutate_target = mutate_target
+        self.unstable_read = unstable_read
+        self.offsets = {}
+        self.fstat_counts = {}
+        self.opened = []
+        self.closed = []
+
+    def open(self, path, flags, mode=0o777, *, dir_fd=None):
+        self.opened.append((str(path), flags, dir_fd))
+        if str(path) == "/" and dir_fd is None:
+            return self.ROOT_FD
+        if path == "etc" and dir_fd == self.ROOT_FD:
+            return self.ETC_FD
+        if path == "usr" and dir_fd == self.ROOT_FD:
+            return self.USR_FD
+        if path == "lib" and dir_fd == self.USR_FD:
+            return self.LIB_FD
+        is_path_open = bool(flags & self.path_flag)
+        if path == "os-release" and dir_fd == self.ETC_FD:
+            if self.layout == "relative_alias":
+                if not is_path_open:
+                    raise OSError(errno.ELOOP, "symlink")
+                link_path_opens = sum(
+                    1
+                    for opened_path, opened_flags, opened_dir_fd in self.opened
+                    if opened_path == "os-release"
+                    and opened_dir_fd == self.ETC_FD
+                    and opened_flags & self.path_flag
+                )
+                return (
+                    self.LINK_VERIFY_FD
+                    if link_path_opens >= 2
+                    else self.LINK_FD
+                )
+            return self.ETC_VERIFY_FD if is_path_open else self.ETC_CONTENT_FD
+        if path == "os-release" and dir_fd == self.LIB_FD:
+            return (
+                self.TARGET_VERIFY_FD
+                if is_path_open
+                else self.TARGET_CONTENT_FD
+            )
+        raise AssertionError((path, flags, dir_fd))
+
+    def fstat(self, fd):
+        self.fstat_counts[fd] = self.fstat_counts.get(fd, 0) + 1
+        if fd in {self.ROOT_FD, self.ETC_FD, self.USR_FD, self.LIB_FD}:
+            is_bad = fd == self.bad_directory_fd
+            return _os_release_stat(
+                self.directory_type if is_bad else stat.S_IFDIR,
+                inode=fd,
+                uid=self.directory_uid if is_bad else 0,
+                mode=self.directory_mode if is_bad else 0o755,
+                size=4096,
+                nlink=self.directory_nlink if is_bad else 2,
+            )
+        if fd in {self.LINK_FD, self.LINK_VERIFY_FD}:
+            return _os_release_stat(
+                stat.S_IFLNK,
+                inode=(
+                    999
+                    if fd == self.LINK_VERIFY_FD and self.mutate_link
+                    else 30
+                ),
+                uid=self.link_uid,
+                mode=0o777,
+                size=len(probe._OS_RELEASE_LINK_TEXT),
+            )
+        if fd in {
+            self.ETC_CONTENT_FD,
+            self.ETC_VERIFY_FD,
+            self.TARGET_CONTENT_FD,
+            self.TARGET_VERIFY_FD,
+        }:
+            changed = (
+                self.mutate_target
+                and fd in {self.ETC_VERIFY_FD, self.TARGET_VERIFY_FD}
+            )
+            if (
+                self.unstable_read
+                and fd in {self.ETC_CONTENT_FD, self.TARGET_CONTENT_FD}
+                and self.fstat_counts[fd] > 1
+            ):
+                changed = True
+            return _os_release_stat(
+                self.target_type,
+                inode=401 if changed else 400,
+                uid=self.target_uid,
+                mode=self.target_mode,
+                nlink=self.target_nlink,
+                size=self.target_size,
+                mtime_ns=101 if changed else 100,
+            )
+        raise AssertionError(fd)
+
+    def read(self, fd, size):
+        if fd not in {self.ETC_CONTENT_FD, self.TARGET_CONTENT_FD}:
+            raise AssertionError(fd)
+        offset = self.offsets.get(fd, 0)
+        result = self.raw[offset : offset + size]
+        self.offsets[fd] = offset + len(result)
+        return result
+
+    def close(self, fd):
+        self.closed.append(fd)
+
+
 class ProofIneligibleDiscoveryContractTests(unittest.TestCase):
     """F7-B0: discovery is a separate typed domain, never effect evidence."""
 
     def assertDiscoveryInvalid(self, value, **kwargs):
         with self.assertRaises(probe.ProbeError):
             probe.validate_discovery_evidence(value, SCHEMA_PATH, **kwargs)
+
+    def discoverOsRelease(self, kernel, *, link_values=None):
+        if link_values is None:
+            link_values = [probe._OS_RELEASE_LINK_TEXT] * 2
+        with (
+            mock.patch.object(probe.os, "O_NOFOLLOW", 0x100000, create=True),
+            mock.patch.object(probe.os, "O_DIRECTORY", 0x10000, create=True),
+            mock.patch.object(
+                probe.os, "O_PATH", kernel.path_flag, create=True
+            ),
+            mock.patch.object(probe.os, "O_NONBLOCK", 0x800, create=True),
+            mock.patch.object(probe.os, "O_CLOEXEC", 0x80000, create=True),
+            mock.patch.object(probe.os, "open", side_effect=kernel.open),
+            mock.patch.object(probe.os, "fstat", side_effect=kernel.fstat),
+            mock.patch.object(probe.os, "read", side_effect=kernel.read),
+            mock.patch.object(probe.os, "close", side_effect=kernel.close),
+            mock.patch.object(
+                probe,
+                "_read_os_release_link_fd",
+                side_effect=link_values,
+            ) as read_link,
+        ):
+            snapshot = probe.discover_os_release_snapshot()
+        return snapshot, read_link
+
+    def test_os_release_regular_file_uses_one_fd_bound_snapshot(self):
+        kernel = _FakeOsReleaseFdKernel(layout="regular")
+        snapshot, read_link = self.discoverOsRelease(kernel)
+        self.assertEqual("regular", snapshot.layout)
+        self.assertEqual(kernel.raw, snapshot.raw)
+        read_link.assert_not_called()
+        self.assertIn(kernel.ETC_CONTENT_FD, kernel.closed)
+        self.assertIn(kernel.ETC_VERIFY_FD, kernel.closed)
+        with (
+            mock.patch.object(probe.os, "open", return_value=123),
+            mock.patch.object(probe.os, "close"),
+        ):
+            observed = probe.discover_field_availability(snapshot)
+        os_release = next(
+            item
+            for item in observed["root_observations"]
+            if item["name"] == "etc.os-release"
+        )
+        self.assertTrue(os_release["available"])
+        self.assertIsNone(os_release["errno"])
+
+    def test_os_release_exact_hosted_relative_alias_succeeds(self):
+        kernel = _FakeOsReleaseFdKernel()
+        snapshot, read_link = self.discoverOsRelease(kernel)
+        self.assertEqual("relative_alias", snapshot.layout)
+        self.assertEqual(kernel.raw, snapshot.raw)
+        self.assertEqual(2, read_link.call_count)
+        self.assertIn(kernel.LINK_FD, kernel.closed)
+        self.assertIn(kernel.LINK_VERIFY_FD, kernel.closed)
+        self.assertIn(kernel.TARGET_CONTENT_FD, kernel.closed)
+        self.assertIn(kernel.TARGET_VERIFY_FD, kernel.closed)
+        content_opens = [
+            item
+            for item in kernel.opened
+            if item[0] == "os-release"
+            and item[2] == kernel.LIB_FD
+            and not item[1] & kernel.path_flag
+        ]
+        self.assertEqual(1, len(content_opens))
+
+    def test_os_release_rejects_every_nonexact_alias_target(self):
+        rejected = (
+            "/usr/lib/os-release",
+            "/tmp/os-release",
+            "../../usr/lib/os-release",
+            "../usr//lib/os-release",
+            "../usr/lib/./os-release",
+            "usr/lib/os-release",
+            "",
+        )
+        for target in rejected:
+            with self.subTest(target=target):
+                kernel = _FakeOsReleaseFdKernel()
+                with self.assertRaises(probe.ProbeError) as caught:
+                    self.discoverOsRelease(kernel, link_values=[target])
+                self.assertEqual(
+                    "DISCOVERY_OS_RELEASE_LINK_INVALID",
+                    caught.exception.code,
+                )
+
+    def test_os_release_rejects_untrusted_link_and_target_metadata(self):
+        cases = (
+            (
+                {"link_uid": 501},
+                "DISCOVERY_OS_RELEASE_LINK_INVALID",
+            ),
+            (
+                {"target_type": stat.S_IFLNK},
+                "DISCOVERY_OS_RELEASE_UNTRUSTED_FILE",
+            ),
+            (
+                {"target_type": stat.S_IFIFO},
+                "DISCOVERY_OS_RELEASE_UNTRUSTED_FILE",
+            ),
+            (
+                {"target_type": stat.S_IFDIR},
+                "DISCOVERY_OS_RELEASE_UNTRUSTED_FILE",
+            ),
+            (
+                {"target_type": stat.S_IFCHR},
+                "DISCOVERY_OS_RELEASE_UNTRUSTED_FILE",
+            ),
+            (
+                {"target_type": stat.S_IFSOCK},
+                "DISCOVERY_OS_RELEASE_UNTRUSTED_FILE",
+            ),
+            (
+                {"target_uid": 501},
+                "DISCOVERY_OS_RELEASE_UNTRUSTED_FILE",
+            ),
+            (
+                {"target_mode": 0o664},
+                "DISCOVERY_OS_RELEASE_UNTRUSTED_FILE",
+            ),
+            (
+                {"target_mode": 0o646},
+                "DISCOVERY_OS_RELEASE_UNTRUSTED_FILE",
+            ),
+            (
+                {"target_nlink": 0},
+                "DISCOVERY_OS_RELEASE_UNTRUSTED_FILE",
+            ),
+            (
+                {
+                    "target_size":
+                    probe.DISCOVERY_SOURCE_TEXT_MAX_BYTES + 1
+                },
+                "DISCOVERY_OS_RELEASE_UNTRUSTED_FILE",
+            ),
+        )
+        for kwargs, expected_code in cases:
+            with self.subTest(kwargs=kwargs):
+                with self.assertRaises(probe.ProbeError) as caught:
+                    self.discoverOsRelease(
+                        _FakeOsReleaseFdKernel(**kwargs)
+                    )
+                self.assertEqual(expected_code, caught.exception.code)
+
+    def test_os_release_rejects_untrusted_directory_metadata(self):
+        for directory_fd in (
+            _FakeOsReleaseFdKernel.ROOT_FD,
+            _FakeOsReleaseFdKernel.ETC_FD,
+            _FakeOsReleaseFdKernel.USR_FD,
+            _FakeOsReleaseFdKernel.LIB_FD,
+        ):
+            cases = (
+                {"directory_type": stat.S_IFREG},
+                {"directory_uid": 501},
+                {"directory_mode": 0o775},
+                {"directory_mode": 0o757},
+                {"directory_nlink": 0},
+            )
+            for metadata in cases:
+                with self.subTest(directory_fd=directory_fd, metadata=metadata):
+                    kernel = _FakeOsReleaseFdKernel(
+                        bad_directory_fd=directory_fd,
+                        **metadata,
+                    )
+                    with self.assertRaises(probe.ProbeError) as caught:
+                        self.discoverOsRelease(kernel)
+                    self.assertEqual(
+                        "DISCOVERY_OS_RELEASE_UNTRUSTED_DIRECTORY",
+                        caught.exception.code,
+                    )
+
+    def test_os_release_rejects_link_target_and_read_substitution(self):
+        cases = (
+            (
+                _FakeOsReleaseFdKernel(mutate_link=True),
+                "DISCOVERY_OS_RELEASE_UNSTABLE",
+            ),
+            (
+                _FakeOsReleaseFdKernel(mutate_target=True),
+                "DISCOVERY_OS_RELEASE_UNSTABLE",
+            ),
+            (
+                _FakeOsReleaseFdKernel(unstable_read=True),
+                "DISCOVERY_OS_RELEASE_UNSTABLE",
+            ),
+        )
+        for kernel, expected_code in cases:
+            with self.subTest(expected_code=expected_code):
+                with self.assertRaises(probe.ProbeError) as caught:
+                    self.discoverOsRelease(kernel)
+                self.assertEqual(expected_code, caught.exception.code)
+        kernel = _FakeOsReleaseFdKernel()
+        with self.assertRaises(probe.ProbeError) as caught:
+            self.discoverOsRelease(
+                kernel,
+                link_values=[
+                    probe._OS_RELEASE_LINK_TEXT,
+                    "/tmp/replaced",
+                ],
+            )
+        self.assertEqual(
+            "DISCOVERY_OS_RELEASE_UNSTABLE",
+            caught.exception.code,
+        )
+
+    def test_os_release_arbitrary_eloop_and_missing_linux_flags_fail_closed(self):
+        kernel = _FakeOsReleaseFdKernel(layout="regular")
+
+        def arbitrary_eloop(path, flags, mode=0o777, *, dir_fd=None):
+            if path == "lib" and dir_fd == kernel.USR_FD:
+                raise OSError(errno.ELOOP, "unexpected")
+            return kernel.open(path, flags, mode, dir_fd=dir_fd)
+
+        with (
+            mock.patch.object(probe.os, "O_NOFOLLOW", 0x100000, create=True),
+            mock.patch.object(probe.os, "O_DIRECTORY", 0x10000, create=True),
+            mock.patch.object(probe.os, "O_PATH", kernel.path_flag, create=True),
+            mock.patch.object(probe.os, "O_NONBLOCK", 0x800, create=True),
+            mock.patch.object(probe.os, "O_CLOEXEC", 0x80000, create=True),
+            mock.patch.object(probe.os, "open", side_effect=arbitrary_eloop),
+            mock.patch.object(probe.os, "fstat", side_effect=kernel.fstat),
+            mock.patch.object(probe.os, "close", side_effect=kernel.close),
+        ):
+            with self.assertRaises(probe.ProbeError) as caught:
+                probe.discover_os_release_snapshot()
+        self.assertEqual("DISCOVERY_ROOT_FIELD_UNAVAILABLE", caught.exception.code)
+
+        for missing_flag in (
+            "O_NOFOLLOW",
+            "O_DIRECTORY",
+            "O_PATH",
+            "O_NONBLOCK",
+            "O_CLOEXEC",
+        ):
+            with self.subTest(missing_flag=missing_flag):
+                with mock.patch.object(
+                    probe.os,
+                    missing_flag,
+                    0,
+                    create=True,
+                ):
+                    with self.assertRaises(probe.ProbeError):
+                        probe.discover_os_release_snapshot()
+
+    def test_os_release_readlinkat_is_bounded_and_rejects_truncation(self):
+        target = probe._OS_RELEASE_LINK_TEXT.encode("ascii")
+
+        def readlinkat(fd, empty_path, buffer, size):
+            self.assertEqual(123, fd)
+            self.assertEqual(b"", empty_path.value)
+            probe.ctypes.memmove(buffer, target, len(target))
+            return len(target)
+
+        fake_libc = SimpleNamespace(readlinkat=readlinkat)
+        with mock.patch.object(
+            probe.ctypes,
+            "CDLL",
+            return_value=fake_libc,
+        ):
+            self.assertEqual(
+                probe._OS_RELEASE_LINK_TEXT,
+                probe._read_os_release_link_fd(123),
+            )
+
+        fake_libc = SimpleNamespace(
+            readlinkat=mock.Mock(
+                return_value=probe._OS_RELEASE_LINK_MAX_BYTES + 1
+            )
+        )
+        with mock.patch.object(
+            probe.ctypes,
+            "CDLL",
+            return_value=fake_libc,
+        ):
+            with self.assertRaises(probe.ProbeError) as caught:
+                probe._read_os_release_link_fd(123)
+        self.assertEqual(
+            "DISCOVERY_OS_RELEASE_LINK_INVALID",
+            caught.exception.code,
+        )
+
+    def test_os_release_readlinkat_rejects_errors_empty_nul_and_non_ascii(self):
+        def readlink_result(raw=None, *, result=None, error=None):
+            def readlinkat(_fd, _empty_path, buffer, _size):
+                if error is not None:
+                    probe.ctypes.set_errno(error)
+                    return -1
+                if raw:
+                    probe.ctypes.memmove(buffer, raw, len(raw))
+                return len(raw) if result is None else result
+
+            return SimpleNamespace(readlinkat=readlinkat)
+
+        variants = (
+            (
+                readlink_result(error=errno.EIO),
+                "DISCOVERY_OS_RELEASE_LINK_READ_FAILED",
+            ),
+            (
+                readlink_result(b"", result=0),
+                "DISCOVERY_OS_RELEASE_LINK_INVALID",
+            ),
+            (
+                readlink_result(b"../usr/lib/\0os-release"),
+                "DISCOVERY_OS_RELEASE_LINK_INVALID",
+            ),
+            (
+                readlink_result(b"../usr/lib/os-releas\xff"),
+                "DISCOVERY_OS_RELEASE_LINK_INVALID",
+            ),
+        )
+        for fake_libc, expected_code in variants:
+            with self.subTest(expected_code=expected_code):
+                with (
+                    mock.patch.object(
+                        probe.ctypes,
+                        "CDLL",
+                        return_value=fake_libc,
+                    ),
+                    self.assertRaises(probe.ProbeError) as caught,
+                ):
+                    probe._read_os_release_link_fd(123)
+                self.assertEqual(expected_code, caught.exception.code)
+
+    def test_discovery_uses_one_os_release_snapshot_and_no_fallback_path_read(self):
+        source = TOOL_PATH.read_text(encoding="utf-8")
+        function = ast.parse(source)
+        collect = next(
+            node
+            for node in function.body
+            if isinstance(node, ast.FunctionDef)
+            and node.name == "collect_discovery_values"
+        )
+        calls = [
+            node
+            for node in ast.walk(collect)
+            if isinstance(node, ast.Call)
+        ]
+        snapshot_calls = [
+            call
+            for call in calls
+            if isinstance(call.func, ast.Name)
+            and call.func.id == "discover_os_release_snapshot"
+        ]
+        self.assertEqual(1, len(snapshot_calls))
+        self.assertNotIn(
+            'read_bytes(\n        Path("/etc/os-release")',
+            ast.get_source_segment(source, collect),
+        )
+        self.assertIn(
+            "discover_field_availability(\n            os_release_snapshot",
+            ast.get_source_segment(source, collect),
+        )
 
     def test_external_validator_unset_is_one_exact_explicit_skip(self):
         with mock.patch.dict(os.environ, {}, clear=True):
@@ -6202,7 +6732,12 @@ class ProofIneligibleDiscoveryContractTests(unittest.TestCase):
         impossible.errno = 133
         with mock.patch.object(probe.os, "open", side_effect=impossible):
             with self.assertRaises(probe.ProbeError) as caught:
-                probe.discover_field_availability()
+                probe.discover_field_availability(
+                    probe._DiscoveryOsReleaseSnapshot(
+                        raw=b'ID=ubuntu\nVERSION_ID="24.04"\n',
+                        layout="regular",
+                    )
+                )
             self.assertEqual(
                 "DISCOVERY_ROOT_FIELD_UNAVAILABLE",
                 caught.exception.code,
@@ -6218,7 +6753,12 @@ class ProofIneligibleDiscoveryContractTests(unittest.TestCase):
             mock.patch.object(probe.os, "close"),
         ):
             with self.assertRaises(probe.ProbeError) as caught:
-                probe.discover_field_availability()
+                probe.discover_field_availability(
+                    probe._DiscoveryOsReleaseSnapshot(
+                        raw=b'ID=ubuntu\nVERSION_ID="24.04"\n',
+                        layout="regular",
+                    )
+                )
             self.assertEqual(
                 "DISCOVERY_ROOT_FIELD_UNAVAILABLE",
                 caught.exception.code,
@@ -6234,9 +6774,18 @@ class ProofIneligibleDiscoveryContractTests(unittest.TestCase):
             mock.patch.object(probe.os, "open", side_effect=root_only_open),
             mock.patch.object(probe.os, "close"),
         ):
-            observed = probe.discover_field_availability()
+            observed = probe.discover_field_availability(
+                probe._DiscoveryOsReleaseSnapshot(
+                    raw=b'ID=ubuntu\nVERSION_ID="24.04"\n',
+                    layout="regular",
+                )
+            )
         self.assertEqual(
-            [path for _, path in probe._DISCOVERY_ROOT_FIELD_PATHS],
+            [
+                path
+                for name, path in probe._DISCOVERY_ROOT_FIELD_PATHS
+                if name != "etc.os-release"
+            ],
             opened_paths,
         )
         self.assertNotIn("/sys/fs/cgroup/cgroup.events", opened_paths)

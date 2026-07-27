@@ -114,7 +114,7 @@ DISCOVERY_F7B0_AUTHORING_TASK_SHA256 = (
     "fb03ded3feeb76610a04ff25cec3aa1acdc5c1048ce7adb7852d6510933571a2"
 )
 DISCOVERY_F7B3_HOSTED_AUTHORIZATION_SHA256 = (
-    "886ee0701e65007ba5306e9cb3f145c46e9cc3e5aa33e13195e344daae3f5129"
+    "796e6bc012b184812d2962a15fb1fe7e8fcd6f17c1a37841ecb0f468ce243a30"
 )
 DISCOVERY_IMAGE_OS_PATTERN = re.compile(r"^ubuntu24$")
 DISCOVERY_IMAGE_VERSION_PATTERN = re.compile(
@@ -4865,7 +4865,231 @@ def discover_executable_abis() -> Dict[str, Any]:
     return {"binaries": sorted(binaries, key=lambda item: item["path"]), "absence_unresolved": True}
 
 
-def discover_field_availability() -> Dict[str, Any]:
+@dataclass(frozen=True)
+class _DiscoveryOsReleaseSnapshot:
+    raw: bytes
+    layout: str
+
+
+_OS_RELEASE_LINK_TEXT = "../usr/lib/os-release"
+_OS_RELEASE_LINK_MAX_BYTES = 64
+_OS_RELEASE_STABLE_FIELDS = (
+    "st_dev",
+    "st_ino",
+    "st_mode",
+    "st_uid",
+    "st_gid",
+    "st_nlink",
+    "st_size",
+    "st_mtime_ns",
+    "st_ctime_ns",
+)
+
+
+def _os_release_required_flag(name: str) -> int:
+    value = getattr(os, name, 0)
+    if not value:
+        raise ProbeError(
+            "DISCOVERY_OS_RELEASE_UNSUPPORTED",
+            f"{name} unavailable",
+        )
+    return value
+
+
+def _os_release_identity(info: os.stat_result) -> Tuple[int, ...]:
+    return tuple(getattr(info, field) for field in _OS_RELEASE_STABLE_FIELDS)
+
+
+def _validate_os_release_directory(info: os.stat_result, label: str) -> None:
+    if (
+        not stat.S_ISDIR(info.st_mode)
+        or info.st_uid != 0
+        or info.st_nlink <= 0
+        or info.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
+    ):
+        raise ProbeError("DISCOVERY_OS_RELEASE_UNTRUSTED_DIRECTORY", label)
+
+
+def _validate_os_release_file(info: os.stat_result, label: str) -> None:
+    if (
+        not stat.S_ISREG(info.st_mode)
+        or info.st_uid != 0
+        or info.st_nlink <= 0
+        or info.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
+        or not 0 < info.st_size <= DISCOVERY_SOURCE_TEXT_MAX_BYTES
+    ):
+        raise ProbeError("DISCOVERY_OS_RELEASE_UNTRUSTED_FILE", label)
+
+
+def _read_os_release_link_fd(fd: int) -> str:
+    libc = ctypes.CDLL(None, use_errno=True)
+    readlinkat = getattr(libc, "readlinkat", None)
+    if readlinkat is None:
+        raise ProbeError(
+            "DISCOVERY_OS_RELEASE_UNSUPPORTED",
+            "readlinkat unavailable",
+        )
+    buffer = ctypes.create_string_buffer(_OS_RELEASE_LINK_MAX_BYTES + 1)
+    ctypes.set_errno(0)
+    length = readlinkat(
+        fd,
+        ctypes.c_char_p(b""),
+        buffer,
+        _OS_RELEASE_LINK_MAX_BYTES + 1,
+    )
+    if length < 0:
+        code = ctypes.get_errno() or errno.EIO
+        raise ProbeError(
+            "DISCOVERY_OS_RELEASE_LINK_READ_FAILED",
+            str(code),
+        )
+    if length == 0 or length > _OS_RELEASE_LINK_MAX_BYTES:
+        raise ProbeError(
+            "DISCOVERY_OS_RELEASE_LINK_INVALID",
+            f"length={length}",
+        )
+    raw = bytes(buffer.raw[:length])
+    if b"\0" in raw:
+        raise ProbeError("DISCOVERY_OS_RELEASE_LINK_INVALID", "embedded NUL")
+    try:
+        return raw.decode("ascii")
+    except UnicodeDecodeError as exc:
+        raise ProbeError(
+            "DISCOVERY_OS_RELEASE_LINK_INVALID",
+            "non-ASCII",
+        ) from exc
+
+
+def _read_stable_os_release_file(
+    fd: int,
+    label: str,
+) -> Tuple[bytes, Tuple[int, ...]]:
+    before = os.fstat(fd)
+    _validate_os_release_file(before, label)
+    raw = _read_exact(fd, before.st_size)
+    extra = _read_exact(fd, 1)
+    after = os.fstat(fd)
+    before_identity = _os_release_identity(before)
+    if (
+        extra
+        or len(raw) != before.st_size
+        or _os_release_identity(after) != before_identity
+    ):
+        raise ProbeError("DISCOVERY_OS_RELEASE_UNSTABLE", label)
+    return raw, before_identity
+
+
+def discover_os_release_snapshot() -> _DiscoveryOsReleaseSnapshot:
+    """Return one FD-bound os-release snapshot for identity and availability.
+
+    The only accepted alias is the Ubuntu/systemd-recommended exact relative
+    ``/etc/os-release -> ../usr/lib/os-release`` link. The ``..`` text is never
+    traversed: it maps to an already-open trusted ``/usr/lib`` directory FD.
+    """
+    nofollow = _require_o_nofollow()
+    directory = _os_release_required_flag("O_DIRECTORY")
+    path_only = _os_release_required_flag("O_PATH")
+    nonblock = _os_release_required_flag("O_NONBLOCK")
+    cloexec = _os_release_required_flag("O_CLOEXEC")
+    directory_flags = os.O_RDONLY | directory | cloexec | nofollow
+    content_flags = os.O_RDONLY | cloexec | nofollow | nonblock
+    path_flags = path_only | cloexec | nofollow
+    opened: List[int] = []
+
+    def open_fd(path: str, flags: int, *, dir_fd: Optional[int] = None) -> int:
+        fd = os.open(path, flags, dir_fd=dir_fd)
+        opened.append(fd)
+        return fd
+
+    try:
+        root_fd = open_fd("/", directory_flags)
+        _validate_os_release_directory(os.fstat(root_fd), "/")
+        etc_fd = open_fd("etc", directory_flags, dir_fd=root_fd)
+        _validate_os_release_directory(os.fstat(etc_fd), "/etc")
+        usr_fd = open_fd("usr", directory_flags, dir_fd=root_fd)
+        _validate_os_release_directory(os.fstat(usr_fd), "/usr")
+        lib_fd = open_fd("lib", directory_flags, dir_fd=usr_fd)
+        _validate_os_release_directory(os.fstat(lib_fd), "/usr/lib")
+
+        try:
+            content_fd = open_fd("os-release", content_flags, dir_fd=etc_fd)
+        except OSError as exc:
+            if exc.errno != errno.ELOOP:
+                code = exc.errno or errno.EIO
+                raise ProbeError(
+                    "DISCOVERY_ROOT_FIELD_UNAVAILABLE",
+                    f"etc.os-release:{code}",
+                ) from exc
+            link_fd = open_fd("os-release", path_flags, dir_fd=etc_fd)
+            link_before = os.fstat(link_fd)
+            if not stat.S_ISLNK(link_before.st_mode) or link_before.st_uid != 0:
+                raise ProbeError(
+                    "DISCOVERY_OS_RELEASE_LINK_INVALID",
+                    "untrusted /etc/os-release symlink",
+                )
+            link_identity = _os_release_identity(link_before)
+            if _read_os_release_link_fd(link_fd) != _OS_RELEASE_LINK_TEXT:
+                raise ProbeError(
+                    "DISCOVERY_OS_RELEASE_LINK_INVALID",
+                    "target",
+                )
+            try:
+                content_fd = open_fd("os-release", content_flags, dir_fd=lib_fd)
+            except OSError as target_exc:
+                code = target_exc.errno or errno.EIO
+                raise ProbeError(
+                    "DISCOVERY_ROOT_FIELD_UNAVAILABLE",
+                    f"etc.os-release:{code}",
+                ) from target_exc
+            raw, content_identity = _read_stable_os_release_file(
+                content_fd,
+                "/usr/lib/os-release",
+            )
+            target_verify_fd = open_fd("os-release", path_flags, dir_fd=lib_fd)
+            if _os_release_identity(os.fstat(target_verify_fd)) != content_identity:
+                raise ProbeError(
+                    "DISCOVERY_OS_RELEASE_UNSTABLE",
+                    "/usr/lib/os-release",
+                )
+            link_verify_fd = open_fd("os-release", path_flags, dir_fd=etc_fd)
+            if (
+                _os_release_identity(os.fstat(link_verify_fd)) != link_identity
+                or _read_os_release_link_fd(link_verify_fd)
+                != _OS_RELEASE_LINK_TEXT
+            ):
+                raise ProbeError(
+                    "DISCOVERY_OS_RELEASE_UNSTABLE",
+                    "/etc/os-release",
+                )
+            return _DiscoveryOsReleaseSnapshot(raw=raw, layout="relative_alias")
+        raw, content_identity = _read_stable_os_release_file(
+            content_fd,
+            "/etc/os-release",
+        )
+        verify_fd = open_fd("os-release", path_flags, dir_fd=etc_fd)
+        if _os_release_identity(os.fstat(verify_fd)) != content_identity:
+            raise ProbeError(
+                "DISCOVERY_OS_RELEASE_UNSTABLE",
+                "/etc/os-release",
+            )
+        return _DiscoveryOsReleaseSnapshot(raw=raw, layout="regular")
+    except OSError as exc:
+        code = exc.errno or errno.EIO
+        raise ProbeError(
+            "DISCOVERY_ROOT_FIELD_UNAVAILABLE",
+            f"etc.os-release:{code}",
+        ) from exc
+    finally:
+        for fd in reversed(opened):
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+
+
+def discover_field_availability(
+    os_release_snapshot: _DiscoveryOsReleaseSnapshot,
+) -> Dict[str, Any]:
     """Observe only root-applicable fields and explicitly defer every
     non-root-only surface.
 
@@ -4875,6 +5099,27 @@ def discover_field_availability() -> Dict[str, Any]:
     """
     root_observations: List[Dict[str, Any]] = []
     for name, raw_path in _DISCOVERY_ROOT_FIELD_PATHS:
+        if name == "etc.os-release":
+            if (
+                not isinstance(os_release_snapshot, _DiscoveryOsReleaseSnapshot)
+                or not os_release_snapshot.raw
+            ):
+                raise ProbeError(
+                    "DISCOVERY_OS_RELEASE_SNAPSHOT_INVALID",
+                    name,
+                )
+            root_observations.append(
+                {
+                    "name": name,
+                    "path": raw_path,
+                    "scope": DISCOVERY_ROOT_FIELD_MODEL[name]["scope"],
+                    "access": "read_only",
+                    "attempted": True,
+                    "available": True,
+                    "errno": None,
+                }
+            )
+            continue
         path = Path(raw_path)
         try:
             fd = os.open(
@@ -4950,9 +5195,8 @@ def collect_discovery_values(args: argparse.Namespace) -> Dict[str, Mapping[str,
         Path("/proc/self/cgroup"), DISCOVERY_SOURCE_TEXT_MAX_BYTES
     )
     proc_cgroup = _canonical_cgroup_v2_source(proc_cgroup_raw)
-    os_release_raw = read_bytes(
-        Path("/etc/os-release"), DISCOVERY_SOURCE_TEXT_MAX_BYTES
-    )
+    os_release_snapshot = discover_os_release_snapshot()
+    os_release_raw = os_release_snapshot.raw
     os_release = os_release_raw.decode("utf-8", "replace")
     return {
         "runner_image": {
@@ -4983,7 +5227,9 @@ def collect_discovery_values(args: argparse.Namespace) -> Dict[str, Mapping[str,
         "bpf_prog_query": discover_bpf_prog_query(),
         "device_nodes": discover_device_nodes(),
         "executable_abis": discover_executable_abis(),
-        "field_availability": discover_field_availability(),
+        "field_availability": discover_field_availability(
+            os_release_snapshot
+        ),
     }
 
 
