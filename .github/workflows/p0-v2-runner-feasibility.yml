@@ -14,6 +14,513 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  discovery:
+    if: >-
+      github.repository == 'yurikuchumov-ux/ai-operating-system' &&
+      github.repository_id == '1296950956' &&
+      github.event_name == 'pull_request' &&
+      github.ref == 'refs/pull/71/merge' &&
+      github.run_attempt == 1 &&
+      github.event.action == 'labeled' &&
+      github.event.label.name == 'p0-v2-discovery' &&
+      github.event.pull_request.number == 71 &&
+      github.event.pull_request.state == 'open' &&
+      github.event.pull_request.draft == true &&
+      github.event.pull_request.merged == false &&
+      github.event.pull_request.head.repo.full_name == 'yurikuchumov-ux/ai-operating-system' &&
+      github.event.pull_request.head.ref == 'agent/issue-70-p0-v2-feasibility-gate1' &&
+      github.event.pull_request.base.repo.full_name == 'yurikuchumov-ux/ai-operating-system' &&
+      github.event.pull_request.base.ref == 'main' &&
+      github.event.pull_request.base.sha == 'd4f10b714de3afae84d48dfcd3daa6405092a973' &&
+      github.event.sender.login == 'yurikuchumov-ux' &&
+      github.event.sender.id == 299144523 &&
+      github.actor == 'yurikuchumov-ux' &&
+      github.actor_id == '299144523'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      EXPECTED_REPOSITORY: yurikuchumov-ux/ai-operating-system
+      EXPECTED_REPOSITORY_ID: "1296950956"
+      EXPECTED_PR_NUMBER: "71"
+      EXPECTED_EVENT_NAME: pull_request
+      EXPECTED_EVENT_ACTION: labeled
+      EXPECTED_EVENT_REF: refs/pull/71/merge
+      EXPECTED_LABEL: p0-v2-discovery
+      EXPECTED_SENDER_LOGIN: yurikuchumov-ux
+      EXPECTED_SENDER_ID: "299144523"
+      EXPECTED_ACTOR_LOGIN: yurikuchumov-ux
+      EXPECTED_ACTOR_ID: "299144523"
+      EXPECTED_HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+      EXPECTED_HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
+      EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      EXPECTED_BASE_REPOSITORY: ${{ github.event.pull_request.base.repo.full_name }}
+      EXPECTED_BASE_REF: ${{ github.event.pull_request.base.ref }}
+      EVENT_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      EXPECTED_MERGE_SHA: ${{ github.sha }}
+      EXPECTED_BASE_SHA: d4f10b714de3afae84d48dfcd3daa6405092a973
+      EXPECTED_WORKFLOW_PATH: .github/workflows/p0-v2-runner-feasibility.yml
+      EXPECTED_WORKFLOW_REF: ${{ github.workflow_ref }}
+      EXPECTED_WORKFLOW_SHA: ${{ github.workflow_sha }}
+      EXPECTED_PROBE_SHA256: 78bf8b6a2d7428a0cafed410a4bb3fc68bd6c6acdbac0ca4a184b0c89e6db988
+      EXPECTED_SCHEMA_SHA256: fbc9d66c7dd1f6b88ba9dc62b37546aea43fb2eb60e1f77c9409a722cb8bece9
+      EXPECTED_TEST_SHA256: 7b8625c8a340b125f40e21d86775c5fbf33a185eb0be0183efb3b2cb470e65a1
+      EXPECTED_DISCOVERY_SCHEMA_SHA256: f94fcb3d45b2754d53d16466b6a8c2867fc4e5b8bc1b321876249b751e8a8515
+      SOURCE_AUTHORING_ANCHOR: 450b33c5963ba2b202e923b52cbc47a9b11d6db7
+      F7B0_AUTHORING_TASK_SHA256: fb03ded3feeb76610a04ff25cec3aa1acdc5c1048ce7adb7852d6510933571a2
+      F7B1_HOSTED_AUTHORIZATION_SHA256: bb7b706eefa105b122150645151da478146c57e5129e3a39ec69f200c43fa811
+
+    steps:
+      - name: Reject mismatched discovery context before checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "${GITHUB_REPOSITORY}" == "${EXPECTED_REPOSITORY}" ]]
+          [[ "${GITHUB_REPOSITORY_ID}" == "${EXPECTED_REPOSITORY_ID}" ]]
+          [[ "${GITHUB_EVENT_NAME}" == "${EXPECTED_EVENT_NAME}" ]]
+          [[ "${GITHUB_REF}" == "${EXPECTED_EVENT_REF}" ]]
+          [[ "${GITHUB_RUN_ATTEMPT}" == "1" ]]
+          [[ "${GITHUB_ACTOR}" == "${EXPECTED_ACTOR_LOGIN}" ]]
+          [[ "${GITHUB_ACTOR_ID}" == "${EXPECTED_ACTOR_ID}" ]]
+          [[ "${EXPECTED_EVENT_ACTION}" == "labeled" ]]
+          [[ "${EXPECTED_LABEL}" == "p0-v2-discovery" ]]
+          [[ "${EXPECTED_SENDER_LOGIN}" == "${EXPECTED_ACTOR_LOGIN}" ]]
+          [[ "${EXPECTED_SENDER_ID}" == "${EXPECTED_ACTOR_ID}" ]]
+          [[ "${EXPECTED_PR_NUMBER}" == "71" ]]
+          [[ "${EXPECTED_HEAD_REPOSITORY}" == "${EXPECTED_REPOSITORY}" ]]
+          [[ "${EXPECTED_HEAD_BRANCH}" == "agent/issue-70-p0-v2-feasibility-gate1" ]]
+          [[ "${EXPECTED_BASE_REPOSITORY}" == "${EXPECTED_REPOSITORY}" ]]
+          [[ "${EXPECTED_BASE_REF}" == "main" ]]
+          [[ "${EVENT_BASE_SHA}" == "${EXPECTED_BASE_SHA}" ]]
+          [[ "${EXPECTED_HEAD_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          [[ "${EXPECTED_MERGE_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          [[ "${EXPECTED_WORKFLOW_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          [[ "${EXPECTED_WORKFLOW_REF}" == \
+            "${EXPECTED_REPOSITORY}/${EXPECTED_WORKFLOW_PATH}@${GITHUB_REF}" ]]
+          [[ "${EXPECTED_PROBE_SHA256}" =~ ^[0-9a-f]{64}$ ]]
+          [[ "${EXPECTED_SCHEMA_SHA256}" =~ ^[0-9a-f]{64}$ ]]
+          [[ "${EXPECTED_TEST_SHA256}" =~ ^[0-9a-f]{64}$ ]]
+          [[ "${EXPECTED_DISCOVERY_SCHEMA_SHA256}" =~ ^[0-9a-f]{64}$ ]]
+          [[ "${SOURCE_AUTHORING_ANCHOR}" =~ ^[0-9a-f]{40}$ ]]
+          [[ "${F7B0_AUTHORING_TASK_SHA256}" =~ ^[0-9a-f]{64}$ ]]
+          [[ "${F7B1_HOSTED_AUTHORIZATION_SHA256}" =~ ^[0-9a-f]{64}$ ]]
+
+      - name: Check out exact discovery head without credentials
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Bind reviewed Git objects and stage immutable root inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          observed_head="$(git rev-parse HEAD)"
+          [[ "${observed_head}" == "${EXPECTED_HEAD_SHA}" ]]
+          [[ "${EVENT_BASE_SHA}" == "${EXPECTED_BASE_SHA}" ]]
+          git merge-base --is-ancestor "${EXPECTED_BASE_SHA}" "${observed_head}"
+          git fetch --no-tags --depth=1 origin "${EXPECTED_MERGE_SHA}"
+          read -r merge_parent_one merge_parent_two merge_parent_extra < <(
+            git show -s --format='%P' "${EXPECTED_MERGE_SHA}"
+          )
+          [[ "${merge_parent_one}" == "${EXPECTED_BASE_SHA}" ]]
+          [[ "${merge_parent_two}" == "${observed_head}" ]]
+          [[ -z "${merge_parent_extra:-}" ]]
+
+          workflow_blob="$(
+            git rev-parse "${EXPECTED_WORKFLOW_SHA}:${EXPECTED_WORKFLOW_PATH}"
+          )"
+          merge_blob="$(
+            git rev-parse "${EXPECTED_MERGE_SHA}:${EXPECTED_WORKFLOW_PATH}"
+          )"
+          head_blob="$(
+            git rev-parse "${EXPECTED_HEAD_SHA}:${EXPECTED_WORKFLOW_PATH}"
+          )"
+          [[ "${workflow_blob}" == "${merge_blob}" ]]
+          [[ "${merge_blob}" == "${head_blob}" ]]
+
+          expected_paths=(
+            ".github/workflows/p0-v2-runner-feasibility.yml"
+            "contracts/schemas/p0-v2-runner-feasibility-evidence.v1.schema.json"
+            "tests/test_b3_p0_v2_runner_feasibility.py"
+            "tools/p0_v2_runner_probe.py"
+          )
+          mapfile -t changed_records < <(
+            git diff --name-status --no-renames "${EXPECTED_BASE_SHA}" "${observed_head}"
+          )
+          [[ "${#changed_records[@]}" -eq 4 ]]
+          expected_records=()
+          for path in "${expected_paths[@]}"; do
+            expected_records+=($'A\t'"${path}")
+          done
+          mapfile -t expected_sorted < <(
+            printf '%s\n' "${expected_records[@]}" | LC_ALL=C sort
+          )
+          mapfile -t observed_sorted < <(
+            printf '%s\n' "${changed_records[@]}" | LC_ALL=C sort
+          )
+          [[ "$(printf '%s\n' "${expected_sorted[@]}")" == \
+            "$(printf '%s\n' "${observed_sorted[@]}")" ]]
+          for path in "${expected_paths[@]}"; do
+            tree_entry="$(git ls-tree "${observed_head}" -- "${path}")"
+            [[ "${tree_entry}" =~ ^100644\ blob\ [0-9a-f]{40}$'\t'"${path}"$ ]]
+          done
+          [[ -z "$(git status --porcelain=v1 --untracked-files=all)" ]]
+
+          [[ "$(sha256sum tools/p0_v2_runner_probe.py | cut -d' ' -f1)" == \
+            "${EXPECTED_PROBE_SHA256}" ]]
+          [[ "$(sha256sum \
+            contracts/schemas/p0-v2-runner-feasibility-evidence.v1.schema.json |
+            cut -d' ' -f1)" == "${EXPECTED_SCHEMA_SHA256}" ]]
+          [[ "$(sha256sum tests/test_b3_p0_v2_runner_feasibility.py |
+            cut -d' ' -f1)" == "${EXPECTED_TEST_SHA256}" ]]
+
+          /usr/bin/python3 -I - "${RUNNER_TEMP}" <<'PY'
+          import os
+          import stat
+          import sys
+
+          path = os.path.abspath(sys.argv[1])
+          current = os.sep
+          for component in path.split(os.sep)[1:]:
+              current = os.path.join(current, component)
+              info = os.lstat(current)
+              if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
+                  raise SystemExit(f"unsafe RUNNER_TEMP component: {current}")
+          PY
+
+          trusted_stage="$(
+            sudo -n /usr/bin/mktemp -d \
+              "${RUNNER_TEMP}/p0-v2-discovery-stage.XXXXXXXX"
+          )"
+          evidence_dir="$(
+            sudo -n /usr/bin/mktemp -d \
+              "${RUNNER_TEMP}/p0-v2-discovery-evidence.XXXXXXXX"
+          )"
+          sudo -n /usr/bin/chown root:root "${trusted_stage}" "${evidence_dir}"
+          sudo -n /usr/bin/chmod 0700 "${trusted_stage}" "${evidence_dir}"
+          sudo -n /usr/bin/install -o root -g root -m 0444 \
+            tools/p0_v2_runner_probe.py \
+            "${trusted_stage}/p0_v2_runner_probe.py"
+          sudo -n /usr/bin/install -o root -g root -m 0444 \
+            contracts/schemas/p0-v2-runner-feasibility-evidence.v1.schema.json \
+            "${trusted_stage}/p0-v2-runner-feasibility-evidence.v1.schema.json"
+          sudo -n /usr/bin/install -o root -g root -m 0444 \
+            tests/test_b3_p0_v2_runner_feasibility.py \
+            "${trusted_stage}/test_b3_p0_v2_runner_feasibility.py"
+          sudo -n /usr/bin/install -o root -g root -m 0444 \
+            "${EXPECTED_WORKFLOW_PATH}" \
+            "${trusted_stage}/p0-v2-runner-feasibility.yml"
+          sudo -n /usr/bin/chmod 0555 "${trusted_stage}"
+
+          [[ "$(sudo -n /usr/bin/sha256sum \
+            "${trusted_stage}/p0_v2_runner_probe.py" | cut -d' ' -f1)" == \
+            "${EXPECTED_PROBE_SHA256}" ]]
+          [[ "$(sudo -n /usr/bin/sha256sum \
+            "${trusted_stage}/p0-v2-runner-feasibility-evidence.v1.schema.json" |
+            cut -d' ' -f1)" == "${EXPECTED_SCHEMA_SHA256}" ]]
+          [[ "$(sudo -n /usr/bin/sha256sum \
+            "${trusted_stage}/test_b3_p0_v2_runner_feasibility.py" |
+            cut -d' ' -f1)" == "${EXPECTED_TEST_SHA256}" ]]
+          [[ "$(git hash-object \
+            "${trusted_stage}/p0-v2-runner-feasibility.yml")" == \
+            "${head_blob}" ]]
+          workflow_raw_sha256="$(
+            sha256sum "${trusted_stage}/p0-v2-runner-feasibility.yml" |
+              cut -d' ' -f1
+          )"
+
+          printf 'P0_V2_TRUSTED_STAGE=%s\n' "${trusted_stage}" >> "${GITHUB_ENV}"
+          printf 'P0_V2_DISCOVERY_EVIDENCE_DIR=%s\n' "${evidence_dir}" >> "${GITHUB_ENV}"
+          printf 'P0_V2_WORKFLOW_RAW_SHA256=%s\n' \
+            "${workflow_raw_sha256}" >> "${GITHUB_ENV}"
+
+      - name: Execute proof-ineligible immutable discovery
+        id: discovery-probe
+        shell: bash
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          [[ -n "${ImageOS:-}" ]]
+          [[ -n "${ImageVersion:-}" ]]
+          image_build="${ImageVersion%.*}"
+          [[ -n "${image_build}" && "${image_build}" != "${ImageVersion}" ]]
+          image_release="https://github.com/actions/runner-images/releases/tag/${ImageOS}%2F${image_build}"
+
+          sudo -n /usr/bin/env -i \
+            PATH=/usr/bin:/bin \
+            LANG=C.UTF-8 \
+            LC_ALL=C.UTF-8 \
+            /usr/bin/python3 -I \
+            "${P0_V2_TRUSTED_STAGE}/p0_v2_runner_probe.py" discover \
+            --repository-id "${GITHUB_REPOSITORY_ID}" \
+            --pr-number "${EXPECTED_PR_NUMBER}" \
+            --event-name "${EXPECTED_EVENT_NAME}" \
+            --event-action "${EXPECTED_EVENT_ACTION}" \
+            --event-ref "${EXPECTED_EVENT_REF}" \
+            --label "${EXPECTED_LABEL}" \
+            --sender-login "${EXPECTED_SENDER_LOGIN}" \
+            --sender-id "${EXPECTED_SENDER_ID}" \
+            --actor-login "${EXPECTED_ACTOR_LOGIN}" \
+            --actor-id "${EXPECTED_ACTOR_ID}" \
+            --run-id "${GITHUB_RUN_ID}" \
+            --run-attempt "${GITHUB_RUN_ATTEMPT}" \
+            --head-sha "${EXPECTED_HEAD_SHA}" \
+            --base-sha "${EXPECTED_BASE_SHA}" \
+            --merge-sha "${EXPECTED_MERGE_SHA}" \
+            --repository "${EXPECTED_REPOSITORY}" \
+            --workflow "${GITHUB_WORKFLOW}" \
+            --workflow-ref "${EXPECTED_WORKFLOW_REF}" \
+            --workflow-sha "${EXPECTED_WORKFLOW_SHA}" \
+            --workflow-file \
+              "${P0_V2_TRUSTED_STAGE}/p0-v2-runner-feasibility.yml" \
+            --test-file \
+              "${P0_V2_TRUSTED_STAGE}/test_b3_p0_v2_runner_feasibility.py" \
+            --runner-label "ubuntu-24.04" \
+            --image-os "${ImageOS}" \
+            --image-version "${ImageVersion}" \
+            --image-release "${image_release}" \
+            --runner-arch "${RUNNER_ARCH}" \
+            --source-path \
+              "${P0_V2_TRUSTED_STAGE}/p0_v2_runner_probe.py" \
+            --schema-path \
+              "${P0_V2_TRUSTED_STAGE}/p0-v2-runner-feasibility-evidence.v1.schema.json" \
+            --implementation-commit "${EXPECTED_HEAD_SHA}" \
+            --source-authoring-anchor "${SOURCE_AUTHORING_ANCHOR}" \
+            --f7b0-authoring-task-sha256 "${F7B0_AUTHORING_TASK_SHA256}" \
+            --f7b1-hosted-authorization-sha256 \
+              "${F7B1_HOSTED_AUTHORIZATION_SHA256}" \
+            --evidence-dir "${P0_V2_DISCOVERY_EVIDENCE_DIR}" \
+            --evidence-uid 0 \
+            --evidence-gid 0
+
+          sudo -n /usr/bin/chown root:root \
+            "${P0_V2_DISCOVERY_EVIDENCE_DIR}/discovery-evidence.json" \
+            "${P0_V2_DISCOVERY_EVIDENCE_DIR}/discovery-evidence.json.manifest.json"
+          sudo -n /usr/bin/chmod 0444 \
+            "${P0_V2_DISCOVERY_EVIDENCE_DIR}/discovery-evidence.json" \
+            "${P0_V2_DISCOVERY_EVIDENCE_DIR}/discovery-evidence.json.manifest.json"
+          sudo -n /usr/bin/chmod 0555 "${P0_V2_DISCOVERY_EVIDENCE_DIR}"
+
+      - name: Independently verify sealed discovery paths before upload
+        shell: bash
+        run: |
+          set -euo pipefail
+          /usr/bin/python3 -I - \
+            "${P0_V2_DISCOVERY_EVIDENCE_DIR}" \
+            "${EXPECTED_REPOSITORY}" \
+            "${GITHUB_REPOSITORY_ID}" \
+            "${EXPECTED_HEAD_SHA}" \
+            "${EXPECTED_BASE_SHA}" \
+            "${EXPECTED_MERGE_SHA}" \
+            "${GITHUB_RUN_ID}" \
+            "${GITHUB_RUN_ATTEMPT}" \
+            "${EXPECTED_WORKFLOW_REF}" \
+            "${EXPECTED_WORKFLOW_SHA}" \
+            "${EXPECTED_PROBE_SHA256}" \
+            "${EXPECTED_SCHEMA_SHA256}" \
+            "${EXPECTED_TEST_SHA256}" \
+            "${P0_V2_WORKFLOW_RAW_SHA256}" \
+            "${EXPECTED_DISCOVERY_SCHEMA_SHA256}" \
+            "${SOURCE_AUTHORING_ANCHOR}" \
+            "${F7B0_AUTHORING_TASK_SHA256}" \
+            "${F7B1_HOSTED_AUTHORIZATION_SHA256}" <<'PY'
+          import hashlib
+          import json
+          import os
+          import stat
+          import sys
+
+          (
+              directory,
+              repository,
+              repository_id,
+              head_sha,
+              base_sha,
+              merge_sha,
+              run_id,
+              run_attempt,
+              workflow_ref,
+              workflow_sha,
+              probe_sha256,
+              schema_sha256,
+              test_sha256,
+              workflow_sha256,
+              discovery_schema_sha256,
+              source_anchor,
+              f7b0_sha256,
+              f7b1_sha256,
+          ) = sys.argv[1:]
+
+          def reject_duplicates(pairs):
+              result = {}
+              for key, value in pairs:
+                  if key in result:
+                      raise ValueError(f"duplicate JSON key: {key}")
+                  result[key] = value
+              return result
+
+          def load_json(raw):
+              return json.loads(raw, object_pairs_hook=reject_duplicates)
+
+          def canonical(value):
+              return json.dumps(
+                  value,
+                  ensure_ascii=False,
+                  allow_nan=False,
+                  sort_keys=True,
+                  separators=(",", ":"),
+              ).encode("utf-8")
+
+          directory_info = os.lstat(directory)
+          if (
+              not stat.S_ISDIR(directory_info.st_mode)
+              or stat.S_IMODE(directory_info.st_mode) != 0o555
+              or directory_info.st_uid != 0
+              or directory_info.st_gid != 0
+          ):
+              raise SystemExit("unsealed discovery directory")
+          expected_names = [
+              "discovery-evidence.json",
+              "discovery-evidence.json.manifest.json",
+          ]
+          if sorted(os.listdir(directory)) != expected_names:
+              raise SystemExit("unexpected discovery directory entries")
+          raw = {}
+          for name in expected_names:
+              path = os.path.join(directory, name)
+              info = os.lstat(path)
+              if (
+                  not stat.S_ISREG(info.st_mode)
+                  or stat.S_IMODE(info.st_mode) != 0o444
+                  or info.st_uid != 0
+                  or info.st_gid != 0
+                  or info.st_nlink != 1
+                  or info.st_size <= 0
+                  or info.st_size > 1_310_720
+              ):
+                  raise SystemExit(f"unsafe sealed file: {name}")
+              with open(path, "rb") as handle:
+                  raw[name] = handle.read()
+
+          evidence = load_json(raw["discovery-evidence.json"])
+          manifest = load_json(
+              raw["discovery-evidence.json.manifest.json"]
+          )
+          if raw["discovery-evidence.json"] != canonical(evidence):
+              raise SystemExit("non-canonical discovery JSON")
+          if raw["discovery-evidence.json.manifest.json"] != canonical(manifest):
+              raise SystemExit("non-canonical discovery manifest")
+
+          expected_top = {
+              "schema_version",
+              "evidence_kind",
+              "discovery_notice",
+              "mode",
+              "outcome",
+              "outcome_authority",
+              "proof_eligible",
+              "proof_ineligible_reason",
+              "identity",
+              "source",
+              "records",
+              "future_witnesses",
+              "mandatory_effect_blockers",
+              "errors",
+          }
+          if set(evidence) != expected_top:
+              raise SystemExit("unexpected discovery top-level fields")
+          identity = evidence["identity"]
+          source = evidence["source"]
+          expected_identity = {
+              "repository": repository,
+              "repository_id": repository_id,
+              "pr_number": "71",
+              "event_name": "pull_request",
+              "event_action": "labeled",
+              "event_ref": "refs/pull/71/merge",
+              "label": "p0-v2-discovery",
+              "sender_login": "yurikuchumov-ux",
+              "sender_id": "299144523",
+              "actor_login": "yurikuchumov-ux",
+              "actor_id": "299144523",
+              "run_id": run_id,
+              "run_attempt": run_attempt,
+              "head_sha": head_sha,
+              "base_sha": base_sha,
+              "merge_sha": merge_sha,
+              "workflow_ref": workflow_ref,
+              "workflow_sha": workflow_sha,
+          }
+          for key, expected in expected_identity.items():
+              if identity.get(key) != expected:
+                  raise SystemExit(f"identity mismatch: {key}")
+          expected_source = {
+              "probe_sha256": probe_sha256,
+              "schema_sha256": schema_sha256,
+              "test_sha256": test_sha256,
+              "workflow_sha256": workflow_sha256,
+              "discovery_schema_sha256": discovery_schema_sha256,
+              "implementation_commit": head_sha,
+              "source_authoring_anchor": source_anchor,
+              "f7b0_authoring_task_sha256": f7b0_sha256,
+              "f7b1_hosted_authorization_sha256": f7b1_sha256,
+          }
+          for key, expected in expected_source.items():
+              if source.get(key) != expected:
+                  raise SystemExit(f"source mismatch: {key}")
+          if (
+              evidence["evidence_kind"]
+              != "p0-v2-runner-feasibility-discovery"
+              or evidence["mode"] != "hosted_discovery"
+              or evidence["outcome"] != "DISCOVERY_ONLY"
+              or evidence["proof_eligible"] is not False
+              or len(evidence["records"]) != 9
+              or len(evidence["mandatory_effect_blockers"]) != 27
+          ):
+              raise SystemExit("proof-ineligible contract mismatch")
+          if [item.get("sequence") for item in evidence["records"]] != list(
+              range(9)
+          ):
+              raise SystemExit("non-canonical discovery sequence")
+          if any(
+              item.get("proof_eligible") is not False
+              for item in evidence["future_witnesses"]
+          ):
+              raise SystemExit("future witness overclaim")
+          rendered = raw["discovery-evidence.json"].decode("utf-8")
+          if "GATE1_" in rendered or '"outcome":"SUCCESS"' in rendered:
+              raise SystemExit("forged candidate/reviewer authority")
+
+          evidence_digest = hashlib.sha256(
+              raw["discovery-evidence.json"]
+          ).hexdigest()
+          if (
+              manifest.get("manifest_version") != "1.0.0"
+              or manifest.get("evidence_kind")
+              != "p0-v2-runner-feasibility-discovery"
+              or manifest.get("evidence_file")
+              != "discovery-evidence.json"
+              or manifest.get("evidence_sha256") != evidence_digest
+              or manifest.get("identity") != identity
+              or manifest.get("source") != source
+              or manifest.get("proof_eligible") is not False
+          ):
+              raise SystemExit("manifest binding mismatch")
+          PY
+
+      - name: Upload sealed proof-ineligible discovery evidence
+        id: discovery-artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: p0-v2-discovery-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ env.P0_V2_DISCOVERY_EVIDENCE_DIR }}/discovery-evidence.json
+            ${{ env.P0_V2_DISCOVERY_EVIDENCE_DIR }}/discovery-evidence.json.manifest.json
+          if-no-files-found: error
+          retention-days: 7
+          include-hidden-files: false
+
   gate1:
     if: >-
       always() &&
