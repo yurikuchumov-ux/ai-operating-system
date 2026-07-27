@@ -47,6 +47,15 @@ ALLOWED_PATHS = {
     "tools/p0_v2_runner_probe.py",
 }
 BASE_SHA = "d4f10b714de3afae84d48dfcd3daa6405092a973"
+STANDALONE_DISCOVERY_VALIDATOR_ENV = (
+    "P0_V2_DISCOVERY_STANDALONE_VALIDATOR"
+)
+STANDALONE_DISCOVERY_VALIDATOR_SKIP = (
+    "independently authored external discovery validator was not supplied"
+)
+STANDALONE_DISCOVERY_VALIDATOR_SHA256 = (
+    "253824ba2053c957ec1a18e857a8bc5195cc1551d041d6a75aa180a5fe7fb49a"
+)
 
 
 def _observation(name: str, authority: str, value):
@@ -1410,6 +1419,18 @@ class WorkflowTests(unittest.TestCase):
                 if line.startswith(prefix)
             ]
             self.assertEqual([hashlib.sha256(path.read_bytes()).hexdigest()], values)
+        discovery_schema_prefix = (
+            "      EXPECTED_DISCOVERY_SCHEMA_SHA256: "
+        )
+        discovery_schema_values = [
+            line.removeprefix(discovery_schema_prefix)
+            for line in discovery_env.splitlines()
+            if line.startswith(discovery_schema_prefix)
+        ]
+        self.assertEqual(
+            [probe.discovery_schema_sha256()],
+            discovery_schema_values,
+        )
         authorization_prefix = "      F7B3_HOSTED_AUTHORIZATION_SHA256: "
         authorization_values = [
             line.removeprefix(authorization_prefix)
@@ -1421,7 +1442,7 @@ class WorkflowTests(unittest.TestCase):
             authorization_values,
         )
         self.assertEqual(
-            "498de71c3b285b41636e415f36dbeca9346998167e4ac253a17a69ced86b0215",
+            "886ee0701e65007ba5306e9cb3f145c46e9cc3e5aa33e13195e344daae3f5129",
             probe.DISCOVERY_F7B3_HOSTED_AUTHORIZATION_SHA256,
         )
 
@@ -5724,14 +5745,70 @@ def _refresh_discovery_record(value, surface):
 
 
 def _standalone_discovery_validator_path():
-    configured = os.environ.get("P0_V2_DISCOVERY_STANDALONE_VALIDATOR")
-    if configured:
-        return Path(configured)
-    workspace_copy = (
-        REPO_ROOT.parents[1]
-        / "artifacts/issue-70-p0-v2-f7b3-independent-discovery-validator.py"
-    )
-    return workspace_copy
+    if STANDALONE_DISCOVERY_VALIDATOR_ENV not in os.environ:
+        raise unittest.SkipTest(STANDALONE_DISCOVERY_VALIDATOR_SKIP)
+
+    configured = os.environ[STANDALONE_DISCOVERY_VALIDATOR_ENV]
+    if not configured:
+        raise AssertionError(
+            f"{STANDALONE_DISCOVERY_VALIDATOR_ENV} is set but empty"
+        )
+
+    validator_path = Path(configured)
+    if not validator_path.is_absolute():
+        raise AssertionError(
+            f"{STANDALONE_DISCOVERY_VALIDATOR_ENV} must be an absolute path"
+        )
+    try:
+        path_stat = validator_path.lstat()
+    except OSError as error:
+        raise AssertionError(
+            f"configured external discovery validator is unusable: {error}"
+        ) from error
+    if not stat.S_ISREG(path_stat.st_mode):
+        raise AssertionError(
+            "configured external discovery validator must be a regular file"
+        )
+
+    flags = os.O_RDONLY
+    flags |= getattr(os, "O_CLOEXEC", 0)
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(validator_path, flags)
+    except OSError as error:
+        raise AssertionError(
+            f"configured external discovery validator is unreadable: {error}"
+        ) from error
+    try:
+        descriptor_stat = os.fstat(descriptor)
+        if not stat.S_ISREG(descriptor_stat.st_mode):
+            raise AssertionError(
+                "configured external discovery validator must remain regular"
+            )
+        digest = hashlib.sha256()
+        while True:
+            chunk = os.read(descriptor, 1024 * 1024)
+            if not chunk:
+                break
+            digest.update(chunk)
+    finally:
+        os.close(descriptor)
+
+    resolved_path = validator_path.resolve(strict=True)
+    try:
+        resolved_path.relative_to(REPO_ROOT.resolve(strict=True))
+    except ValueError:
+        pass
+    else:
+        raise AssertionError(
+            "configured external discovery validator must be outside the "
+            "implementation repository"
+        )
+    if digest.hexdigest() != STANDALONE_DISCOVERY_VALIDATOR_SHA256:
+        raise AssertionError(
+            "configured external discovery validator SHA-256 mismatch"
+        )
+    return resolved_path
 
 
 def _hosted_discovery_evidence():
@@ -5810,6 +5887,100 @@ class ProofIneligibleDiscoveryContractTests(unittest.TestCase):
     def assertDiscoveryInvalid(self, value, **kwargs):
         with self.assertRaises(probe.ProbeError):
             probe.validate_discovery_evidence(value, SCHEMA_PATH, **kwargs)
+
+    def test_external_validator_unset_is_one_exact_explicit_skip(self):
+        with mock.patch.dict(os.environ, {}, clear=True):
+            with self.assertRaisesRegex(
+                unittest.SkipTest,
+                f"^{STANDALONE_DISCOVERY_VALIDATOR_SKIP}$",
+            ):
+                _standalone_discovery_validator_path()
+
+    def test_external_validator_configured_empty_or_missing_hard_fails(self):
+        with mock.patch.dict(
+            os.environ,
+            {STANDALONE_DISCOVERY_VALIDATOR_ENV: ""},
+            clear=False,
+        ):
+            with self.assertRaisesRegex(AssertionError, "set but empty"):
+                _standalone_discovery_validator_path()
+        missing = Path(tempfile.gettempdir()) / (
+            "p0-v2-definitely-missing-external-validator.py"
+        )
+        self.assertFalse(missing.exists(), missing)
+        with mock.patch.dict(
+            os.environ,
+            {STANDALONE_DISCOVERY_VALIDATOR_ENV: str(missing)},
+            clear=False,
+        ):
+            with self.assertRaisesRegex(AssertionError, "unusable"):
+                _standalone_discovery_validator_path()
+
+    def test_external_validator_configured_valid_path_is_explicitly_bound(self):
+        with tempfile.TemporaryDirectory() as raw_directory:
+            validator_path = Path(raw_directory) / "validator.py"
+            validator_raw = b"reviewed external validator fixture\n"
+            validator_path.write_bytes(validator_raw)
+            with (
+                mock.patch.dict(
+                    os.environ,
+                    {
+                        STANDALONE_DISCOVERY_VALIDATOR_ENV: str(
+                            validator_path
+                        )
+                    },
+                    clear=False,
+                ),
+                mock.patch(
+                    __name__
+                    + ".STANDALONE_DISCOVERY_VALIDATOR_SHA256",
+                    hashlib.sha256(validator_raw).hexdigest(),
+                ),
+            ):
+                self.assertEqual(
+                    validator_path.resolve(strict=True),
+                    _standalone_discovery_validator_path(),
+                )
+
+    def test_external_validator_repository_file_or_symlink_hard_fails(self):
+        with tempfile.TemporaryDirectory(dir=REPO_ROOT) as raw_directory:
+            repository_validator = Path(raw_directory) / "validator.py"
+            validator_raw = b"candidate-controlled validator fixture\n"
+            repository_validator.write_bytes(validator_raw)
+            with (
+                mock.patch.dict(
+                    os.environ,
+                    {
+                        STANDALONE_DISCOVERY_VALIDATOR_ENV: str(
+                            repository_validator
+                        )
+                    },
+                    clear=False,
+                ),
+                mock.patch(
+                    __name__
+                    + ".STANDALONE_DISCOVERY_VALIDATOR_SHA256",
+                    hashlib.sha256(validator_raw).hexdigest(),
+                ),
+            ):
+                with self.assertRaisesRegex(
+                    AssertionError, "outside the implementation repository"
+                ):
+                    _standalone_discovery_validator_path()
+
+        with tempfile.TemporaryDirectory() as raw_directory:
+            directory = Path(raw_directory)
+            target = directory / "validator.py"
+            target.write_bytes(b"reviewed external validator fixture\n")
+            symlink = directory / "validator-link.py"
+            symlink.symlink_to(target)
+            with mock.patch.dict(
+                os.environ,
+                {STANDALONE_DISCOVERY_VALIDATOR_ENV: str(symlink)},
+                clear=False,
+            ):
+                with self.assertRaisesRegex(AssertionError, "regular file"):
+                    _standalone_discovery_validator_path()
 
     def test_reference_discovery_is_valid_and_fixed_proof_ineligible(self):
         value = _discovery_evidence()
