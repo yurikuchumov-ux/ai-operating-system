@@ -61,13 +61,13 @@ jobs:
       EXPECTED_WORKFLOW_PATH: .github/workflows/p0-v2-runner-feasibility.yml
       EXPECTED_WORKFLOW_REF: ${{ github.workflow_ref }}
       EXPECTED_WORKFLOW_SHA: ${{ github.workflow_sha }}
-      EXPECTED_PROBE_SHA256: 78bf8b6a2d7428a0cafed410a4bb3fc68bd6c6acdbac0ca4a184b0c89e6db988
+      EXPECTED_PROBE_SHA256: e12692efd503e94dbf3b2fbb565c9b285f886b46198910bddc928a24673ebd2b
       EXPECTED_SCHEMA_SHA256: fbc9d66c7dd1f6b88ba9dc62b37546aea43fb2eb60e1f77c9409a722cb8bece9
-      EXPECTED_TEST_SHA256: 7b8625c8a340b125f40e21d86775c5fbf33a185eb0be0183efb3b2cb470e65a1
+      EXPECTED_TEST_SHA256: 1eaf1796f61c1e8c082a86eb3ba4f001f491282c20cd11ce8f050b491ef8887a
       EXPECTED_DISCOVERY_SCHEMA_SHA256: f94fcb3d45b2754d53d16466b6a8c2867fc4e5b8bc1b321876249b751e8a8515
       SOURCE_AUTHORING_ANCHOR: 450b33c5963ba2b202e923b52cbc47a9b11d6db7
       F7B0_AUTHORING_TASK_SHA256: fb03ded3feeb76610a04ff25cec3aa1acdc5c1048ce7adb7852d6510933571a2
-      F7B1_HOSTED_AUTHORIZATION_SHA256: bb7b706eefa105b122150645151da478146c57e5129e3a39ec69f200c43fa811
+      F7B1_HOSTED_AUTHORIZATION_SHA256: 4bb0e43fa71714b2bdbc31d474fc2903db7c39ecdab3600403681feb66125535
 
     steps:
       - name: Reject mismatched discovery context before checkout
@@ -115,17 +115,88 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          export GIT_NO_REPLACE_OBJECTS=1
           observed_head="$(git rev-parse HEAD)"
           [[ "${observed_head}" == "${EXPECTED_HEAD_SHA}" ]]
           [[ "${EVENT_BASE_SHA}" == "${EXPECTED_BASE_SHA}" ]]
+          [[ "$(git rev-parse --show-object-format)" == "sha1" ]]
+          mapfile -t replacement_refs < <(
+            git for-each-ref --format='%(refname)' refs/replace/
+          )
+          [[ "${#replacement_refs[@]}" -eq 0 ]]
+          graft_path="$(git rev-parse --git-path info/grafts)"
+          [[ ! -e "${graft_path}" ]]
           git merge-base --is-ancestor "${EXPECTED_BASE_SHA}" "${observed_head}"
           git fetch --no-tags --depth=1 origin "${EXPECTED_MERGE_SHA}"
-          read -r merge_parent_one merge_parent_two merge_parent_extra < <(
-            git show -s --format='%P' "${EXPECTED_MERGE_SHA}"
+          [[ "$(git cat-file -t "${EXPECTED_MERGE_SHA}")" == "commit" ]]
+          observed_head_tree="$(git rev-parse "${observed_head}^{tree}")"
+          merge_commit_raw="$(
+            mktemp "${RUNNER_TEMP}/p0-v2-merge-commit.XXXXXXXX"
+          )"
+          git cat-file commit "${EXPECTED_MERGE_SHA}" > "${merge_commit_raw}"
+          /usr/bin/python3 -I - \
+            "${merge_commit_raw}" \
+            "${EXPECTED_MERGE_SHA}" \
+            "${EXPECTED_BASE_SHA}" \
+            "${observed_head}" \
+            "${observed_head_tree}" <<'PY'
+          # BEGIN_F7B2_RAW_COMMIT_PARSER
+          import hashlib
+          import re
+          import sys
+
+          raw_path, expected_sha, expected_base, expected_head, expected_tree = (
+              sys.argv[1:]
           )
-          [[ "${merge_parent_one}" == "${EXPECTED_BASE_SHA}" ]]
-          [[ "${merge_parent_two}" == "${observed_head}" ]]
-          [[ -z "${merge_parent_extra:-}" ]]
+          with open(raw_path, "rb") as handle:
+              raw = handle.read()
+          if b"\0" in raw or b"\r" in raw:
+              raise SystemExit("forbidden byte in raw commit")
+          actual_sha = hashlib.sha1(
+              b"commit " + str(len(raw)).encode("ascii") + b"\0" + raw
+          ).hexdigest()
+          if actual_sha != expected_sha:
+              raise SystemExit("raw commit SHA-1 mismatch")
+          header, separator, _message = raw.partition(b"\n\n")
+          if not separator:
+              raise SystemExit("missing commit header/body separator")
+          lines = header.split(b"\n")
+          if len(lines) < 5:
+              raise SystemExit("incomplete commit header")
+          tree_match = re.fullmatch(rb"tree ([0-9a-f]{40})", lines[0])
+          if tree_match is None:
+              raise SystemExit("invalid or misplaced tree header")
+          if tree_match.group(1).decode("ascii") != expected_tree:
+              raise SystemExit("merge tree does not equal head tree")
+          expected_parents = [
+              f"parent {expected_base}".encode("ascii"),
+              f"parent {expected_head}".encode("ascii"),
+          ]
+          if lines[1:3] != expected_parents:
+              raise SystemExit("ordered merge parents mismatch")
+          active_key = None
+          top_level_keys = []
+          for line in lines[3:]:
+              if line.startswith(b" "):
+                  if active_key not in {b"gpgsig", b"mergetag"}:
+                      raise SystemExit("invalid commit header continuation")
+                  continue
+              match = re.fullmatch(rb"([a-z][a-z0-9-]*) (.+)", line)
+              if match is None:
+                  raise SystemExit("malformed commit header")
+              active_key = match.group(1)
+              if active_key in {b"tree", b"parent"}:
+                  raise SystemExit("extra structural commit header")
+              top_level_keys.append(active_key)
+          if top_level_keys.count(b"author") != 1:
+              raise SystemExit("invalid author header count")
+          if top_level_keys.count(b"committer") != 1:
+              raise SystemExit("invalid committer header count")
+          if top_level_keys.index(b"author") > top_level_keys.index(b"committer"):
+              raise SystemExit("author/committer header order mismatch")
+          # END_F7B2_RAW_COMMIT_PARSER
+          PY
+          rm -f "${merge_commit_raw}"
 
           workflow_blob="$(
             git rev-parse "${EXPECTED_WORKFLOW_SHA}:${EXPECTED_WORKFLOW_PATH}"
@@ -594,19 +665,90 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          export GIT_NO_REPLACE_OBJECTS=1
           observed_head="$(git rev-parse HEAD)"
           [[ "${observed_head}" == "${EXPECTED_HEAD_SHA}" ]]
           [[ "${EXPECTED_BASE_REPOSITORY}" == "${EXPECTED_REPOSITORY}" ]]
           [[ "${EXPECTED_BASE_REF}" == "main" ]]
           [[ "${EVENT_BASE_SHA}" == "${EXPECTED_BASE_SHA}" ]]
+          [[ "$(git rev-parse --show-object-format)" == "sha1" ]]
+          mapfile -t replacement_refs < <(
+            git for-each-ref --format='%(refname)' refs/replace/
+          )
+          [[ "${#replacement_refs[@]}" -eq 0 ]]
+          graft_path="$(git rev-parse --git-path info/grafts)"
+          [[ ! -e "${graft_path}" ]]
           git merge-base --is-ancestor "${EXPECTED_BASE_SHA}" "${observed_head}"
           git fetch --no-tags --depth=1 origin "${EXPECTED_MERGE_SHA}"
-          read -r merge_parent_one merge_parent_two merge_parent_extra < <(
-            git show -s --format='%P' "${EXPECTED_MERGE_SHA}"
+          [[ "$(git cat-file -t "${EXPECTED_MERGE_SHA}")" == "commit" ]]
+          observed_head_tree="$(git rev-parse "${observed_head}^{tree}")"
+          merge_commit_raw="$(
+            mktemp "${RUNNER_TEMP}/p0-v2-merge-commit.XXXXXXXX"
+          )"
+          git cat-file commit "${EXPECTED_MERGE_SHA}" > "${merge_commit_raw}"
+          /usr/bin/python3 -I - \
+            "${merge_commit_raw}" \
+            "${EXPECTED_MERGE_SHA}" \
+            "${EXPECTED_BASE_SHA}" \
+            "${observed_head}" \
+            "${observed_head_tree}" <<'PY'
+          # BEGIN_F7B2_RAW_COMMIT_PARSER
+          import hashlib
+          import re
+          import sys
+
+          raw_path, expected_sha, expected_base, expected_head, expected_tree = (
+              sys.argv[1:]
           )
-          [[ "${merge_parent_one}" == "${EXPECTED_BASE_SHA}" ]]
-          [[ "${merge_parent_two}" == "${observed_head}" ]]
-          [[ -z "${merge_parent_extra:-}" ]]
+          with open(raw_path, "rb") as handle:
+              raw = handle.read()
+          if b"\0" in raw or b"\r" in raw:
+              raise SystemExit("forbidden byte in raw commit")
+          actual_sha = hashlib.sha1(
+              b"commit " + str(len(raw)).encode("ascii") + b"\0" + raw
+          ).hexdigest()
+          if actual_sha != expected_sha:
+              raise SystemExit("raw commit SHA-1 mismatch")
+          header, separator, _message = raw.partition(b"\n\n")
+          if not separator:
+              raise SystemExit("missing commit header/body separator")
+          lines = header.split(b"\n")
+          if len(lines) < 5:
+              raise SystemExit("incomplete commit header")
+          tree_match = re.fullmatch(rb"tree ([0-9a-f]{40})", lines[0])
+          if tree_match is None:
+              raise SystemExit("invalid or misplaced tree header")
+          if tree_match.group(1).decode("ascii") != expected_tree:
+              raise SystemExit("merge tree does not equal head tree")
+          expected_parents = [
+              f"parent {expected_base}".encode("ascii"),
+              f"parent {expected_head}".encode("ascii"),
+          ]
+          if lines[1:3] != expected_parents:
+              raise SystemExit("ordered merge parents mismatch")
+          active_key = None
+          top_level_keys = []
+          for line in lines[3:]:
+              if line.startswith(b" "):
+                  if active_key not in {b"gpgsig", b"mergetag"}:
+                      raise SystemExit("invalid commit header continuation")
+                  continue
+              match = re.fullmatch(rb"([a-z][a-z0-9-]*) (.+)", line)
+              if match is None:
+                  raise SystemExit("malformed commit header")
+              active_key = match.group(1)
+              if active_key in {b"tree", b"parent"}:
+                  raise SystemExit("extra structural commit header")
+              top_level_keys.append(active_key)
+          if top_level_keys.count(b"author") != 1:
+              raise SystemExit("invalid author header count")
+          if top_level_keys.count(b"committer") != 1:
+              raise SystemExit("invalid committer header count")
+          if top_level_keys.index(b"author") > top_level_keys.index(b"committer"):
+              raise SystemExit("author/committer header order mismatch")
+          # END_F7B2_RAW_COMMIT_PARSER
+          PY
+          rm -f "${merge_commit_raw}"
           mapfile -t changed_records < <(
             git diff --name-status --no-renames "${EXPECTED_BASE_SHA}" "${observed_head}"
           )

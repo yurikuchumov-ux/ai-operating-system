@@ -13,6 +13,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import textwrap
 import time
 import unittest
 import zipfile
@@ -1409,6 +1410,20 @@ class WorkflowTests(unittest.TestCase):
                 if line.startswith(prefix)
             ]
             self.assertEqual([hashlib.sha256(path.read_bytes()).hexdigest()], values)
+        authorization_prefix = "      F7B1_HOSTED_AUTHORIZATION_SHA256: "
+        authorization_values = [
+            line.removeprefix(authorization_prefix)
+            for line in discovery_env.splitlines()
+            if line.startswith(authorization_prefix)
+        ]
+        self.assertEqual(
+            [probe.DISCOVERY_F7B1_HOSTED_AUTHORIZATION_SHA256],
+            authorization_values,
+        )
+        self.assertEqual(
+            "4bb0e43fa71714b2bdbc31d474fc2903db7c39ecdab3600403681feb66125535",
+            probe.DISCOVERY_F7B1_HOSTED_AUTHORIZATION_SHA256,
+        )
 
     def test_exact_pr_head_is_checked_out_without_credentials(self):
         self.assertIn("github.event.pull_request.head.sha", self.text)
@@ -1426,14 +1441,237 @@ class WorkflowTests(unittest.TestCase):
             "EXPECTED_WORKFLOW_SHA",
             "git diff --name-status --no-renames",
             "git ls-tree",
-            "merge_parent_one",
-            "merge_parent_two",
+            "BEGIN_F7B2_RAW_COMMIT_PARSER",
+            "ordered merge parents mismatch",
+            "merge tree does not equal head tree",
         ):
             self.assertIn(token, self.text)
+        self.assertNotIn("git show -s --format='%P'", self.text)
         self.assertNotIn(
             "contains(github.event.pull_request.labels.*.name",
             self.text,
         )
+
+    @classmethod
+    def _raw_commit_parser(cls):
+        blocks = []
+        start_marker = "# BEGIN_F7B2_RAW_COMMIT_PARSER"
+        end_marker = "# END_F7B2_RAW_COMMIT_PARSER"
+        remaining = cls.text
+        while start_marker in remaining:
+            _, after_start = remaining.split(start_marker, 1)
+            body, remaining = after_start.split(end_marker, 1)
+            blocks.append(textwrap.dedent(body).strip() + "\n")
+        if len(blocks) != 2 or blocks[0] != blocks[1]:
+            raise AssertionError("expected two identical raw commit parsers")
+        return blocks[0]
+
+    def _run_raw_commit_parser(
+        self,
+        raw,
+        *,
+        expected_sha=None,
+        base="1" * 40,
+        head="2" * 40,
+        tree="3" * 40,
+    ):
+        if expected_sha is None:
+            expected_sha = hashlib.sha1(
+                b"commit " + str(len(raw)).encode("ascii") + b"\0" + raw
+            ).hexdigest()
+        with tempfile.TemporaryDirectory() as directory:
+            raw_path = Path(directory) / "commit.raw"
+            raw_path.write_bytes(raw)
+            return subprocess.run(
+                [
+                    sys.executable,
+                    "-I",
+                    "-",
+                    str(raw_path),
+                    expected_sha,
+                    base,
+                    head,
+                    tree,
+                ],
+                input=self._raw_commit_parser(),
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+
+    @staticmethod
+    def _raw_merge_commit(
+        *,
+        tree="3" * 40,
+        parents=("1" * 40, "2" * 40),
+        extra_headers=(),
+        message=b"merge\n",
+        separator=b"\n\n",
+    ):
+        lines = [f"tree {tree}".encode("ascii")]
+        lines.extend(f"parent {parent}".encode("ascii") for parent in parents)
+        lines.extend(
+            [
+                b"author Test <test@example.com> 1 +0000",
+                b"committer Test <test@example.com> 1 +0000",
+                *extra_headers,
+            ]
+        )
+        return b"\n".join(lines) + separator + message
+
+    def test_raw_commit_parser_accepts_exact_headers_and_ignores_message(self):
+        raw = self._raw_merge_commit(
+            message=b"parent deadbeef\ntree deadbeef\nordinary message\n"
+        )
+        completed = self._run_raw_commit_parser(raw)
+        self.assertEqual(0, completed.returncode, completed.stderr)
+
+    def test_raw_commit_parser_rejects_all_adversarial_structural_variants(self):
+        variants = {
+            "zero-parents": self._raw_merge_commit(parents=()),
+            "one-parent": self._raw_merge_commit(parents=("1" * 40,)),
+            "three-parents": self._raw_merge_commit(
+                parents=("1" * 40, "2" * 40, "4" * 40)
+            ),
+            "reversed-parents": self._raw_merge_commit(
+                parents=("2" * 40, "1" * 40)
+            ),
+            "wrong-base": self._raw_merge_commit(
+                parents=("4" * 40, "2" * 40)
+            ),
+            "wrong-head": self._raw_merge_commit(
+                parents=("1" * 40, "4" * 40)
+            ),
+            "wrong-tree": self._raw_merge_commit(tree="4" * 40),
+            "duplicate-tree": self._raw_merge_commit(
+                extra_headers=(f"tree {'3' * 40}".encode("ascii"),)
+            ),
+            "extra-parent": self._raw_merge_commit(
+                extra_headers=(f"parent {'4' * 40}".encode("ascii"),)
+            ),
+            "missing-separator": self._raw_merge_commit(separator=b"\n"),
+            "cr-contamination": self._raw_merge_commit(
+                message=b"message\r\n"
+            ),
+            "nul-contamination": self._raw_merge_commit(
+                message=b"message\0\n"
+            ),
+            "bad-continuation": self._raw_merge_commit(
+                extra_headers=(b" invalid continuation",)
+            ),
+            "malformed-header": self._raw_merge_commit(
+                extra_headers=(b"malformed",)
+            ),
+        }
+        for label, raw in variants.items():
+            with self.subTest(label=label):
+                completed = self._run_raw_commit_parser(raw)
+                self.assertNotEqual(0, completed.returncode)
+
+        raw = self._raw_merge_commit()
+        completed = self._run_raw_commit_parser(
+            raw,
+            expected_sha="f" * 40,
+        )
+        self.assertNotEqual(0, completed.returncode)
+        self.assertIn("raw commit SHA-1 mismatch", completed.stderr)
+
+    def test_identity_critical_git_operations_are_replacement_hardened(self):
+        self.assertEqual(2, self.text.count("export GIT_NO_REPLACE_OBJECTS=1"))
+        self.assertEqual(
+            2,
+            self.text.count(
+                "git for-each-ref --format='%(refname)' refs/replace/"
+            ),
+        )
+        self.assertEqual(
+            2,
+            self.text.count('graft_path="$(git rev-parse --git-path info/grafts)"'),
+        )
+        self.assertEqual(2, self.text.count('[[ ! -e "${graft_path}" ]]'))
+        self.assertEqual(
+            2,
+            self.text.count(
+                '[[ "$(git rev-parse --show-object-format)" == "sha1" ]]'
+            ),
+        )
+        self.assertEqual(
+            2,
+            self.text.count(
+                '[[ "$(git cat-file -t "${EXPECTED_MERGE_SHA}")" == "commit" ]]'
+            ),
+        )
+        self.assertNotIn("git cat-file --filters", self.text)
+
+    def test_depth_one_real_merge_uses_raw_parents_and_rejects_repo_substitution(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Path(directory) / "repo"
+            subprocess.run(["git", "init", "-q", str(repo)], check=True)
+            env = {
+                **os.environ,
+                "GIT_AUTHOR_NAME": "Test",
+                "GIT_AUTHOR_EMAIL": "test@example.com",
+                "GIT_COMMITTER_NAME": "Test",
+                "GIT_COMMITTER_EMAIL": "test@example.com",
+            }
+
+            def git(*args, input_bytes=None):
+                return subprocess.run(
+                    ["git", *args],
+                    cwd=repo,
+                    env=env,
+                    input=input_bytes,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    check=True,
+                ).stdout.strip()
+
+            tree = git("mktree", input_bytes=b"").decode("ascii")
+            base = git("commit-tree", tree, "-m", "base").decode("ascii")
+            head = git(
+                "commit-tree", tree, "-p", base, "-m", "head"
+            ).decode("ascii")
+            merge = git(
+                "commit-tree",
+                tree,
+                "-p",
+                base,
+                "-p",
+                head,
+                "-m",
+                "merge",
+            ).decode("ascii")
+            git_dir = Path(
+                git("rev-parse", "--absolute-git-dir").decode("utf-8")
+            )
+            (git_dir / "shallow").write_text(f"{merge}\n", encoding="ascii")
+
+            visible_parents = git("show", "-s", "--format=%P", merge)
+            self.assertEqual(b"", visible_parents)
+            raw = git("cat-file", "commit", merge)
+            completed = self._run_raw_commit_parser(
+                raw + b"\n",
+                expected_sha=merge,
+                base=base,
+                head=head,
+                tree=tree,
+            )
+            self.assertEqual(0, completed.returncode, completed.stderr)
+
+            other = git("commit-tree", tree, "-m", "other").decode("ascii")
+            git("replace", merge, other)
+            replacement_refs = git(
+                "for-each-ref", "--format=%(refname)", "refs/replace/"
+            )
+            self.assertTrue(replacement_refs)
+
+            graft_path = git_dir / "info" / "grafts"
+            graft_path.parent.mkdir(parents=True, exist_ok=True)
+            graft_path.write_text(f"{merge} {base} {head}\n", encoding="ascii")
+            self.assertTrue(graft_path.exists())
+
+            self.assertEqual(b"tree", git("cat-file", "-t", tree))
 
     def test_trusted_tests_do_not_use_isolated_mode_that_hides_checkout(self):
         self.assertIn(
