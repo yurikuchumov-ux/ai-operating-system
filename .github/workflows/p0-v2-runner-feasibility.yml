@@ -1,0 +1,16 @@
+name: P0 v2 runner feasibility candidate (inert)
+
+on:
+  workflow_call:
+
+permissions: {}
+
+jobs:
+  inert-candidate:
+    if: ${{ false }}
+    permissions: {}
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Fail closed if GitHub evaluates the inert candidate workflow
+        shell: bash
+        run: exit 1
