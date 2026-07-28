@@ -939,6 +939,488 @@ MISSING_LOADER_ERRNOS = frozenset(
 # effect_unproven keeps SUCCESS unreachable.
 EFFECT_UNPROVEN = "effect_unproven"
 
+# F7-B4 is an authoring-only contract for later, separately authorized matched
+# witnesses.  It is intentionally not wired into any CLI or hosted workflow.
+# These constants and the validator below define a closed evidence language and
+# state machine without moving a mandatory blocker or granting effect authority.
+DIFFERENTIAL_SCHEMA_VERSION = "1.5.0"
+DIFFERENTIAL_EVIDENCE_KIND = "p0-v2-runner-feasibility-differential-witness"
+DIFFERENTIAL_NOTICE = (
+    "authoring-only differential-witness model; proof-ineligible under F7-B4"
+)
+DIFFERENTIAL_AUTHORING_TASK_SHA256 = (
+    "a8331f6562528e111641b7cac91dc0b26f136a95f8416c90d6886ce8b5bf622b"
+)
+DIFFERENTIAL_AUTHORING_PARENT = (
+    "b764980c2337423677870dbbef945a039d1567b3"
+)
+DIFFERENTIAL_AUTHORING_PARENT_TREE = (
+    "699ee1244a4153b361d738f0e967917265b78dfd"
+)
+DIFFERENTIAL_AUTHORING_PARENT_PROBE_SHA256 = (
+    "5c72b3684584c4598ebd156aabac8b452cb25c80634e16669ee0833c4ab2812d"
+)
+DIFFERENTIAL_AUTHORING_PARENT_TEST_SHA256 = (
+    "553770fb0bf16886028f0a389ad0808f59443262cb55c1996e3091a10fc2092e"
+)
+DIFFERENTIAL_CANONICAL_REPOSITORY = "yurikuchumov-ux/ai-operating-system"
+DIFFERENTIAL_CANONICAL_REPOSITORY_ID = 1296950956
+DIFFERENTIAL_CANONICAL_PR_NUMBER = 71
+DIFFERENTIAL_CANONICAL_BASE_SHA = (
+    "d4f10b714de3afae84d48dfcd3daa6405092a973"
+)
+DIFFERENTIAL_CANONICAL_HEAD_SHA = DIFFERENTIAL_AUTHORING_PARENT
+DIFFERENTIAL_CANONICAL_WORKFLOW_SHA256 = (
+    "3094402947d25aa514d28fe805e00224b5a75c542a9a7632a0e016e78216d3e5"
+)
+DIFFERENTIAL_FUTURE_AUTHORITY_KIND = (
+    "p0-v2-f7b4.future-run-authorization.v1"
+)
+DIFFERENTIAL_DEVICE_AUTHORITY_KIND = (
+    "p0-v2-f7b4.device-operation-authorization.v1"
+)
+DIFFERENTIAL_FUTURE_AUTHORITY_DOMAIN = (
+    "ai-operating-system:p0-v2:f7-b4:future-run-authority:v1"
+)
+DIFFERENTIAL_DEVICE_AUTHORITY_DOMAIN = (
+    "ai-operating-system:p0-v2:f7-b4:device-operation-authority:v1"
+)
+DIFFERENTIAL_PROOF_INELIGIBLE_REASON = (
+    "F7-B4 defines and tests a future witness grammar only; it executes no "
+    "witness, proves no effect, moves no blocker, and cannot reach candidate "
+    "SUCCESS or any reviewer-owned final decision"
+)
+DIFFERENTIAL_INITIAL_STATE = "declared_not_executed"
+DIFFERENTIAL_EXECUTED_UNCLASSIFIED_STATE = "executed_unclassified"
+DIFFERENTIAL_CLASSIFICATIONS = (
+    "effect_proven",
+    "implementation_defect",
+    "global_policy_or_platform_ambiguous",
+    "repeated_platform_wall",
+    "witness_unusable",
+)
+DIFFERENTIAL_STATES = (
+    DIFFERENTIAL_INITIAL_STATE,
+    DIFFERENTIAL_EXECUTED_UNCLASSIFIED_STATE,
+) + DIFFERENTIAL_CLASSIFICATIONS
+DIFFERENTIAL_LOCAL_AUTHORITY = "local_authoring_only"
+DIFFERENTIAL_FUTURE_AUTHORITY = "separately_reviewed_future_hosted_witness"
+# Deliberately empty in this local-authoring task.  A later reviewed task must
+# install complete frozen records, never bare digests or evidence-controlled
+# assertions, before any executed evidence can be classified.
+DIFFERENTIAL_REPORT_AUTHORITIES = (TRUSTED_BOOTSTRAP_OBSERVED,)
+DIFFERENTIAL_DIRECT_AUTHORITIES = (
+    "kernel_observed",
+    "systemd_observed",
+    "supervisor_observed",
+    "platform_file_observed",
+)
+DIFFERENTIAL_MAX_EVIDENCE_BYTES = 512 * 1024
+DIFFERENTIAL_MAX_TEXT_BYTES = 4096
+DIFFERENTIAL_MAX_OBSERVATIONS = 128
+DIFFERENTIAL_DEVICE_INVENTORY_COUNT = 166
+DIFFERENTIAL_DEVICE_DISCOVERY_ARTIFACT_SHA256 = (
+    "b0272253fddd16e62a59e709048473ccf88120beae56c1ff57b9863f6310c30c"
+)
+
+# Only these four equivalence classes may combine mandatory properties.  Every
+# other blocker remains a one-property target.  The synchronization check below
+# proves that this model covers exactly the current 27 blockers.
+DIFFERENTIAL_EQUIVALENCE_CLASS_PROPERTIES = {
+    "EC-DEVICE-ACCESS": ("DevicePolicy", "PrivateDevices"),
+    "EC-KERNEL-OOM-GROUP": ("OOMPolicy",),
+    "EC-DYNAMICUSER-SUID": ("RestrictSUIDSGID",),
+    "EC-DYNAMICUSER-IPC": ("RemoveIPC",),
+}
+DIFFERENTIAL_EQUIVALENCE_CLASS_REQUIRED_OBSERVATIONS = {
+    "EC-DEVICE-ACCESS": (
+        "device.cgroup_bpf_attachment_supporting",
+        "device.operation_denied_in_w_plus",
+        "device.operation_reached_in_w_minus",
+        "device.private_dev_topology_supporting",
+    ),
+    "EC-KERNEL-OOM-GROUP": (
+        "cgroup.complete_death",
+        "cgroup.events",
+        "cgroup.memory_events",
+        "cgroup.memory_oom_group",
+        "cgroup.process_membership",
+    ),
+    "EC-DYNAMICUSER-SUID": (
+        "suid.denial_or_bit_clearing_in_w_plus",
+        "suid.operation_reached_in_w_minus",
+        "suid.synthetic_file_identity",
+    ),
+    "EC-DYNAMICUSER-IPC": (
+        "ipc.removed_in_w_plus",
+        "ipc.retained_in_w_minus",
+        "ipc.synthetic_object_identity",
+    ),
+}
+DIFFERENTIAL_EQUIVALENCE_CLASSES = tuple(
+    DIFFERENTIAL_EQUIVALENCE_CLASS_PROPERTIES
+)
+# The complete generated unit AST is closed.  W+ and W- are generated from
+# these exact target-specific deltas; no caller-provided systemd setting or
+# loosely typed target value exists.
+DIFFERENTIAL_TARGET_UNIT_DELTAS = {
+    "EC-DEVICE-ACCESS": (
+        (("DevicePolicy", "closed"), ("PrivateDevices", "yes")),
+        (("DevicePolicy", "auto"), ("PrivateDevices", "no")),
+    ),
+    "EC-KERNEL-OOM-GROUP": (
+        (("OOMPolicy", "kill"),),
+        (("OOMPolicy", "continue"),),
+    ),
+    "EC-DYNAMICUSER-SUID": (
+        (("RestrictSUIDSGID", "yes"),),
+        (("RestrictSUIDSGID", "no"),),
+    ),
+    "EC-DYNAMICUSER-IPC": (
+        (("RemoveIPC", "yes"),),
+        (("RemoveIPC", "no"),),
+    ),
+    "KeyringMode": ((("KeyringMode", "private"),), (("KeyringMode", "inherit"),)),
+    "KillMode": ((("KillMode", "control-group"),), (("KillMode", "process"),)),
+    "LockPersonality": ((("LockPersonality", "yes"),), (("LockPersonality", "no"),)),
+    "MemoryDenyWriteExecute": (
+        (("MemoryDenyWriteExecute", "yes"),),
+        (("MemoryDenyWriteExecute", "no"),),
+    ),
+    "ProcSubset": ((("ProcSubset", "pid"),), (("ProcSubset", "all"),)),
+    "ProtectClock": ((("ProtectClock", "yes"),), (("ProtectClock", "no"),)),
+    "ProtectControlGroups": (
+        (("ProtectControlGroups", "yes"),),
+        (("ProtectControlGroups", "no"),),
+    ),
+    "ProtectHome": ((("ProtectHome", "yes"),), (("ProtectHome", "no"),)),
+    "ProtectKernelLogs": (
+        (("ProtectKernelLogs", "yes"),),
+        (("ProtectKernelLogs", "no"),),
+    ),
+    "ProtectKernelModules": (
+        (("ProtectKernelModules", "yes"),),
+        (("ProtectKernelModules", "no"),),
+    ),
+    "ProtectKernelTunables": (
+        (("ProtectKernelTunables", "yes"),),
+        (("ProtectKernelTunables", "no"),),
+    ),
+    "ProtectProc": ((("ProtectProc", "invisible"),), (("ProtectProc", "default"),)),
+    "ProtectSystem": ((("ProtectSystem", "strict"),), (("ProtectSystem", "no"),)),
+    "RestrictAddressFamilies": (
+        (("RestrictAddressFamilies", "AF_UNIX AF_INET AF_INET6"),),
+        (("RestrictAddressFamilies", "AF_UNIX AF_INET AF_INET6 AF_NETLINK"),),
+    ),
+    "RestrictNamespaces": (
+        (("RestrictNamespaces", "yes"),),
+        (("RestrictNamespaces", "no"),),
+    ),
+    "RestrictRealtime": (
+        (("RestrictRealtime", "yes"),),
+        (("RestrictRealtime", "no"),),
+    ),
+    "RuntimeMaxUSec": (
+        (("RuntimeMaxUSec", "30000000"),),
+        (("RuntimeMaxUSec", "infinity"),),
+    ),
+    "SendSIGKILL": ((("SendSIGKILL", "yes"),), (("SendSIGKILL", "no"),)),
+    "SetLoginEnvironment": (
+        (("SetLoginEnvironment", "no"),),
+        (("SetLoginEnvironment", "yes"),),
+    ),
+    "SystemCallArchitectures": (
+        (("SystemCallArchitectures", "native"),),
+        (("SystemCallArchitectures", "native x32"),),
+    ),
+    "SystemCallFilter": (
+        (("SystemCallFilter", "@system-service"),),
+        (("SystemCallFilter", "@system-service @privileged"),),
+    ),
+    "TimeoutStopUSec": (
+        (("TimeoutStopUSec", "5000000"),),
+        (("TimeoutStopUSec", "infinity"),),
+    ),
+}
+
+
+@dataclass(frozen=True)
+class DifferentialOperationSpec:
+    target: str
+    operation_id: str
+    operation_definition_sha256: str
+    observation_name: str
+    positive_outcome: str
+    negative_outcome: str
+    secondary_abi: Optional[str] = None
+    helper_path: Optional[str] = None
+    helper_sha256: Optional[str] = None
+    build_provenance_sha256: Optional[str] = None
+    syscall_operation: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class DifferentialFutureAuthorizationRecord:
+    authorization_sha256: str
+    authority_kind: str
+    approved_task_sha256: str
+    owner_approval_sha256: str
+    review_sha256: str
+    repository: str
+    repository_id: int
+    pr_number: int
+    base_sha: str
+    head_sha: str
+    workflow_sha: str
+    target: str
+    run_id: str
+    run_attempt: int
+    nonce: str
+    positive_invocation_id: str
+    negative_invocation_id: str
+    one_shot_disposition: str
+    operation_id: str
+    operation_definition_sha256: str
+    positive_witness_report_sha256: str
+    negative_witness_report_sha256: str
+    device_operation_authorization_sha256: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class DifferentialDeviceOperationAuthorizationRecord:
+    authorization_sha256: str
+    authority_kind: str
+    approved_task_sha256: str
+    owner_approval_sha256: str
+    review_sha256: str
+    future_authorization_sha256: str
+    repository: str
+    repository_id: int
+    pr_number: int
+    base_sha: str
+    target: str
+    head_sha: str
+    workflow_sha: str
+    run_id: str
+    run_attempt: int
+    nonce: str
+    positive_invocation_id: str
+    negative_invocation_id: str
+    operation_id: str
+    operation_definition_sha256: str
+    device_path: str
+    device_major: int
+    device_minor: int
+    non_mutating: bool
+
+
+@dataclass(frozen=True)
+class DifferentialAmbiguousRunRecord:
+    evidence_sha256: str
+    authorization_sha256: str
+    reviewer_disposition_sha256: str
+    repository: str
+    repository_id: int
+    pr_number: int
+    base_sha: str
+    head_sha: str
+    workflow_sha: str
+    target: str
+    run_id: str
+    run_attempt: int
+    nonce: str
+    operation_id: str
+    operation_definition_sha256: str
+    positive_witness_report_sha256: str
+    negative_witness_report_sha256: str
+    raw_platform_state_sha256: str
+    classification: str
+
+
+def _differential_operation_slug(target: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", target.lower()).strip("-")
+
+
+def _differential_operation_spec(target: str) -> DifferentialOperationSpec:
+    slug = _differential_operation_slug(target)
+    definition = (
+        f"p0-v2-f7b4:{target}:execute-one-reviewed-non-mutating-probe:"
+        "W-plus-must-block:W-minus-must-reach"
+    )
+    common = {
+        "target": target,
+        "operation_id": f"p0-v2-f7b4.{slug}.exact-probe",
+        "operation_definition_sha256": hashlib.sha256(
+            definition.encode("ascii")
+        ).hexdigest(),
+        "observation_name": f"effect.{slug}.exact-operation",
+        "positive_outcome": "blocked",
+        "negative_outcome": "reached",
+    }
+    if target == "SystemCallArchitectures":
+        return DifferentialOperationSpec(
+            **common,
+            secondary_abi="x32",
+            helper_path="/run/p0-v2-f7b4/helpers/x32-syscall",
+            helper_sha256=hashlib.sha256(
+                b"reviewed-x32-helper-source-and-binary"
+            ).hexdigest(),
+            build_provenance_sha256=hashlib.sha256(
+                b"reviewed-reproducible-x32-helper-build"
+            ).hexdigest(),
+            syscall_operation="getpid",
+        )
+    return DifferentialOperationSpec(**common)
+
+
+DIFFERENTIAL_TARGET_OPERATION_SPECS: Tuple[DifferentialOperationSpec, ...] = tuple(
+    _differential_operation_spec(target)
+    for target in sorted(DIFFERENTIAL_TARGET_UNIT_DELTAS)
+)
+DIFFERENTIAL_REVIEWED_FUTURE_AUTHORIZATIONS: Tuple[
+    DifferentialFutureAuthorizationRecord, ...
+] = ()
+DIFFERENTIAL_REVIEWED_DEVICE_OPERATION_AUTHORIZATIONS: Tuple[
+    DifferentialDeviceOperationAuthorizationRecord, ...
+] = ()
+DIFFERENTIAL_REVIEWED_AMBIGUOUS_RUNS: Tuple[
+    DifferentialAmbiguousRunRecord, ...
+] = ()
+DIFFERENTIAL_UNIT_AST_FIELDS = ("section", "name", "value")
+DIFFERENTIAL_ROOT_FIELDS = (
+    "schema_version",
+    "evidence_kind",
+    "notice",
+    "authoring_task_sha256",
+    "authoring_parent",
+    "authoring_parent_tree",
+    "authority_scope",
+    "proof_eligible",
+    "proof_ineligible_reason",
+    "execution_state",
+    "classification",
+    "target",
+    "target_properties",
+    "run_identity",
+    "future_authorization",
+    "witnesses",
+    "fresh_run_evidence",
+    "mandatory_effect_blockers",
+    "errors",
+)
+DIFFERENTIAL_RUN_IDENTITY_FIELDS = (
+    "repository",
+    "repository_id",
+    "pr_number",
+    "run_id",
+    "run_attempt",
+    "head_sha",
+    "base_sha",
+    "workflow_sha",
+    "authorization_sha256",
+    "nonce",
+)
+DIFFERENTIAL_SOURCE_BINDING_FIELDS = (
+    "path",
+    "sha256",
+    "device",
+    "inode",
+    "uid",
+    "gid",
+    "mode",
+    "descriptor_stable",
+    "substitution_rejected",
+    "authority",
+)
+DIFFERENTIAL_PROCESS_BINDING_FIELDS = (
+    "pid",
+    "pid_authority",
+    "start_time_ticks",
+    "start_time_authority",
+    "uid",
+    "gid",
+    "credentials_authority",
+    "environment",
+    "environment_authority",
+    "cgroup",
+    "cgroup_authority",
+    "invocation_id",
+    "invocation_id_authority",
+)
+DIFFERENTIAL_PROOF_CHANNEL_FIELDS = (
+    "kind",
+    "pipe_inode",
+    "writer_fd",
+    "writer_processes",
+    "writer_open_file_description_count",
+    "writer_cloexec",
+    "duplicate_writer_fds",
+    "descendant_writer_refs",
+    "bootstrap_descendant_pids",
+    "eof_observed",
+    "eof_before_hostile_transition",
+    "post_exec_writer_fds",
+    "pathname_reopenable",
+    "authority",
+    "process_tree",
+    "open_file_descriptions",
+)
+DIFFERENTIAL_PROCESS_TREE_FIELDS = (
+    "pid",
+    "start_time_ticks",
+    "parent_pid",
+    "writer_fds",
+)
+DIFFERENTIAL_OPEN_FILE_DESCRIPTION_FIELDS = (
+    "ofd_id",
+    "pipe_inode",
+    "holder_pid",
+    "holder_fd",
+    "write_end",
+)
+DIFFERENTIAL_WITNESS_FIELDS = (
+    "role",
+    "unit_name",
+    "report_authority",
+    "executed",
+    "run_binding",
+    "unit_ast",
+    "source_binding",
+    "process_binding",
+    "proof_channel",
+    "operation_result",
+    "observations",
+)
+DIFFERENTIAL_WITNESS_RUN_BINDING_FIELDS = DIFFERENTIAL_RUN_IDENTITY_FIELDS
+DIFFERENTIAL_OPERATION_RESULT_FIELDS = (
+    "reviewed_exact_operation",
+    "operation_id",
+    "operation_authorization_sha256",
+    "operation_non_mutating",
+    "control_reached",
+    "effect_observed",
+    "errno",
+    "secondary_abi_executed",
+    "supporting_dev_topology",
+    "supporting_bpf_query",
+    "manager_window_preserved",
+    "supervisor_fallback_started",
+)
+DIFFERENTIAL_FUTURE_AUTHORIZATION_FIELDS = (
+    "authorization_sha256",
+)
+DIFFERENTIAL_FRESH_RUN_FIELDS = (
+    "evidence_sha256",
+    "reviewer_disposition_sha256",
+    "run_id",
+    "run_attempt",
+    "head_sha",
+    "authorization_sha256",
+    "raw_platform_state_sha256",
+    "classification",
+)
+DIFFERENTIAL_ERROR_FIELDS = ("code", "authority", "detail")
+
 
 @dataclass(frozen=True)
 class ControlInventoryEntry:
@@ -2169,6 +2651,2919 @@ def mandatory_effect_blockers() -> List[str]:
         if entry.effect_control is None:
             blockers.extend(entry.manager_properties)
     return sorted(blockers)
+
+
+def _differential_require_exact_fields(
+    value: Any, expected: Sequence[str], context: str
+) -> Mapping[str, Any]:
+    if not isinstance(value, Mapping):
+        raise ProbeError("DIFFERENTIAL_FIELD_SET_INVALID", f"{context}: not an object")
+    actual = list(value)
+    if actual != list(expected):
+        raise ProbeError(
+            "DIFFERENTIAL_FIELD_SET_INVALID",
+            f"{context}: expected={list(expected)} actual={actual}",
+        )
+    return value
+
+
+def _differential_require_bool(value: Any, context: str) -> bool:
+    if not isinstance(value, bool):
+        raise ProbeError("DIFFERENTIAL_TYPE_INVALID", f"{context}: boolean required")
+    return value
+
+
+def _differential_require_int(
+    value: Any, context: str, *, minimum: int = 0
+) -> int:
+    if (
+        not isinstance(value, int)
+        or isinstance(value, bool)
+        or value < minimum
+    ):
+        raise ProbeError(
+            "DIFFERENTIAL_TYPE_INVALID",
+            f"{context}: integer >= {minimum} required",
+        )
+    return value
+
+
+def _differential_require_text(
+    value: Any,
+    context: str,
+    *,
+    pattern: Optional[re.Pattern[str]] = None,
+    maximum: int = DIFFERENTIAL_MAX_TEXT_BYTES,
+) -> str:
+    if not isinstance(value, str):
+        raise ProbeError("DIFFERENTIAL_TYPE_INVALID", f"{context}: string required")
+    try:
+        encoded = value.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise ProbeError(
+            "DIFFERENTIAL_TEXT_INVALID", f"{context}: {exc}"
+        ) from exc
+    if not encoded or len(encoded) > maximum or "\x00" in value:
+        raise ProbeError(
+            "DIFFERENTIAL_TEXT_INVALID",
+            f"{context}: empty, NUL-bearing, or oversized",
+        )
+    if pattern is not None and pattern.fullmatch(value) is None:
+        raise ProbeError("DIFFERENTIAL_TEXT_INVALID", f"{context}: malformed")
+    return value
+
+
+def _differential_require_sha256(value: Any, context: str) -> str:
+    return _differential_require_text(
+        value,
+        context,
+        pattern=re.compile(r"^[0-9a-f]{64}$"),
+        maximum=64,
+    )
+
+
+def _differential_require_sha40(value: Any, context: str) -> str:
+    return _differential_require_text(
+        value,
+        context,
+        pattern=re.compile(r"^[0-9a-f]{40}$"),
+        maximum=40,
+    )
+
+
+def _differential_require_canonical_repository_context(
+    value: Any, context: str
+) -> None:
+    expected = {
+        "repository": DIFFERENTIAL_CANONICAL_REPOSITORY,
+        "repository_id": DIFFERENTIAL_CANONICAL_REPOSITORY_ID,
+        "pr_number": DIFFERENTIAL_CANONICAL_PR_NUMBER,
+        "base_sha": DIFFERENTIAL_CANONICAL_BASE_SHA,
+        "head_sha": DIFFERENTIAL_CANONICAL_HEAD_SHA,
+        "workflow_sha": DIFFERENTIAL_CANONICAL_WORKFLOW_SHA256,
+    }
+    for name, canonical in expected.items():
+        observed = (
+            value[name] if isinstance(value, Mapping) else getattr(value, name)
+        )
+        if observed != canonical:
+            raise ProbeError(
+                "DIFFERENTIAL_EFFECT_AUTHORITY_REQUIRED",
+                f"{context}.{name}: canonical repository context required",
+            )
+
+
+def _differential_require_separate_digests(
+    context: str, **digests: Optional[str]
+) -> None:
+    present = {
+        name: digest for name, digest in digests.items() if digest is not None
+    }
+    for name, digest in present.items():
+        _differential_require_sha256(digest, f"{context}.{name}")
+    if len(set(present.values())) != len(present):
+        raise ProbeError(
+            "DIFFERENTIAL_EFFECT_AUTHORITY_REQUIRED",
+            f"{context}: authority, review, evidence, and disposition digests "
+            "must be pairwise distinct",
+        )
+
+
+def _differential_domain_separated_sha256(
+    domain: str, fields: Mapping[str, Any]
+) -> str:
+    payload = json.dumps(
+        {"domain": domain, "fields": fields},
+        ensure_ascii=True,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("ascii")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _differential_future_authorization_identity_sha256(
+    record: DifferentialFutureAuthorizationRecord,
+) -> str:
+    return _differential_domain_separated_sha256(
+        DIFFERENTIAL_FUTURE_AUTHORITY_DOMAIN,
+        {
+            "approved_task_sha256": record.approved_task_sha256,
+            "authority_kind": record.authority_kind,
+            "base_sha": record.base_sha,
+            "head_sha": record.head_sha,
+            "negative_invocation_id": record.negative_invocation_id,
+            "nonce": record.nonce,
+            "one_shot_disposition": record.one_shot_disposition,
+            "operation_definition_sha256": record.operation_definition_sha256,
+            "operation_id": record.operation_id,
+            "owner_approval_sha256": record.owner_approval_sha256,
+            "positive_invocation_id": record.positive_invocation_id,
+            "pr_number": record.pr_number,
+            "repository": record.repository,
+            "repository_id": record.repository_id,
+            "review_sha256": record.review_sha256,
+            "run_attempt": record.run_attempt,
+            "run_id": record.run_id,
+            "target": record.target,
+            "workflow_sha": record.workflow_sha,
+        },
+    )
+
+
+def _differential_device_authorization_identity_sha256(
+    record: DifferentialDeviceOperationAuthorizationRecord,
+) -> str:
+    return _differential_domain_separated_sha256(
+        DIFFERENTIAL_DEVICE_AUTHORITY_DOMAIN,
+        {
+            "approved_task_sha256": record.approved_task_sha256,
+            "authority_kind": record.authority_kind,
+            "base_sha": record.base_sha,
+            "device_major": record.device_major,
+            "device_minor": record.device_minor,
+            "device_path": record.device_path,
+            "future_authorization_sha256": record.future_authorization_sha256,
+            "head_sha": record.head_sha,
+            "negative_invocation_id": record.negative_invocation_id,
+            "non_mutating": record.non_mutating,
+            "nonce": record.nonce,
+            "operation_definition_sha256": record.operation_definition_sha256,
+            "operation_id": record.operation_id,
+            "owner_approval_sha256": record.owner_approval_sha256,
+            "positive_invocation_id": record.positive_invocation_id,
+            "pr_number": record.pr_number,
+            "repository": record.repository,
+            "repository_id": record.repository_id,
+            "review_sha256": record.review_sha256,
+            "run_attempt": record.run_attempt,
+            "run_id": record.run_id,
+            "target": record.target,
+            "workflow_sha": record.workflow_sha,
+        },
+    )
+
+
+def _differential_mapping_sha256(value: Mapping[str, Any], context: str) -> str:
+    try:
+        payload = json.dumps(
+            value,
+            ensure_ascii=False,
+            sort_keys=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    except (TypeError, ValueError, UnicodeError, RecursionError) as exc:
+        raise ProbeError("DIFFERENTIAL_ENCODING_INVALID", f"{context}: {exc}") from exc
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _differential_extend_unique_roles(
+    seen: set, context: str, **digests: Optional[str]
+) -> None:
+    present = {
+        name: digest for name, digest in digests.items() if digest is not None
+    }
+    for name, digest in present.items():
+        _differential_require_sha256(digest, f"{context}.{name}")
+    values = tuple(present.values())
+    if len(values) != len(set(values)) or seen.intersection(values):
+        raise ProbeError(
+            "DIFFERENTIAL_PLATFORM_WALL_UNPROVED",
+            f"{context}: authority, review, witness, evidence, raw-state, and "
+            "reviewer-disposition roles must be globally unique",
+        )
+    seen.update(values)
+
+
+def _differential_validate_bounded_json(
+    value: Any, context: str, *, depth: int = 0
+) -> None:
+    """Validate observation payloads without an uncaught encoding path."""
+    if depth > 8:
+        raise ProbeError("DIFFERENTIAL_TYPE_INVALID", f"{context}: nesting too deep")
+    if value is None or isinstance(value, bool):
+        return
+    if isinstance(value, int) and not isinstance(value, bool):
+        return
+    if isinstance(value, str):
+        _differential_require_text(value, context)
+        return
+    if isinstance(value, list):
+        if len(value) > DIFFERENTIAL_MAX_OBSERVATIONS:
+            raise ProbeError(
+                "DIFFERENTIAL_TYPE_INVALID", f"{context}: list too large"
+            )
+        for index, item in enumerate(value):
+            _differential_validate_bounded_json(
+                item, f"{context}[{index}]", depth=depth + 1
+            )
+        return
+    if isinstance(value, Mapping):
+        if len(value) > DIFFERENTIAL_MAX_OBSERVATIONS or list(value) != sorted(value):
+            raise ProbeError(
+                "DIFFERENTIAL_NONCANONICAL",
+                f"{context}: object keys must be bounded, unique, and sorted",
+            )
+        for key, item in value.items():
+            _differential_require_text(
+                key,
+                f"{context}.key",
+                pattern=re.compile(r"^[a-z][a-z0-9_.-]*$"),
+                maximum=128,
+            )
+            _differential_validate_bounded_json(
+                item, f"{context}.{key}", depth=depth + 1
+            )
+        return
+    raise ProbeError(
+        "DIFFERENTIAL_TYPE_INVALID",
+        f"{context}: only canonical JSON scalar/list/object values are allowed",
+    )
+
+
+def differential_target_properties(target: str) -> Tuple[str, ...]:
+    """Return the exact blocker set one differential target may satisfy.
+
+    Equivalence-class names are the only multi-property targets.  A plain
+    mandatory property is always a one-property target.
+    """
+    target = _differential_require_text(target, "target", maximum=128)
+    if target in DIFFERENTIAL_EQUIVALENCE_CLASS_PROPERTIES:
+        return DIFFERENTIAL_EQUIVALENCE_CLASS_PROPERTIES[target]
+    if target in mandatory_effect_blockers():
+        if any(
+            target in properties
+            for properties in DIFFERENTIAL_EQUIVALENCE_CLASS_PROPERTIES.values()
+        ):
+            raise ProbeError(
+                "DIFFERENTIAL_TARGET_INVALID",
+                f"{target}: equivalence-class property must use its class",
+            )
+        return (target,)
+    raise ProbeError("DIFFERENTIAL_TARGET_INVALID", target)
+
+
+def differential_targets() -> Tuple[str, ...]:
+    class_properties = {
+        property_name
+        for properties in DIFFERENTIAL_EQUIVALENCE_CLASS_PROPERTIES.values()
+        for property_name in properties
+    }
+    individual = sorted(set(mandatory_effect_blockers()) - class_properties)
+    return tuple(sorted(DIFFERENTIAL_EQUIVALENCE_CLASSES + tuple(individual)))
+
+
+def differential_unit_ast(target: str, role: str) -> List[Dict[str, str]]:
+    """Generate the complete reviewed unit AST for exactly one witness."""
+    differential_target_properties(target)
+    if role not in DIFFERENTIAL_WITNESS_ROLES:
+        raise ProbeError("DIFFERENTIAL_WITNESS_ORDER_INVALID", role)
+    try:
+        positive, negative = DIFFERENTIAL_TARGET_UNIT_DELTAS[target]
+    except KeyError as exc:
+        raise ProbeError("DIFFERENTIAL_TARGET_INVALID", target) from exc
+    shared = (
+        ("Unit", "Description", "P0 v2 F7-B4 differential witness"),
+        ("Service", "Type", "exec"),
+        (
+            "Service",
+            "ExecStart",
+            "/usr/bin/python3 -I /run/p0-v2-f7b4/witness.py",
+        ),
+        ("Service", "DynamicUser", "yes"),
+        ("Service", "NoNewPrivileges", "yes"),
+        ("Service", "UnsetEnvironment", "*"),
+        ("Service", "MemoryMax", "268435456"),
+        ("Service", "TasksMax", "64"),
+        ("Service", "TimeoutStartUSec", "30000000"),
+    )
+    delta = positive if role == "W+" else negative
+    return [
+        {"section": section, "name": name, "value": value}
+        for section, name, value in shared
+    ] + [
+        {"section": "Service", "name": name, "value": value}
+        for name, value in delta
+    ]
+
+
+def differential_operation_spec(target: str) -> DifferentialOperationSpec:
+    target = _differential_require_text(target, "target", maximum=128)
+    for spec in DIFFERENTIAL_TARGET_OPERATION_SPECS:
+        if spec.target == target:
+            return spec
+    raise ProbeError("DIFFERENTIAL_TARGET_INVALID", target)
+
+
+def verify_differential_target_model_synchronized() -> None:
+    """Fail closed unless the target model covers exactly all 27 blockers."""
+    blockers = mandatory_effect_blockers()
+    if len(blockers) != 27:
+        raise ProbeError(
+            "DIFFERENTIAL_BLOCKER_DRIFT",
+            f"expected 27 mandatory blockers, got {len(blockers)}",
+        )
+    seen: Dict[str, str] = {}
+    for target in differential_targets():
+        properties = differential_target_properties(target)
+        if not properties:
+            raise ProbeError("DIFFERENTIAL_TARGET_INVALID", f"{target}: empty")
+        for property_name in properties:
+            if property_name in seen:
+                raise ProbeError(
+                    "DIFFERENTIAL_TARGET_OVERLAP",
+                    f"{property_name}: {seen[property_name]} and {target}",
+                )
+            seen[property_name] = target
+    if sorted(seen) != blockers:
+        raise ProbeError(
+            "DIFFERENTIAL_BLOCKER_DRIFT",
+            f"covered={sorted(seen)} blockers={blockers}",
+        )
+    if set(DIFFERENTIAL_TARGET_UNIT_DELTAS) != set(differential_targets()):
+        raise ProbeError(
+            "DIFFERENTIAL_TARGET_MODEL_DRIFT",
+            "unit-delta targets do not exactly cover the target model",
+        )
+    for target, pair in DIFFERENTIAL_TARGET_UNIT_DELTAS.items():
+        if (
+            not isinstance(pair, tuple)
+            or len(pair) != 2
+            or not pair[0]
+            or not pair[1]
+            or pair[0] == pair[1]
+        ):
+            raise ProbeError(
+                "DIFFERENTIAL_TARGET_MODEL_DRIFT",
+                f"{target}: invalid W+/W- delta",
+            )
+        expected_names = set(differential_target_properties(target))
+        actual_names = {name for delta in pair for name, _ in delta}
+        if actual_names != expected_names:
+            raise ProbeError(
+                "DIFFERENTIAL_TARGET_MODEL_DRIFT",
+                f"{target}: delta names {sorted(actual_names)} != "
+                f"properties {sorted(expected_names)}",
+            )
+    if tuple(spec.target for spec in DIFFERENTIAL_TARGET_OPERATION_SPECS) != tuple(
+        sorted(differential_targets())
+    ):
+        raise ProbeError(
+            "DIFFERENTIAL_TARGET_MODEL_DRIFT",
+            "operation specifications do not exactly cover the target model",
+        )
+    if tuple(DIFFERENTIAL_EQUIVALENCE_CLASS_PROPERTIES) != (
+        "EC-DEVICE-ACCESS",
+        "EC-KERNEL-OOM-GROUP",
+        "EC-DYNAMICUSER-SUID",
+        "EC-DYNAMICUSER-IPC",
+    ):
+        raise ProbeError(
+            "DIFFERENTIAL_EQUIVALENCE_CLASS_DRIFT",
+            repr(tuple(DIFFERENTIAL_EQUIVALENCE_CLASS_PROPERTIES)),
+        )
+    if tuple(DIFFERENTIAL_EQUIVALENCE_CLASS_REQUIRED_OBSERVATIONS) != tuple(
+        DIFFERENTIAL_EQUIVALENCE_CLASS_PROPERTIES
+    ):
+        raise ProbeError(
+            "DIFFERENTIAL_EQUIVALENCE_CLASS_DRIFT",
+            "required-observation model differs from class model",
+        )
+    for target, names in DIFFERENTIAL_EQUIVALENCE_CLASS_REQUIRED_OBSERVATIONS.items():
+        if (
+            not names
+            or len(names) != len(set(names))
+            or tuple(sorted(names)) != names
+        ):
+            raise ProbeError(
+                "DIFFERENTIAL_EQUIVALENCE_CLASS_DRIFT",
+                f"{target}: observations must be nonempty, unique, and sorted",
+            )
+
+
+def _differential_recursive_differences(
+    left: Any, right: Any, path: str = ""
+) -> List[str]:
+    if type(left) is not type(right):
+        return [path or "$"]
+    if isinstance(left, Mapping):
+        if list(left) != list(right):
+            return [path or "$"]
+        differences: List[str] = []
+        for key in left:
+            child = f"{path}.{key}" if path else str(key)
+            differences.extend(
+                _differential_recursive_differences(left[key], right[key], child)
+            )
+        return differences
+    if isinstance(left, list):
+        if len(left) != len(right):
+            return [path or "$"]
+        differences = []
+        for index, (left_item, right_item) in enumerate(zip(left, right)):
+            differences.extend(
+                _differential_recursive_differences(
+                    left_item, right_item, f"{path}[{index}]"
+                )
+            )
+        return differences
+    return [] if left == right else [path or "$"]
+
+
+def _validate_differential_observations(
+    observations: Any, context: str
+) -> None:
+    if not isinstance(observations, list):
+        raise ProbeError(
+            "DIFFERENTIAL_OBSERVATION_INVALID", f"{context}: list required"
+        )
+    if len(observations) > DIFFERENTIAL_MAX_OBSERVATIONS:
+        raise ProbeError(
+            "DIFFERENTIAL_OBSERVATION_INVALID", f"{context}: too many records"
+        )
+    previous_name: Optional[str] = None
+    for index, item in enumerate(observations):
+        item = _differential_require_exact_fields(
+            item, ("name", "authority", "value"), f"{context}[{index}]"
+        )
+        name = _differential_require_text(
+            item["name"],
+            f"{context}[{index}].name",
+            pattern=re.compile(r"^[a-z][a-z0-9_.-]*$"),
+            maximum=128,
+        )
+        authority = item["authority"]
+        if authority not in DIFFERENTIAL_DIRECT_AUTHORITIES:
+            raise ProbeError(
+                "DIFFERENTIAL_AUTHORITY_SUBSTITUTION",
+                f"{context}[{index}]: {authority!r}",
+            )
+        if previous_name is not None and name <= previous_name:
+            raise ProbeError(
+                "DIFFERENTIAL_OBSERVATION_INVALID",
+                f"{context}: names must be unique and sorted",
+            )
+        previous_name = name
+        # Candidate, hostile, GitHub-context and reviewer claims are not accepted
+        # as direct observation authority anywhere in this grammar.
+        _differential_validate_bounded_json(
+            item["value"], f"{context}[{index}].value"
+        )
+        _scan_gate1_namespace(item["value"], f"{context}[{index}].value")
+
+
+def _validate_differential_operation_result(
+    value: Any, context: str
+) -> Mapping[str, Any]:
+    value = _differential_require_exact_fields(
+        value, DIFFERENTIAL_OPERATION_RESULT_FIELDS, context
+    )
+    for name in DIFFERENTIAL_OPERATION_RESULT_FIELDS:
+        if name == "errno":
+            if value[name] is not None:
+                _differential_require_int(value[name], f"{context}.{name}")
+        elif name in ("operation_id", "operation_authorization_sha256"):
+            continue
+        else:
+            _differential_require_bool(value[name], f"{context}.{name}")
+    if value["reviewed_exact_operation"]:
+        _differential_require_text(
+            value["operation_id"],
+            f"{context}.operation_id",
+            pattern=re.compile(r"^[a-z][a-z0-9_.-]*$"),
+            maximum=128,
+        )
+        _differential_require_sha256(
+            value["operation_authorization_sha256"],
+            f"{context}.operation_authorization_sha256",
+        )
+        if value["operation_non_mutating"] is not True:
+            raise ProbeError(
+                "DIFFERENTIAL_OPERATION_INVALID",
+                f"{context}: reviewed device operation is not non-mutating",
+            )
+    elif (
+        value["operation_id"] is not None
+        or value["operation_authorization_sha256"] is not None
+        or value["operation_non_mutating"]
+    ):
+        raise ProbeError(
+            "DIFFERENTIAL_OPERATION_INVALID",
+            f"{context}: unreviewed operation carries identity or authority",
+        )
+    if (
+        value["supervisor_fallback_started"]
+        and value["manager_window_preserved"]
+    ):
+        raise ProbeError(
+            "DIFFERENTIAL_LIFECYCLE_CONTRADICTION",
+            f"{context}: manager effect cannot be credited after fallback",
+        )
+    return value
+
+
+def _validate_differential_unit_ast(
+    value: Any, target: str, role: str, context: str
+) -> None:
+    expected = differential_unit_ast(target, role)
+    if not isinstance(value, list) or len(value) != len(expected):
+        raise ProbeError(
+            "DIFFERENTIAL_UNIT_CONFIGURATION_INVALID",
+            f"{context}: complete generated AST required",
+        )
+    for index, item in enumerate(value):
+        item = _differential_require_exact_fields(
+            item, DIFFERENTIAL_UNIT_AST_FIELDS, f"{context}[{index}]"
+        )
+        for name in DIFFERENTIAL_UNIT_AST_FIELDS:
+            _differential_require_text(
+                item[name],
+                f"{context}[{index}].{name}",
+                maximum=DIFFERENTIAL_MAX_TEXT_BYTES,
+            )
+    if value != expected:
+        differences = _differential_recursive_differences(value, expected)
+        raise ProbeError(
+            "DIFFERENTIAL_EXTRA_DELTA",
+            f"{context}: not the generated {target}/{role} AST: {differences}",
+        )
+
+
+def _validate_differential_witness(
+    value: Any,
+    expected_role: str,
+    target: str,
+    execution_state: str,
+    run_identity: Mapping[str, Any],
+    context: str,
+) -> Mapping[str, Any]:
+    value = _differential_require_exact_fields(
+        value, DIFFERENTIAL_WITNESS_FIELDS, context
+    )
+    run_binding = _differential_require_exact_fields(
+        value["run_binding"],
+        DIFFERENTIAL_WITNESS_RUN_BINDING_FIELDS,
+        f"{context}.run_binding",
+    )
+    _validate_differential_run_identity(run_binding)
+    if run_binding != run_identity:
+        raise ProbeError(
+            "DIFFERENTIAL_RUN_IDENTITY_INVALID",
+            f"{context}: witness report is not bound to the top-level run",
+        )
+    if value["role"] != expected_role:
+        raise ProbeError(
+            "DIFFERENTIAL_WITNESS_ORDER_INVALID",
+            f"{context}: expected {expected_role!r}",
+        )
+    _differential_require_text(
+        value["unit_name"],
+        f"{context}.unit_name",
+        pattern=re.compile(r"^p0-v2-f7b4-[a-z0-9-]+\.service$"),
+        maximum=128,
+    )
+    if value["report_authority"] != TRUSTED_BOOTSTRAP_OBSERVED:
+        raise ProbeError(
+            "DIFFERENTIAL_AUTHORITY_SUBSTITUTION",
+            f"{context}.report_authority",
+        )
+    _differential_require_bool(value["executed"], f"{context}.executed")
+    _validate_differential_unit_ast(
+        value["unit_ast"], target, expected_role, f"{context}.unit_ast"
+    )
+    source = _validate_differential_source_binding(
+        value["source_binding"], f"{context}.source_binding"
+    )
+    process = _validate_differential_process_binding(
+        value["process_binding"], f"{context}.process_binding"
+    )
+    if process["cgroup"] != f"/system.slice/{value['unit_name']}":
+        raise ProbeError(
+            "DIFFERENTIAL_PROCESS_BINDING_INVALID",
+            f"{context}: exact systemd cgroup is not bound to unit_name",
+        )
+    _validate_differential_proof_channel(
+        value["proof_channel"],
+        execution_state,
+        process,
+        f"{context}.proof_channel",
+    )
+    operation = _validate_differential_operation_result(
+        value["operation_result"], f"{context}.operation_result"
+    )
+    _validate_differential_observations(
+        value["observations"], f"{context}.observations"
+    )
+    exec_start = next(
+        item["value"]
+        for item in value["unit_ast"]
+        if item["section"] == "Service" and item["name"] == "ExecStart"
+    )
+    argv = exec_start.split(" ")
+    if source["path"] not in argv:
+        raise ProbeError(
+            "DIFFERENTIAL_SOURCE_BINDING_INVALID",
+            f"{context}: ExecStart does not reference descriptor-bound source path",
+        )
+    if execution_state == DIFFERENTIAL_INITIAL_STATE:
+        if (
+            value["executed"]
+            or operation["reviewed_exact_operation"]
+            or operation["control_reached"]
+            or operation["effect_observed"]
+            or operation["errno"] is not None
+            or operation["secondary_abi_executed"]
+            or operation["supporting_dev_topology"]
+            or operation["supporting_bpf_query"]
+            or operation["manager_window_preserved"]
+            or operation["supervisor_fallback_started"]
+            or value["observations"]
+        ):
+            raise ProbeError(
+                "DIFFERENTIAL_AUTHORING_OVERCLAIM",
+                f"{expected_role}: executed/effect field populated",
+            )
+    return value
+
+
+def _validate_differential_pair(
+    witnesses: Any,
+    target: str,
+    execution_state: str,
+    run_identity: Mapping[str, Any],
+) -> Tuple[Mapping[str, Any], Mapping[str, Any]]:
+    if not isinstance(witnesses, list) or len(witnesses) != 2:
+        raise ProbeError(
+            "DIFFERENTIAL_WITNESS_COUNT_INVALID",
+            "exactly W+ and W- are required",
+        )
+    positive = _validate_differential_witness(
+        witnesses[0],
+        "W+",
+        target,
+        execution_state,
+        run_identity,
+        "witnesses[0]",
+    )
+    negative = _validate_differential_witness(
+        witnesses[1],
+        "W-",
+        target,
+        execution_state,
+        run_identity,
+        "witnesses[1]",
+    )
+    if positive["unit_name"] == negative["unit_name"]:
+        raise ProbeError(
+            "DIFFERENTIAL_PAIR_INVALID", "W+ and W- unit names must be distinct"
+        )
+    if positive["unit_ast"] == negative["unit_ast"]:
+        raise ProbeError(
+            "DIFFERENTIAL_PAIR_INVALID", "target delta is absent"
+        )
+    positive_source = positive["source_binding"]
+    negative_source = negative["source_binding"]
+    for name in DIFFERENTIAL_SOURCE_BINDING_FIELDS:
+        if positive_source[name] != negative_source[name]:
+            raise ProbeError(
+                "DIFFERENTIAL_EXTRA_DELTA",
+                f"target={target}: source_binding.{name} differs",
+            )
+    if positive["process_binding"]["pid"] == negative["process_binding"]["pid"]:
+        raise ProbeError(
+            "DIFFERENTIAL_PROCESS_BINDING_INVALID",
+            "W+ and W- must have distinct process identities",
+        )
+    if (
+        positive["process_binding"]["invocation_id"]
+        == negative["process_binding"]["invocation_id"]
+    ):
+        raise ProbeError(
+            "DIFFERENTIAL_PROCESS_BINDING_INVALID",
+            "W+ and W- must have distinct InvocationIDs",
+        )
+    if (
+        positive["process_binding"]["cgroup"]
+        == negative["process_binding"]["cgroup"]
+    ):
+        raise ProbeError(
+            "DIFFERENTIAL_PROCESS_BINDING_INVALID",
+            "W+ and W- must have distinct cgroups",
+        )
+    if (
+        positive["proof_channel"]["pipe_inode"]
+        == negative["proof_channel"]["pipe_inode"]
+    ):
+        raise ProbeError(
+            "DIFFERENTIAL_PROOF_CHANNEL_INVALID",
+            "W+ and W- must have distinct proof-pipe identities",
+        )
+    if (
+        positive["proof_channel"]["open_file_descriptions"][0]["ofd_id"]
+        == negative["proof_channel"]["open_file_descriptions"][0]["ofd_id"]
+    ):
+        raise ProbeError(
+            "DIFFERENTIAL_PROOF_CHANNEL_INVALID",
+            "W+ and W- must have distinct open-file-description identities",
+        )
+    return positive, negative
+
+
+def _validate_differential_run_identity(value: Any) -> None:
+    value = _differential_require_exact_fields(
+        value, DIFFERENTIAL_RUN_IDENTITY_FIELDS, "run_identity"
+    )
+    if value["repository"] != "yurikuchumov-ux/ai-operating-system":
+        raise ProbeError(
+            "DIFFERENTIAL_RUN_IDENTITY_INVALID", "run_identity.repository"
+        )
+    _differential_require_int(value["repository_id"], "run_identity.repository_id", minimum=1)
+    _differential_require_int(value["pr_number"], "run_identity.pr_number", minimum=1)
+    _differential_require_text(
+        value["run_id"],
+        "run_identity.run_id",
+        pattern=re.compile(r"^(?:LOCAL-F7B4|[1-9][0-9]*)$"),
+        maximum=32,
+    )
+    _differential_require_int(
+        value["run_attempt"], "run_identity.run_attempt", minimum=0
+    )
+    _differential_require_sha40(value["head_sha"], "run_identity.head_sha")
+    _differential_require_sha40(value["base_sha"], "run_identity.base_sha")
+    _differential_require_sha256(
+        value["workflow_sha"], "run_identity.workflow_sha"
+    )
+    _differential_require_sha256(
+        value["authorization_sha256"], "run_identity.authorization_sha256"
+    )
+    _differential_require_text(
+        value["nonce"],
+        "run_identity.nonce",
+        pattern=re.compile(r"^[0-9a-f]{32}$"),
+        maximum=32,
+    )
+
+
+def _validate_differential_source_binding(
+    value: Any, context: str
+) -> Mapping[str, Any]:
+    value = _differential_require_exact_fields(
+        value, DIFFERENTIAL_SOURCE_BINDING_FIELDS, context
+    )
+    path = _differential_require_text(value["path"], f"{context}.path")
+    path_value = Path(path)
+    if (
+        not path.startswith("/run/p0-v2-f7b4/")
+        or str(path_value) != path
+        or ".." in path_value.parts
+        or "." in path_value.parts
+    ):
+        raise ProbeError("DIFFERENTIAL_SOURCE_BINDING_INVALID", path)
+    _differential_require_sha256(value["sha256"], f"{context}.sha256")
+    _differential_require_int(value["device"], f"{context}.device", minimum=1)
+    _differential_require_int(value["inode"], f"{context}.inode", minimum=1)
+    _differential_require_int(value["uid"], f"{context}.uid")
+    _differential_require_int(value["gid"], f"{context}.gid")
+    if value["uid"] != 0 or value["gid"] != 0:
+        raise ProbeError(
+            "DIFFERENTIAL_SOURCE_BINDING_INVALID", "source is not root-owned"
+        )
+    mode = _differential_require_int(value["mode"], "source_binding.mode")
+    if mode & 0o022 or not stat.S_ISREG(mode):
+        raise ProbeError(
+            "DIFFERENTIAL_SOURCE_BINDING_INVALID",
+            f"source mode {oct(mode)}",
+        )
+    if value["descriptor_stable"] is not True or value["substitution_rejected"] is not True:
+        raise ProbeError(
+            "DIFFERENTIAL_SOURCE_BINDING_INVALID",
+            "descriptor stability and substitution rejection are mandatory",
+        )
+    if value["authority"] != TRUSTED_BOOTSTRAP_OBSERVED:
+        raise ProbeError(
+            "DIFFERENTIAL_AUTHORITY_SUBSTITUTION", "source_binding.authority"
+        )
+    return value
+
+
+def _validate_differential_process_binding(
+    value: Any, context: str
+) -> Mapping[str, Any]:
+    value = _differential_require_exact_fields(
+        value, DIFFERENTIAL_PROCESS_BINDING_FIELDS, context
+    )
+    for name in ("pid", "start_time_ticks"):
+        _differential_require_int(value[name], f"{context}.{name}", minimum=1)
+    for name in ("uid", "gid"):
+        _differential_require_int(value[name], f"{context}.{name}", minimum=1)
+    if value["environment"] != []:
+        raise ProbeError(
+            "DIFFERENTIAL_PROCESS_BINDING_INVALID",
+            f"{context}: credential-bearing environment is forbidden",
+        )
+    cgroup = _differential_require_text(value["cgroup"], f"{context}.cgroup")
+    cgroup_path = Path(cgroup)
+    if (
+        not cgroup.startswith("/")
+        or cgroup == "/"
+        or str(cgroup_path) != cgroup
+        or ".." in cgroup_path.parts
+        or "." in cgroup_path.parts
+    ):
+        raise ProbeError(
+            "DIFFERENTIAL_PROCESS_BINDING_INVALID",
+            f"{context}: concrete canonical non-root cgroup required",
+        )
+    _differential_require_text(
+        value["invocation_id"],
+        f"{context}.invocation_id",
+        pattern=re.compile(r"^[0-9a-f]{32}$"),
+        maximum=32,
+    )
+    expected_authorities = {
+        "pid_authority": "kernel_observed",
+        "start_time_authority": "kernel_observed",
+        "credentials_authority": "kernel_observed",
+        "environment_authority": "kernel_observed",
+        "cgroup_authority": "kernel_observed",
+        "invocation_id_authority": "systemd_observed",
+    }
+    for name, expected in expected_authorities.items():
+        if value[name] != expected:
+            raise ProbeError(
+                "DIFFERENTIAL_AUTHORITY_SUBSTITUTION",
+                f"{context}.{name}",
+            )
+    return value
+
+
+def _validate_differential_proof_channel(
+    value: Any,
+    execution_state: str,
+    process_binding: Mapping[str, Any],
+    context: str,
+) -> Mapping[str, Any]:
+    value = _differential_require_exact_fields(
+        value, DIFFERENTIAL_PROOF_CHANNEL_FIELDS, context
+    )
+    if value["kind"] != "anonymous_pipe":
+        raise ProbeError("DIFFERENTIAL_PROOF_CHANNEL_INVALID", "not anonymous")
+    _differential_require_int(value["pipe_inode"], f"{context}.pipe_inode", minimum=1)
+    _differential_require_int(value["writer_fd"], f"{context}.writer_fd", minimum=3)
+    writer_processes = value["writer_processes"]
+    if (
+        not isinstance(writer_processes, list)
+        or len(writer_processes) != 1
+        or not isinstance(writer_processes[0], int)
+        or isinstance(writer_processes[0], bool)
+        or writer_processes[0] <= 0
+    ):
+        raise ProbeError(
+            "DIFFERENTIAL_PROOF_CHANNEL_INVALID",
+            "exactly one writer process is required",
+        )
+    if writer_processes != [process_binding["pid"]]:
+        raise ProbeError(
+            "DIFFERENTIAL_PROOF_CHANNEL_INVALID",
+            f"{context}: writer PID is not the bound witness PID",
+        )
+    writer_ofd_count = _differential_require_int(
+        value["writer_open_file_description_count"],
+        f"{context}.writer_open_file_description_count",
+        minimum=1,
+    )
+    if writer_ofd_count != 1:
+        raise ProbeError(
+            "DIFFERENTIAL_PROOF_CHANNEL_INVALID",
+            "exactly one writer open-file-description is required",
+        )
+    if value["writer_cloexec"] is not True:
+        raise ProbeError(
+            "DIFFERENTIAL_PROOF_CHANNEL_INVALID", "writer lacks CLOEXEC"
+        )
+    for name in (
+        "writer_cloexec",
+        "eof_observed",
+        "eof_before_hostile_transition",
+        "pathname_reopenable",
+    ):
+        _differential_require_bool(value[name], f"{context}.{name}")
+    for empty_name in (
+        "duplicate_writer_fds",
+        "descendant_writer_refs",
+        "bootstrap_descendant_pids",
+        "post_exec_writer_fds",
+    ):
+        if value[empty_name] != []:
+            raise ProbeError(
+                "DIFFERENTIAL_PROOF_CHANNEL_INVALID",
+                f"{empty_name} must be empty",
+            )
+    if value["pathname_reopenable"] is not False:
+        raise ProbeError(
+            "DIFFERENTIAL_PROOF_CHANNEL_INVALID", "channel is pathname-reopenable"
+        )
+    if value["authority"] != "supervisor_observed":
+        raise ProbeError(
+            "DIFFERENTIAL_AUTHORITY_SUBSTITUTION", "proof_channel.authority"
+        )
+    process_tree = value["process_tree"]
+    if not isinstance(process_tree, list) or len(process_tree) != 1:
+        raise ProbeError(
+            "DIFFERENTIAL_PROOF_CHANNEL_INVALID",
+            f"{context}: complete one-process tree required",
+        )
+    process_record = _differential_require_exact_fields(
+        process_tree[0], DIFFERENTIAL_PROCESS_TREE_FIELDS, f"{context}.process_tree[0]"
+    )
+    for name in ("pid", "start_time_ticks", "parent_pid"):
+        _differential_require_int(
+            process_record[name],
+            f"{context}.process_tree[0].{name}",
+            minimum=1,
+        )
+    if (
+        not isinstance(process_record["writer_fds"], list)
+        or len(process_record["writer_fds"]) != 1
+    ):
+        raise ProbeError(
+            "DIFFERENTIAL_PROOF_CHANNEL_INVALID",
+            f"{context}: process-tree writer FD set is incomplete",
+        )
+    _differential_require_int(
+        process_record["writer_fds"][0],
+        f"{context}.process_tree[0].writer_fds[0]",
+        minimum=3,
+    )
+    if (
+        process_record["pid"] != process_binding["pid"]
+        or process_record["start_time_ticks"] != process_binding["start_time_ticks"]
+        or process_record["parent_pid"] != 1
+        or process_record["writer_fds"] != [value["writer_fd"]]
+    ):
+        raise ProbeError(
+            "DIFFERENTIAL_PROOF_CHANNEL_INVALID",
+            f"{context}: process-tree writer identity is not cross-bound",
+        )
+    descriptions = value["open_file_descriptions"]
+    if not isinstance(descriptions, list) or len(descriptions) != 1:
+        raise ProbeError(
+            "DIFFERENTIAL_PROOF_CHANNEL_INVALID",
+            f"{context}: exactly one writer open-file description required",
+        )
+    description = _differential_require_exact_fields(
+        descriptions[0],
+        DIFFERENTIAL_OPEN_FILE_DESCRIPTION_FIELDS,
+        f"{context}.open_file_descriptions[0]",
+    )
+    _differential_require_text(
+        description["ofd_id"],
+        f"{context}.open_file_descriptions[0].ofd_id",
+        pattern=re.compile(r"^[0-9a-f]{32}$"),
+        maximum=32,
+    )
+    for name in ("pipe_inode", "holder_pid", "holder_fd"):
+        _differential_require_int(
+            description[name],
+            f"{context}.open_file_descriptions[0].{name}",
+            minimum=1 if name != "holder_fd" else 3,
+        )
+    _differential_require_bool(
+        description["write_end"],
+        f"{context}.open_file_descriptions[0].write_end",
+    )
+    if (
+        description["pipe_inode"] != value["pipe_inode"]
+        or description["holder_pid"] != process_binding["pid"]
+        or description["holder_fd"] != value["writer_fd"]
+        or description["write_end"] is not True
+    ):
+        raise ProbeError(
+            "DIFFERENTIAL_PROOF_CHANNEL_INVALID",
+            f"{context}: open-file-description identity is not cross-bound",
+        )
+    if execution_state == DIFFERENTIAL_INITIAL_STATE:
+        if value["eof_observed"] is True or value["eof_before_hostile_transition"] is True:
+            raise ProbeError(
+                "DIFFERENTIAL_AUTHORING_OVERCLAIM",
+                "unexecuted model cannot claim EOF",
+            )
+    elif value["eof_observed"] is not True or value["eof_before_hostile_transition"] is not True:
+        raise ProbeError(
+            "DIFFERENTIAL_PROOF_CHANNEL_INVALID",
+            "EOF before hostile transition was not proved",
+        )
+    return value
+
+
+def _differential_witness_report_sha256(value: Any) -> str:
+    if not isinstance(value, Mapping):
+        raise ProbeError(
+            "DIFFERENTIAL_WITNESS_ORDER_INVALID",
+            "complete witness report mapping required",
+        )
+    try:
+        payload = json.dumps(
+            value,
+            ensure_ascii=False,
+            sort_keys=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    except (TypeError, ValueError, UnicodeError, RecursionError) as exc:
+        raise ProbeError("DIFFERENTIAL_ENCODING_INVALID", str(exc)) from exc
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _validate_installed_differential_future_authorization(
+    record: Any, context: str
+) -> DifferentialOperationSpec:
+    if not isinstance(record, DifferentialFutureAuthorizationRecord):
+        raise ProbeError(
+            "DIFFERENTIAL_EFFECT_AUTHORITY_REQUIRED",
+            f"{context}: complete frozen authorization record required",
+        )
+    _differential_require_sha256(
+        record.authorization_sha256, f"{context}.authorization_sha256"
+    )
+    if record.authority_kind != DIFFERENTIAL_FUTURE_AUTHORITY_KIND:
+        raise ProbeError(
+            "DIFFERENTIAL_EFFECT_AUTHORITY_REQUIRED",
+            f"{context}.authority_kind: typed future-run authority required",
+        )
+    _differential_require_sha256(
+        record.approved_task_sha256, f"{context}.approved_task_sha256"
+    )
+    _differential_require_sha256(
+        record.owner_approval_sha256, f"{context}.owner_approval_sha256"
+    )
+    _differential_require_sha256(
+        record.review_sha256, f"{context}.review_sha256"
+    )
+    _differential_require_text(record.repository, f"{context}.repository")
+    _differential_require_int(
+        record.repository_id, f"{context}.repository_id", minimum=1
+    )
+    _differential_require_int(
+        record.pr_number, f"{context}.pr_number", minimum=1
+    )
+    _differential_require_sha40(record.base_sha, f"{context}.base_sha")
+    _differential_require_sha40(record.head_sha, f"{context}.head_sha")
+    _differential_require_sha256(
+        record.workflow_sha, f"{context}.workflow_sha"
+    )
+    _differential_require_canonical_repository_context(record, context)
+    target = _differential_require_text(
+        record.target, f"{context}.target", maximum=128
+    )
+    _differential_require_text(
+        record.run_id,
+        f"{context}.run_id",
+        pattern=re.compile(r"^[1-9][0-9]*$"),
+        maximum=32,
+    )
+    run_attempt = _differential_require_int(
+        record.run_attempt, f"{context}.run_attempt", minimum=1
+    )
+    if run_attempt != 1:
+        raise ProbeError(
+            "DIFFERENTIAL_EFFECT_AUTHORITY_REQUIRED",
+            f"{context}: only exact attempt 1 may be authorized",
+        )
+    _differential_require_text(
+        record.nonce,
+        f"{context}.nonce",
+        pattern=re.compile(r"^[0-9a-f]{32}$"),
+        maximum=32,
+    )
+    invocation_ids = (
+        _differential_require_text(
+            record.positive_invocation_id,
+            f"{context}.positive_invocation_id",
+            pattern=re.compile(r"^[0-9a-f]{32}$"),
+            maximum=32,
+        ),
+        _differential_require_text(
+            record.negative_invocation_id,
+            f"{context}.negative_invocation_id",
+            pattern=re.compile(r"^[0-9a-f]{32}$"),
+            maximum=32,
+        ),
+    )
+    if invocation_ids[0] == invocation_ids[1]:
+        raise ProbeError(
+            "DIFFERENTIAL_EFFECT_AUTHORITY_REQUIRED",
+            f"{context}: W+/W- InvocationIDs must be distinct",
+        )
+    if record.one_shot_disposition != "authorize_exactly_once":
+        raise ProbeError(
+            "DIFFERENTIAL_EFFECT_AUTHORITY_REQUIRED",
+            f"{context}: exact one-shot disposition required",
+        )
+    spec = differential_operation_spec(target)
+    if (
+        record.operation_id != spec.operation_id
+        or record.operation_definition_sha256
+        != spec.operation_definition_sha256
+    ):
+        raise ProbeError(
+            "DIFFERENTIAL_OPERATION_INVALID",
+            f"{context}: exact target operation is not authorized",
+        )
+    _differential_require_sha256(
+        record.positive_witness_report_sha256,
+        f"{context}.positive_witness_report_sha256",
+    )
+    _differential_require_sha256(
+        record.negative_witness_report_sha256,
+        f"{context}.negative_witness_report_sha256",
+    )
+    if target == "EC-DEVICE-ACCESS":
+        if record.device_operation_authorization_sha256 is None:
+            raise ProbeError(
+                "DIFFERENTIAL_DEVICE_OPERATION_UNREVIEWED",
+                f"{context}: device target lacks separate operation authority",
+            )
+        _differential_require_sha256(
+            record.device_operation_authorization_sha256,
+            f"{context}.device_operation_authorization_sha256",
+        )
+    elif record.device_operation_authorization_sha256 is not None:
+        raise ProbeError(
+            "DIFFERENTIAL_OPERATION_INVALID",
+            f"{context}: non-device target carries device-operation authority",
+        )
+    _differential_require_separate_digests(
+        context,
+        authorization_sha256=record.authorization_sha256,
+        approved_task_sha256=record.approved_task_sha256,
+        owner_approval_sha256=record.owner_approval_sha256,
+        review_sha256=record.review_sha256,
+        positive_witness_report_sha256=record.positive_witness_report_sha256,
+        negative_witness_report_sha256=record.negative_witness_report_sha256,
+        device_operation_authorization_sha256=(
+            record.device_operation_authorization_sha256
+        ),
+    )
+    if (
+        record.approved_task_sha256 == DIFFERENTIAL_AUTHORING_TASK_SHA256
+        or record.authorization_sha256
+        != _differential_future_authorization_identity_sha256(record)
+    ):
+        raise ProbeError(
+            "DIFFERENTIAL_EFFECT_AUTHORITY_REQUIRED",
+            f"{context}: authorization is not the positive domain-separated "
+            "identity of the approved task, owner approval, review, and exact run",
+        )
+    return spec
+
+
+def _validate_installed_differential_device_authorization(
+    record: Any,
+    future: DifferentialFutureAuthorizationRecord,
+    context: str,
+) -> DifferentialDeviceOperationAuthorizationRecord:
+    if not isinstance(record, DifferentialDeviceOperationAuthorizationRecord):
+        raise ProbeError(
+            "DIFFERENTIAL_DEVICE_OPERATION_UNREVIEWED",
+            f"{context}: complete frozen device-operation record required",
+        )
+    _differential_require_sha256(
+        record.authorization_sha256, f"{context}.authorization_sha256"
+    )
+    if record.authority_kind != DIFFERENTIAL_DEVICE_AUTHORITY_KIND:
+        raise ProbeError(
+            "DIFFERENTIAL_DEVICE_OPERATION_UNREVIEWED",
+            f"{context}.authority_kind: typed device-operation authority required",
+        )
+    _differential_require_sha256(
+        record.approved_task_sha256, f"{context}.approved_task_sha256"
+    )
+    _differential_require_sha256(
+        record.owner_approval_sha256, f"{context}.owner_approval_sha256"
+    )
+    _differential_require_sha256(record.review_sha256, f"{context}.review_sha256")
+    _differential_require_sha256(
+        record.future_authorization_sha256,
+        f"{context}.future_authorization_sha256",
+    )
+    _differential_require_text(record.repository, f"{context}.repository")
+    _differential_require_int(
+        record.repository_id, f"{context}.repository_id", minimum=1
+    )
+    _differential_require_int(
+        record.pr_number, f"{context}.pr_number", minimum=1
+    )
+    _differential_require_sha40(record.base_sha, f"{context}.base_sha")
+    _differential_require_sha40(record.head_sha, f"{context}.head_sha")
+    _differential_require_sha256(record.workflow_sha, f"{context}.workflow_sha")
+    _differential_require_canonical_repository_context(record, context)
+    run_id = _differential_require_text(
+        record.run_id,
+        f"{context}.run_id",
+        pattern=re.compile(r"^[1-9][0-9]*$"),
+        maximum=32,
+    )
+    run_attempt = _differential_require_int(
+        record.run_attempt, f"{context}.run_attempt", minimum=1
+    )
+    nonce = _differential_require_text(
+        record.nonce,
+        f"{context}.nonce",
+        pattern=re.compile(r"^[0-9a-f]{32}$"),
+        maximum=32,
+    )
+    invocation_ids = (
+        _differential_require_text(
+            record.positive_invocation_id,
+            f"{context}.positive_invocation_id",
+            pattern=re.compile(r"^[0-9a-f]{32}$"),
+            maximum=32,
+        ),
+        _differential_require_text(
+            record.negative_invocation_id,
+            f"{context}.negative_invocation_id",
+            pattern=re.compile(r"^[0-9a-f]{32}$"),
+            maximum=32,
+        ),
+    )
+    device_path = _differential_require_text(
+        record.device_path, f"{context}.device_path"
+    )
+    device_name = device_path[len("/dev/") :] if device_path.startswith("/dev/") else ""
+    device_major = _differential_require_int(
+        record.device_major, f"{context}.device_major", minimum=0
+    )
+    device_minor = _differential_require_int(
+        record.device_minor, f"{context}.device_minor", minimum=0
+    )
+    _differential_require_bool(record.non_mutating, f"{context}.non_mutating")
+    _differential_require_separate_digests(
+        context,
+        authorization_sha256=record.authorization_sha256,
+        approved_task_sha256=record.approved_task_sha256,
+        owner_approval_sha256=record.owner_approval_sha256,
+        review_sha256=record.review_sha256,
+        future_authorization_sha256=record.future_authorization_sha256,
+    )
+    if (
+        record.future_authorization_sha256 != future.authorization_sha256
+        or record.repository != future.repository
+        or record.repository_id != future.repository_id
+        or record.pr_number != future.pr_number
+        or record.base_sha != future.base_sha
+        or record.target != future.target
+        or record.head_sha != future.head_sha
+        or record.workflow_sha != future.workflow_sha
+        or run_id != future.run_id
+        or run_attempt != 1
+        or run_attempt != future.run_attempt
+        or nonce != future.nonce
+        or invocation_ids[0] == invocation_ids[1]
+        or invocation_ids
+        != (future.positive_invocation_id, future.negative_invocation_id)
+        or record.operation_id != future.operation_id
+        or record.operation_definition_sha256
+        != future.operation_definition_sha256
+        or record.non_mutating is not True
+        or not device_path.startswith("/dev/")
+        or "/" in device_name
+        or device_name in (".", "..")
+        or not re.fullmatch(r"[A-Za-z0-9._-]+", device_name)
+        or device_major != record.device_major
+        or device_minor != record.device_minor
+        or record.approved_task_sha256 == DIFFERENTIAL_AUTHORING_TASK_SHA256
+        or record.authorization_sha256
+        != _differential_device_authorization_identity_sha256(record)
+    ):
+        raise ProbeError(
+            "DIFFERENTIAL_DEVICE_OPERATION_UNREVIEWED",
+            f"{context}: device operation record is incomplete or not cross-bound",
+        )
+    return record
+
+
+def _validate_differential_future_authorization(
+    value: Any, evidence: Mapping[str, Any]
+) -> DifferentialFutureAuthorizationRecord:
+    value = _differential_require_exact_fields(
+        value, DIFFERENTIAL_FUTURE_AUTHORIZATION_FIELDS, "future_authorization"
+    )
+    authorization_sha256 = _differential_require_sha256(
+        value["authorization_sha256"],
+        "future_authorization.authorization_sha256",
+    )
+    matching = tuple(
+        record
+        for record in DIFFERENTIAL_REVIEWED_FUTURE_AUTHORIZATIONS
+        if record.authorization_sha256 == authorization_sha256
+    )
+    if len(matching) != 1:
+        raise ProbeError(
+            "DIFFERENTIAL_EFFECT_AUTHORITY_REQUIRED",
+            "exactly one complete immutable authorization record is required",
+        )
+    record = matching[0]
+    spec = _validate_installed_differential_future_authorization(
+        record, "authorization"
+    )
+    run = evidence["run_identity"]
+    exact_bindings = {
+        "repository": run["repository"],
+        "repository_id": run["repository_id"],
+        "pr_number": run["pr_number"],
+        "base_sha": run["base_sha"],
+        "head_sha": run["head_sha"],
+        "workflow_sha": run["workflow_sha"],
+        "target": evidence["target"],
+        "run_id": run["run_id"],
+        "run_attempt": run["run_attempt"],
+        "nonce": run["nonce"],
+    }
+    for name, expected in exact_bindings.items():
+        if getattr(record, name) != expected:
+            raise ProbeError(
+                "DIFFERENTIAL_EFFECT_AUTHORITY_REQUIRED",
+                f"installed authorization.{name} is not evidence-bound",
+            )
+    if run["run_attempt"] != 1 or record.run_attempt != 1:
+        raise ProbeError(
+            "DIFFERENTIAL_EFFECT_AUTHORITY_REQUIRED",
+            "only exact run attempt 1 may be authorized",
+        )
+    if (
+        run["authorization_sha256"] != authorization_sha256
+        or record.one_shot_disposition != "authorize_exactly_once"
+    ):
+        raise ProbeError(
+            "DIFFERENTIAL_EFFECT_AUTHORITY_REQUIRED",
+            "run identity or one-shot disposition is not authorized",
+        )
+    if (
+        record.operation_id != spec.operation_id
+        or record.operation_definition_sha256 != spec.operation_definition_sha256
+    ):
+        raise ProbeError(
+            "DIFFERENTIAL_OPERATION_INVALID",
+            "installed authorization is not bound to the exact target operation",
+        )
+    witnesses = evidence["witnesses"]
+    if not isinstance(witnesses, list) or len(witnesses) != 2:
+        raise ProbeError(
+            "DIFFERENTIAL_WITNESS_COUNT_INVALID",
+            "authorization requires exactly two complete witness reports",
+        )
+    expected_witness_digests = (
+        _differential_witness_report_sha256(witnesses[0]),
+        _differential_witness_report_sha256(witnesses[1]),
+    )
+    if (
+        record.positive_witness_report_sha256,
+        record.negative_witness_report_sha256,
+    ) != expected_witness_digests:
+        raise ProbeError(
+            "DIFFERENTIAL_EFFECT_AUTHORITY_REQUIRED",
+            "installed authorization is not bound to both exact witness reports",
+        )
+    try:
+        expected_invocation_ids = (
+            witnesses[0]["process_binding"]["invocation_id"],
+            witnesses[1]["process_binding"]["invocation_id"],
+        )
+    except (KeyError, TypeError, IndexError) as exc:
+        raise ProbeError(
+            "DIFFERENTIAL_WITNESS_ORDER_INVALID",
+            "authorization requires structurally complete witness InvocationIDs",
+        ) from exc
+    if (
+        record.positive_invocation_id,
+        record.negative_invocation_id,
+    ) != expected_invocation_ids:
+        raise ProbeError(
+            "DIFFERENTIAL_EFFECT_AUTHORITY_REQUIRED",
+            "installed authorization is not bound to both witness InvocationIDs",
+        )
+    device: Optional[DifferentialDeviceOperationAuthorizationRecord] = None
+    if evidence["target"] == "EC-DEVICE-ACCESS":
+        device_digest = record.device_operation_authorization_sha256
+        matches = tuple(
+            item
+            for item in DIFFERENTIAL_REVIEWED_DEVICE_OPERATION_AUTHORIZATIONS
+            if item.authorization_sha256 == device_digest
+        )
+        if len(matches) != 1:
+            raise ProbeError(
+                "DIFFERENTIAL_DEVICE_OPERATION_UNREVIEWED",
+                "separate immutable device-operation authorization is required",
+            )
+        device = matches[0]
+        try:
+            evidence_invocation_ids = (
+                evidence["witnesses"][0]["process_binding"]["invocation_id"],
+                evidence["witnesses"][1]["process_binding"]["invocation_id"],
+            )
+        except (KeyError, TypeError, IndexError) as exc:
+            raise ProbeError(
+                "DIFFERENTIAL_DEVICE_OPERATION_UNREVIEWED",
+                "device authorization lacks two bound witness InvocationIDs",
+            ) from exc
+        if (
+            record.positive_invocation_id,
+            record.negative_invocation_id,
+        ) != evidence_invocation_ids:
+            raise ProbeError(
+                "DIFFERENTIAL_DEVICE_OPERATION_UNREVIEWED",
+                "future authorization lacks the evidence InvocationIDs",
+            )
+        _validate_installed_differential_device_authorization(
+            device, record, "device_authorization"
+        )
+    elif record.device_operation_authorization_sha256 is not None:
+        raise ProbeError(
+            "DIFFERENTIAL_OPERATION_INVALID",
+            "non-device target carries device-operation authority",
+        )
+    role_digests: Dict[str, Optional[str]] = {
+        "future_authorization_sha256": record.authorization_sha256,
+        "future_authorization_review_sha256": record.review_sha256,
+        "positive_witness_report_sha256": (
+            record.positive_witness_report_sha256
+        ),
+        "negative_witness_report_sha256": (
+            record.negative_witness_report_sha256
+        ),
+        "evidence_sha256": _differential_mapping_sha256(
+            evidence, "evidence"
+        ),
+    }
+    if device is not None:
+        role_digests.update(
+            {
+                "device_authorization_sha256": device.authorization_sha256,
+                "device_authorization_review_sha256": device.review_sha256,
+            }
+        )
+    _differential_require_separate_digests(
+        "decision_roles", **role_digests
+    )
+    return record
+
+
+def _validate_differential_error_records(value: Any) -> None:
+    if not isinstance(value, list) or len(value) > DIFFERENTIAL_MAX_OBSERVATIONS:
+        raise ProbeError("DIFFERENTIAL_TYPE_INVALID", "errors: bounded list required")
+    for index, item in enumerate(value):
+        item = _differential_require_exact_fields(
+            item, DIFFERENTIAL_ERROR_FIELDS, f"errors[{index}]"
+        )
+        _differential_require_text(
+            item["code"],
+            f"errors[{index}].code",
+            pattern=re.compile(r"^IMPLEMENTATION_[A-Z0-9_]+$"),
+            maximum=128,
+        )
+        if item["authority"] != "supervisor_observed":
+            raise ProbeError(
+                "DIFFERENTIAL_AUTHORITY_SUBSTITUTION",
+                f"errors[{index}].authority",
+            )
+        _differential_require_text(item["detail"], f"errors[{index}].detail")
+
+
+def _validate_differential_fresh_runs(
+    value: Any, evidence: Mapping[str, Any]
+) -> bool:
+    if not isinstance(value, list) or len(value) > DIFFERENTIAL_MAX_OBSERVATIONS:
+        raise ProbeError(
+            "DIFFERENTIAL_PLATFORM_WALL_UNPROVED",
+            "fresh_run_evidence: bounded list required",
+        )
+    seen_runs: set = set()
+    seen_authorizations: set = set()
+    seen_raw_states: set = set()
+    seen_nonces = {evidence["run_identity"]["nonce"]}
+    current_run_id = evidence["run_identity"]["run_id"]
+    current_authorizations = tuple(
+        record
+        for record in DIFFERENTIAL_REVIEWED_FUTURE_AUTHORIZATIONS
+        if record.authorization_sha256
+        == evidence["run_identity"]["authorization_sha256"]
+    )
+    if len(current_authorizations) != 1:
+        raise ProbeError(
+            "DIFFERENTIAL_PLATFORM_WALL_UNPROVED",
+            "current run lacks one complete installed authorization",
+        )
+    current_authorization = current_authorizations[0]
+    seen_role_digests: set = set()
+    _differential_extend_unique_roles(
+        seen_role_digests,
+        "current_run",
+        future_authorization_sha256=current_authorization.authorization_sha256,
+        authorization_review_sha256=current_authorization.review_sha256,
+        positive_witness_report_sha256=(
+            current_authorization.positive_witness_report_sha256
+        ),
+        negative_witness_report_sha256=(
+            current_authorization.negative_witness_report_sha256
+        ),
+        evidence_sha256=_differential_mapping_sha256(evidence, "evidence"),
+    )
+    seen_invocation_ids = {
+        current_authorization.positive_invocation_id,
+        current_authorization.negative_invocation_id,
+    }
+    if len(seen_invocation_ids) != 2:
+        raise ProbeError(
+            "DIFFERENTIAL_PLATFORM_WALL_UNPROVED",
+            "current W+/W- InvocationIDs must be distinct",
+        )
+    if current_authorization.device_operation_authorization_sha256 is not None:
+        current_devices = tuple(
+            record
+            for record in DIFFERENTIAL_REVIEWED_DEVICE_OPERATION_AUTHORIZATIONS
+            if record.authorization_sha256
+            == current_authorization.device_operation_authorization_sha256
+        )
+        if len(current_devices) > 1:
+            raise ProbeError(
+                "DIFFERENTIAL_PLATFORM_WALL_UNPROVED",
+                "current device run has duplicate operation authorizations",
+            )
+        if current_devices:
+            _differential_extend_unique_roles(
+                seen_role_digests,
+                "current_run.device_authorization",
+                device_authorization_sha256=current_devices[
+                    0
+                ].authorization_sha256,
+                device_review_sha256=current_devices[0].review_sha256,
+            )
+    for index, item in enumerate(value):
+        item = _differential_require_exact_fields(
+            item, DIFFERENTIAL_FRESH_RUN_FIELDS, f"fresh_run_evidence[{index}]"
+        )
+        run_id = _differential_require_text(
+            item["run_id"],
+            f"fresh_run_evidence[{index}].run_id",
+            pattern=re.compile(r"^[1-9][0-9]*$"),
+            maximum=32,
+        )
+        attempt = _differential_require_int(
+            item["run_attempt"],
+            f"fresh_run_evidence[{index}].run_attempt",
+            minimum=1,
+        )
+        if (
+            attempt != 1
+            or (run_id, attempt) in seen_runs
+            or run_id == current_run_id
+        ):
+            raise ProbeError(
+                "DIFFERENTIAL_PLATFORM_WALL_UNPROVED",
+                "fresh runs must be distinct attempt-1 runs and exclude the current run",
+            )
+        seen_runs.add((run_id, attempt))
+        if item["head_sha"] != evidence["run_identity"]["head_sha"]:
+            raise ProbeError(
+                "DIFFERENTIAL_PLATFORM_WALL_UNPROVED",
+                "fresh run used another reviewed head",
+            )
+        _differential_require_sha40(
+            item["head_sha"], f"fresh_run_evidence[{index}].head_sha"
+        )
+        evidence_sha256 = _differential_require_sha256(
+            item["evidence_sha256"],
+            f"fresh_run_evidence[{index}].evidence_sha256",
+        )
+        authorization = _differential_require_sha256(
+            item["authorization_sha256"],
+            f"fresh_run_evidence[{index}].authorization_sha256",
+        )
+        reviewer_disposition = _differential_require_sha256(
+            item["reviewer_disposition_sha256"],
+            f"fresh_run_evidence[{index}].reviewer_disposition_sha256",
+        )
+        if authorization in seen_authorizations:
+            raise ProbeError(
+                "DIFFERENTIAL_PLATFORM_WALL_UNPROVED",
+                "fresh runs must have distinct one-shot authorizations",
+            )
+        seen_authorizations.add(authorization)
+        if authorization == evidence["run_identity"]["authorization_sha256"]:
+            raise ProbeError(
+                "DIFFERENTIAL_PLATFORM_WALL_UNPROVED",
+                "current one-shot authorization cannot be replayed as history",
+            )
+        authorization_matches = tuple(
+            record
+            for record in DIFFERENTIAL_REVIEWED_FUTURE_AUTHORIZATIONS
+            if record.authorization_sha256 == authorization
+        )
+        if len(authorization_matches) != 1:
+            raise ProbeError(
+                "DIFFERENTIAL_PLATFORM_WALL_UNPROVED",
+                "fresh run lacks one complete installed authorization record",
+            )
+        installed_authorization = authorization_matches[0]
+        historical_spec = _validate_installed_differential_future_authorization(
+            installed_authorization,
+            f"fresh_run_evidence[{index}].installed_authorization",
+        )
+        if installed_authorization.nonce in seen_nonces:
+            raise ProbeError(
+                "DIFFERENTIAL_PLATFORM_WALL_UNPROVED",
+                "fresh runs must use distinct nonces not used by the current run",
+            )
+        seen_nonces.add(installed_authorization.nonce)
+        historical_invocation_ids = (
+            installed_authorization.positive_invocation_id,
+            installed_authorization.negative_invocation_id,
+        )
+        if (
+            historical_invocation_ids[0] == historical_invocation_ids[1]
+            or seen_invocation_ids.intersection(historical_invocation_ids)
+        ):
+            raise ProbeError(
+                "DIFFERENTIAL_PLATFORM_WALL_UNPROVED",
+                "fresh-run W+/W- InvocationIDs must be globally unique and "
+                "distinct from the current run",
+            )
+        seen_invocation_ids.update(historical_invocation_ids)
+        historical_device: Optional[
+            DifferentialDeviceOperationAuthorizationRecord
+        ] = None
+        if installed_authorization.target == "EC-DEVICE-ACCESS":
+            device_matches = tuple(
+                device_record
+                for device_record in DIFFERENTIAL_REVIEWED_DEVICE_OPERATION_AUTHORIZATIONS
+                if device_record.authorization_sha256
+                == installed_authorization.device_operation_authorization_sha256
+            )
+            if len(device_matches) != 1:
+                raise ProbeError(
+                    "DIFFERENTIAL_PLATFORM_WALL_UNPROVED",
+                    "historical device run lacks one installed operation authorization",
+                )
+            historical_device = device_matches[0]
+            _validate_installed_differential_device_authorization(
+                historical_device,
+                installed_authorization,
+                f"fresh_run_evidence[{index}].device_authorization",
+            )
+        matches = tuple(
+            record
+            for record in DIFFERENTIAL_REVIEWED_AMBIGUOUS_RUNS
+            if record.evidence_sha256 == evidence_sha256
+        )
+        if len(matches) != 1:
+            raise ProbeError(
+                "DIFFERENTIAL_PLATFORM_WALL_UNPROVED",
+                "complete reviewer-owned ambiguous run is not installed",
+            )
+        state_digest = _differential_require_sha256(
+            item["raw_platform_state_sha256"],
+            f"fresh_run_evidence[{index}].raw_platform_state_sha256",
+        )
+        if state_digest in seen_raw_states:
+            raise ProbeError(
+                "DIFFERENTIAL_PLATFORM_WALL_UNPROVED",
+                "fresh runs must have distinct raw-state observations",
+            )
+        seen_raw_states.add(state_digest)
+        if item["classification"] != "global_policy_or_platform_ambiguous":
+            raise ProbeError(
+                "DIFFERENTIAL_PLATFORM_WALL_UNPROVED",
+                "fresh run was not independently ambiguous",
+            )
+        record = matches[0]
+        if not isinstance(record, DifferentialAmbiguousRunRecord):
+            raise ProbeError(
+                "DIFFERENTIAL_PLATFORM_WALL_UNPROVED",
+                "complete frozen ambiguous-run record required",
+            )
+        _differential_require_sha256(
+            record.evidence_sha256,
+            f"fresh_run_evidence[{index}].record.evidence_sha256",
+        )
+        _differential_require_sha256(
+            record.authorization_sha256,
+            f"fresh_run_evidence[{index}].record.authorization_sha256",
+        )
+        _differential_require_sha256(
+            record.reviewer_disposition_sha256,
+            f"fresh_run_evidence[{index}].record.reviewer_disposition_sha256",
+        )
+        _differential_require_text(
+            record.repository,
+            f"fresh_run_evidence[{index}].record.repository",
+        )
+        _differential_require_int(
+            record.repository_id,
+            f"fresh_run_evidence[{index}].record.repository_id",
+            minimum=1,
+        )
+        _differential_require_int(
+            record.pr_number,
+            f"fresh_run_evidence[{index}].record.pr_number",
+            minimum=1,
+        )
+        _differential_require_sha40(
+            record.base_sha,
+            f"fresh_run_evidence[{index}].record.base_sha",
+        )
+        _differential_require_sha40(
+            record.head_sha,
+            f"fresh_run_evidence[{index}].record.head_sha",
+        )
+        _differential_require_sha256(
+            record.workflow_sha,
+            f"fresh_run_evidence[{index}].record.workflow_sha",
+        )
+        _differential_require_text(
+            record.target,
+            f"fresh_run_evidence[{index}].record.target",
+            maximum=128,
+        )
+        _differential_require_text(
+            record.run_id,
+            f"fresh_run_evidence[{index}].record.run_id",
+            pattern=re.compile(r"^[1-9][0-9]*$"),
+            maximum=32,
+        )
+        record_attempt = _differential_require_int(
+            record.run_attempt,
+            f"fresh_run_evidence[{index}].record.run_attempt",
+            minimum=1,
+        )
+        if record_attempt != 1:
+            raise ProbeError(
+                "DIFFERENTIAL_PLATFORM_WALL_UNPROVED",
+                "ambiguous-run record is not exact attempt 1",
+            )
+        _differential_require_text(
+            record.nonce,
+            f"fresh_run_evidence[{index}].record.nonce",
+            pattern=re.compile(r"^[0-9a-f]{32}$"),
+            maximum=32,
+        )
+        _differential_require_text(
+            record.operation_id,
+            f"fresh_run_evidence[{index}].record.operation_id",
+        )
+        _differential_require_sha256(
+            record.operation_definition_sha256,
+            f"fresh_run_evidence[{index}].record.operation_definition_sha256",
+        )
+        _differential_require_sha256(
+            record.positive_witness_report_sha256,
+            f"fresh_run_evidence[{index}].record.positive_witness_report_sha256",
+        )
+        _differential_require_sha256(
+            record.negative_witness_report_sha256,
+            f"fresh_run_evidence[{index}].record.negative_witness_report_sha256",
+        )
+        _differential_require_sha256(
+            record.raw_platform_state_sha256,
+            f"fresh_run_evidence[{index}].record.raw_platform_state_sha256",
+        )
+        _differential_require_separate_digests(
+            f"fresh_run_evidence[{index}].record",
+            evidence_sha256=record.evidence_sha256,
+            authorization_sha256=record.authorization_sha256,
+            reviewer_disposition_sha256=record.reviewer_disposition_sha256,
+            positive_witness_report_sha256=(
+                record.positive_witness_report_sha256
+            ),
+            negative_witness_report_sha256=(
+                record.negative_witness_report_sha256
+            ),
+            raw_platform_state_sha256=record.raw_platform_state_sha256,
+        )
+        historical_roles: Dict[str, Optional[str]] = {
+            "future_authorization_sha256": (
+                installed_authorization.authorization_sha256
+            ),
+            "authorization_review_sha256": installed_authorization.review_sha256,
+            "positive_witness_report_sha256": (
+                installed_authorization.positive_witness_report_sha256
+            ),
+            "negative_witness_report_sha256": (
+                installed_authorization.negative_witness_report_sha256
+            ),
+            "evidence_sha256": record.evidence_sha256,
+            "raw_platform_state_sha256": record.raw_platform_state_sha256,
+            "reviewer_disposition_sha256": (
+                record.reviewer_disposition_sha256
+            ),
+        }
+        if historical_device is not None:
+            historical_roles.update(
+                {
+                    "device_authorization_sha256": (
+                        historical_device.authorization_sha256
+                    ),
+                    "device_review_sha256": historical_device.review_sha256,
+                }
+            )
+        _differential_extend_unique_roles(
+            seen_role_digests,
+            f"fresh_run_evidence[{index}]",
+            **historical_roles,
+        )
+        expected = (
+            evidence_sha256,
+            authorization,
+            reviewer_disposition,
+            evidence["run_identity"]["repository"],
+            evidence["run_identity"]["repository_id"],
+            evidence["run_identity"]["pr_number"],
+            evidence["run_identity"]["base_sha"],
+            evidence["run_identity"]["head_sha"],
+            evidence["run_identity"]["workflow_sha"],
+            evidence["target"],
+            run_id,
+            attempt,
+            record.nonce,
+            historical_spec.operation_id,
+            historical_spec.operation_definition_sha256,
+            installed_authorization.positive_witness_report_sha256,
+            installed_authorization.negative_witness_report_sha256,
+            state_digest,
+            item["classification"],
+        )
+        actual = (
+            record.evidence_sha256,
+            record.authorization_sha256,
+            record.reviewer_disposition_sha256,
+            record.repository,
+            record.repository_id,
+            record.pr_number,
+            record.base_sha,
+            record.head_sha,
+            record.workflow_sha,
+            record.target,
+            record.run_id,
+            record.run_attempt,
+            record.nonce,
+            record.operation_id,
+            record.operation_definition_sha256,
+            record.positive_witness_report_sha256,
+            record.negative_witness_report_sha256,
+            record.raw_platform_state_sha256,
+            record.classification,
+        )
+        if actual != expected:
+            raise ProbeError(
+                "DIFFERENTIAL_PLATFORM_WALL_UNPROVED",
+                "fresh run fields are not bound to its immutable reviewed record",
+            )
+        authorization_expected = (
+            evidence["run_identity"]["repository"],
+            evidence["run_identity"]["repository_id"],
+            evidence["run_identity"]["pr_number"],
+            evidence["run_identity"]["base_sha"],
+            evidence["run_identity"]["head_sha"],
+            evidence["run_identity"]["workflow_sha"],
+            evidence["target"],
+            run_id,
+            attempt,
+            record.nonce,
+            installed_authorization.positive_invocation_id,
+            installed_authorization.negative_invocation_id,
+            "authorize_exactly_once",
+            historical_spec.operation_id,
+            historical_spec.operation_definition_sha256,
+            installed_authorization.positive_witness_report_sha256,
+            installed_authorization.negative_witness_report_sha256,
+        )
+        authorization_actual = (
+            installed_authorization.repository,
+            installed_authorization.repository_id,
+            installed_authorization.pr_number,
+            installed_authorization.base_sha,
+            installed_authorization.head_sha,
+            installed_authorization.workflow_sha,
+            installed_authorization.target,
+            installed_authorization.run_id,
+            installed_authorization.run_attempt,
+            installed_authorization.nonce,
+            installed_authorization.positive_invocation_id,
+            installed_authorization.negative_invocation_id,
+            installed_authorization.one_shot_disposition,
+            installed_authorization.operation_id,
+            installed_authorization.operation_definition_sha256,
+            installed_authorization.positive_witness_report_sha256,
+            installed_authorization.negative_witness_report_sha256,
+        )
+        if authorization_actual != authorization_expected:
+            raise ProbeError(
+                "DIFFERENTIAL_PLATFORM_WALL_UNPROVED",
+                "fresh run authorization is not complete and run-bound",
+            )
+    return len(value) >= 3
+
+
+def _differential_observation_map(
+    witness: Mapping[str, Any],
+) -> Dict[str, Any]:
+    return {item["name"]: item["value"] for item in witness["observations"]}
+
+
+def _equivalence_observations_prove_effect(
+    target: str,
+    positive: Mapping[str, Any],
+    negative: Mapping[str, Any],
+    authorization: DifferentialFutureAuthorizationRecord,
+) -> bool:
+    # This compatibility helper is deliberately restricted to the two
+    # identity-based synthetic equivalence classes.  Device and OOM evidence
+    # must pass the stronger concrete grammars in
+    # _target_observations_prove_effect and can never enter legacy branches.
+    if target not in ("EC-DYNAMICUSER-SUID", "EC-DYNAMICUSER-IPC"):
+        return False
+    if target not in DIFFERENTIAL_EQUIVALENCE_CLASS_REQUIRED_OBSERVATIONS:
+        return True
+    required = DIFFERENTIAL_EQUIVALENCE_CLASS_REQUIRED_OBSERVATIONS[target]
+    positive_values = _differential_observation_map(positive)
+    negative_values = _differential_observation_map(negative)
+    if (
+        not set(required).issubset(positive_values)
+        or not set(required).issubset(negative_values)
+    ):
+        return False
+    spec = differential_operation_spec(target)
+
+    def causal_fields(witness: Mapping[str, Any]) -> Dict[str, Any]:
+        return {
+            "authorization_sha256": authorization.authorization_sha256,
+            "invocation_id": witness["process_binding"]["invocation_id"],
+            "operation_definition_sha256": spec.operation_definition_sha256,
+            "operation_id": spec.operation_id,
+        }
+    if target == "EC-DYNAMICUSER-SUID":
+        def file_value(
+            value: Any, witness: Mapping[str, Any], expected: bool
+        ) -> bool:
+            expected_value = {
+                "file_device": value.get("file_device")
+                if isinstance(value, Mapping)
+                else None,
+                "file_inode": value.get("file_inode")
+                if isinstance(value, Mapping)
+                else None,
+                "observed": expected,
+                **causal_fields(witness),
+            }
+            return (
+                isinstance(value, Mapping)
+                and value == expected_value
+                and isinstance(value["file_device"], int)
+                and not isinstance(value["file_device"], bool)
+                and value["file_device"] > 0
+                and isinstance(value["file_inode"], int)
+                and not isinstance(value["file_inode"], bool)
+                and value["file_inode"] > 0
+                and value["observed"] is expected
+            )
+
+        return (
+            file_value(
+                positive_values["suid.denial_or_bit_clearing_in_w_plus"],
+                positive,
+                True,
+            )
+            and file_value(
+                positive_values["suid.operation_reached_in_w_minus"],
+                positive,
+                False,
+            )
+            and file_value(
+                positive_values["suid.synthetic_file_identity"], positive, True
+            )
+            and file_value(
+                negative_values["suid.denial_or_bit_clearing_in_w_plus"],
+                negative,
+                False,
+            )
+            and file_value(
+                negative_values["suid.operation_reached_in_w_minus"],
+                negative,
+                True,
+            )
+            and file_value(
+                negative_values["suid.synthetic_file_identity"], negative, True
+            )
+            and {
+                (
+                    item["value"]["file_device"],
+                    item["value"]["file_inode"],
+                )
+                for witness in (positive, negative)
+                for item in witness["observations"]
+                if item["name"] in required
+            }
+            == {(positive_values["suid.synthetic_file_identity"]["file_device"],
+                 positive_values["suid.synthetic_file_identity"]["file_inode"])}
+        )
+    if target == "EC-DYNAMICUSER-IPC":
+        def ipc_value(
+            value: Any, witness: Mapping[str, Any], expected: bool
+        ) -> bool:
+            expected_value = {
+                "ipc_namespace_inode": value.get("ipc_namespace_inode")
+                if isinstance(value, Mapping)
+                else None,
+                "object_id": value.get("object_id")
+                if isinstance(value, Mapping)
+                else None,
+                "observed": expected,
+                **causal_fields(witness),
+            }
+            return (
+                isinstance(value, Mapping)
+                and value == expected_value
+                and isinstance(value["ipc_namespace_inode"], int)
+                and not isinstance(value["ipc_namespace_inode"], bool)
+                and value["ipc_namespace_inode"] > 0
+                and isinstance(value["object_id"], int)
+                and not isinstance(value["object_id"], bool)
+                and value["object_id"] > 0
+                and value["observed"] is expected
+            )
+
+        return (
+            ipc_value(positive_values["ipc.removed_in_w_plus"], positive, True)
+            and ipc_value(
+                positive_values["ipc.retained_in_w_minus"], positive, False
+            )
+            and ipc_value(
+                positive_values["ipc.synthetic_object_identity"], positive, True
+            )
+            and ipc_value(
+                negative_values["ipc.removed_in_w_plus"], negative, False
+            )
+            and ipc_value(
+                negative_values["ipc.retained_in_w_minus"], negative, True
+            )
+            and ipc_value(
+                negative_values["ipc.synthetic_object_identity"], negative, True
+            )
+            and {
+                (
+                    item["value"]["ipc_namespace_inode"],
+                    item["value"]["object_id"],
+                )
+                for witness in (positive, negative)
+                for item in witness["observations"]
+                if item["name"] in required
+            }
+            == {
+                (
+                    positive_values["ipc.synthetic_object_identity"][
+                        "ipc_namespace_inode"
+                    ],
+                    positive_values["ipc.synthetic_object_identity"]["object_id"],
+                )
+            }
+        )
+    return False
+
+
+def _target_observations_prove_effect(
+    target: str,
+    positive: Mapping[str, Any],
+    negative: Mapping[str, Any],
+    authorization: DifferentialFutureAuthorizationRecord,
+) -> bool:
+    """Require an exact, target-specific, independently interpretable effect.
+
+    Generic lifecycle booleans are supporting metadata only.  Every target has
+    one immutable operation definition and one unique observation name whose
+    record is cross-bound to the authorization and witness InvocationID.
+    """
+    spec = differential_operation_spec(target)
+
+    def authorities(witness: Mapping[str, Any]) -> Dict[str, str]:
+        return {
+            item["name"]: item["authority"] for item in witness["observations"]
+        }
+
+    def exact_operation(
+        witness: Mapping[str, Any], expected_outcome: str
+    ) -> bool:
+        values = _differential_observation_map(witness)
+        if spec.observation_name not in values:
+            return False
+        if authorities(witness).get(spec.observation_name) != "kernel_observed":
+            return False
+        value = values[spec.observation_name]
+        if not isinstance(value, Mapping):
+            return False
+        expected = {
+            "authorization_sha256": authorization.authorization_sha256,
+            "errno": (
+                witness["operation_result"]["errno"]
+                if expected_outcome == "blocked"
+                else None
+            ),
+            "invocation_id": witness["process_binding"]["invocation_id"],
+            "operation_definition_sha256": spec.operation_definition_sha256,
+            "operation_id": spec.operation_id,
+            "outcome": expected_outcome,
+            "target": target,
+        }
+        if target == "SystemCallArchitectures":
+            observed_errno = value.get("errno")
+            if expected_outcome == "blocked" and (
+                not isinstance(observed_errno, int)
+                or isinstance(observed_errno, bool)
+                or observed_errno != errno.EPERM
+            ):
+                return False
+            expected.update(
+                {
+                    "abi": spec.secondary_abi,
+                    "build_provenance_sha256": spec.build_provenance_sha256,
+                    "helper_path": spec.helper_path,
+                    "helper_sha256": spec.helper_sha256,
+                    "syscall_operation": spec.syscall_operation,
+                }
+            )
+            expected = {name: expected[name] for name in sorted(expected)}
+        if value != expected:
+            return False
+        result = witness["operation_result"]
+        return (
+            result["reviewed_exact_operation"] is True
+            and result["operation_non_mutating"] is True
+            and result["operation_id"] == spec.operation_id
+            and result["operation_authorization_sha256"]
+            == authorization.authorization_sha256
+        )
+
+    positive_values = _differential_observation_map(positive)
+    negative_values = _differential_observation_map(negative)
+    required_names = {spec.observation_name}
+    required_names.update(
+        DIFFERENTIAL_EQUIVALENCE_CLASS_REQUIRED_OBSERVATIONS.get(target, ())
+    )
+    if set(positive_values) != required_names or set(negative_values) != required_names:
+        return False
+    expected_authorities = {name: "kernel_observed" for name in required_names}
+    if target == "EC-DEVICE-ACCESS":
+        expected_authorities[
+            "device.private_dev_topology_supporting"
+        ] = "platform_file_observed"
+    if (
+        authorities(positive) != expected_authorities
+        or authorities(negative) != expected_authorities
+    ):
+        return False
+    if not (
+        exact_operation(positive, spec.positive_outcome)
+        and exact_operation(negative, spec.negative_outcome)
+    ):
+        return False
+
+    if target == "SystemCallArchitectures":
+        positive_errno = positive["operation_result"]["errno"]
+        return (
+            positive["operation_result"]["secondary_abi_executed"] is True
+            and negative["operation_result"]["secondary_abi_executed"] is True
+            and isinstance(positive_errno, int)
+            and not isinstance(positive_errno, bool)
+            and positive_errno == errno.EPERM
+            and negative["operation_result"]["errno"] is None
+        )
+
+    if target == "EC-DEVICE-ACCESS":
+        matches = tuple(
+            item
+            for item in DIFFERENTIAL_REVIEWED_DEVICE_OPERATION_AUTHORIZATIONS
+            if item.authorization_sha256
+            == authorization.device_operation_authorization_sha256
+        )
+        if len(matches) != 1:
+            return False
+        device = matches[0]
+        if (
+            device.positive_invocation_id
+            != positive["process_binding"]["invocation_id"]
+            or device.negative_invocation_id
+            != negative["process_binding"]["invocation_id"]
+        ):
+            return False
+
+        def device_value(
+            value: Any, witness: Mapping[str, Any], observed: bool
+        ) -> bool:
+            return (
+                isinstance(value, Mapping)
+                and isinstance(value.get("device_major"), int)
+                and not isinstance(value.get("device_major"), bool)
+                and isinstance(value.get("device_minor"), int)
+                and not isinstance(value.get("device_minor"), bool)
+                and isinstance(value.get("observed"), bool)
+                and value.get("observed") is observed
+                and value
+                == {
+                    "device_major": device.device_major,
+                    "device_minor": device.device_minor,
+                    "device_path": device.device_path,
+                    "observed": observed,
+                    "authorization_sha256": authorization.authorization_sha256,
+                    "invocation_id": witness["process_binding"]["invocation_id"],
+                    "operation_authorization_sha256": device.authorization_sha256,
+                    "operation_definition_sha256": device.operation_definition_sha256,
+                    "operation_id": device.operation_id,
+                }
+            )
+
+        positive_flags = {
+            "device.cgroup_bpf_attachment_supporting": True,
+            "device.operation_denied_in_w_plus": True,
+            "device.operation_reached_in_w_minus": False,
+            "device.private_dev_topology_supporting": True,
+        }
+        negative_flags = {
+            "device.cgroup_bpf_attachment_supporting": True,
+            "device.operation_denied_in_w_plus": False,
+            "device.operation_reached_in_w_minus": True,
+            "device.private_dev_topology_supporting": True,
+        }
+        return all(
+            device_value(positive_values[name], positive, observed)
+            for name, observed in positive_flags.items()
+        ) and all(
+            device_value(negative_values[name], negative, observed)
+            for name, observed in negative_flags.items()
+        )
+
+    if target == "EC-KERNEL-OOM-GROUP":
+        def common(value: Any, witness: Mapping[str, Any]) -> bool:
+            return (
+                isinstance(value, Mapping)
+                and value.get("authorization_sha256")
+                == authorization.authorization_sha256
+                and value.get("cgroup") == witness["process_binding"]["cgroup"]
+                and value.get("invocation_id")
+                == witness["process_binding"]["invocation_id"]
+                and value.get("operation_definition_sha256")
+                == spec.operation_definition_sha256
+                and value.get("operation_id") == spec.operation_id
+            )
+
+        def strict_int_fields(value: Any, names: Sequence[str]) -> bool:
+            return isinstance(value, Mapping) and all(
+                isinstance(value.get(name), int)
+                and not isinstance(value.get(name), bool)
+                and value[name] >= 0
+                for name in names
+            )
+
+        def strict_pid_list(value: Any) -> bool:
+            return isinstance(value, list) and all(
+                isinstance(item, int)
+                and not isinstance(item, bool)
+                and item > 0
+                for item in value
+            )
+
+        p = positive_values
+        n = negative_values
+        pid_p = positive["process_binding"]["pid"]
+        pid_n = negative["process_binding"]["pid"]
+        return (
+            strict_int_fields(
+                p["cgroup.events"], ("populated_after", "populated_before")
+            )
+            and strict_int_fields(
+                n["cgroup.events"], ("populated_after", "populated_before")
+            )
+            and strict_int_fields(
+                p["cgroup.memory_events"],
+                ("oom_kill_after", "oom_kill_before"),
+            )
+            and strict_int_fields(
+                n["cgroup.memory_events"],
+                ("oom_kill_after", "oom_kill_before"),
+            )
+            and strict_int_fields(p["cgroup.memory_oom_group"], ("value",))
+            and strict_int_fields(n["cgroup.memory_oom_group"], ("value",))
+            and strict_pid_list(
+                p["cgroup.process_membership"].get("member_pids_after")
+                if isinstance(p["cgroup.process_membership"], Mapping)
+                else None
+            )
+            and strict_pid_list(
+                p["cgroup.process_membership"].get("member_pids_before")
+                if isinstance(p["cgroup.process_membership"], Mapping)
+                else None
+            )
+            and strict_pid_list(
+                n["cgroup.process_membership"].get("member_pids_after")
+                if isinstance(n["cgroup.process_membership"], Mapping)
+                else None
+            )
+            and strict_pid_list(
+                n["cgroup.process_membership"].get("member_pids_before")
+                if isinstance(n["cgroup.process_membership"], Mapping)
+                else None
+            )
+            and
+            common(p["cgroup.complete_death"], positive)
+            and isinstance(
+                p["cgroup.complete_death"].get("all_members_dead"), bool
+            )
+            and p["cgroup.complete_death"].get("all_members_dead") is True
+            and common(n["cgroup.complete_death"], negative)
+            and isinstance(
+                n["cgroup.complete_death"].get("all_members_dead"), bool
+            )
+            and n["cgroup.complete_death"].get("all_members_dead") is False
+            and p["cgroup.complete_death"]
+            == {
+                "all_members_dead": True,
+                "authorization_sha256": authorization.authorization_sha256,
+                "cgroup": positive["process_binding"]["cgroup"],
+                "invocation_id": positive["process_binding"]["invocation_id"],
+                "operation_definition_sha256": spec.operation_definition_sha256,
+                "operation_id": spec.operation_id,
+            }
+            and n["cgroup.complete_death"]
+            == {
+                "all_members_dead": False,
+                "authorization_sha256": authorization.authorization_sha256,
+                "cgroup": negative["process_binding"]["cgroup"],
+                "invocation_id": negative["process_binding"]["invocation_id"],
+                "operation_definition_sha256": spec.operation_definition_sha256,
+                "operation_id": spec.operation_id,
+            }
+            and p["cgroup.events"]
+            == {
+                "authorization_sha256": authorization.authorization_sha256,
+                "cgroup": positive["process_binding"]["cgroup"],
+                "invocation_id": positive["process_binding"]["invocation_id"],
+                "operation_definition_sha256": spec.operation_definition_sha256,
+                "operation_id": spec.operation_id,
+                "populated_after": 0,
+                "populated_before": 1,
+            }
+            and n["cgroup.events"]
+            == {
+                "authorization_sha256": authorization.authorization_sha256,
+                "cgroup": negative["process_binding"]["cgroup"],
+                "invocation_id": negative["process_binding"]["invocation_id"],
+                "operation_definition_sha256": spec.operation_definition_sha256,
+                "operation_id": spec.operation_id,
+                "populated_after": 1,
+                "populated_before": 1,
+            }
+            and isinstance(p["cgroup.memory_events"], Mapping)
+            and set(p["cgroup.memory_events"])
+            == {
+                "authorization_sha256",
+                "cgroup",
+                "invocation_id",
+                "oom_kill_after",
+                "oom_kill_before",
+                "operation_definition_sha256",
+                "operation_id",
+            }
+            and common(p["cgroup.memory_events"], positive)
+            and p["cgroup.memory_events"].get("oom_kill_after")
+            == p["cgroup.memory_events"].get("oom_kill_before", -1) + 1
+            and isinstance(n["cgroup.memory_events"], Mapping)
+            and set(n["cgroup.memory_events"])
+            == {
+                "authorization_sha256",
+                "cgroup",
+                "invocation_id",
+                "oom_kill_after",
+                "oom_kill_before",
+                "operation_definition_sha256",
+                "operation_id",
+            }
+            and common(n["cgroup.memory_events"], negative)
+            and n["cgroup.memory_events"].get("oom_kill_after")
+            == n["cgroup.memory_events"].get("oom_kill_before", -1) + 1
+            and p["cgroup.memory_oom_group"]
+            == {
+                "authorization_sha256": authorization.authorization_sha256,
+                "cgroup": positive["process_binding"]["cgroup"],
+                "invocation_id": positive["process_binding"]["invocation_id"],
+                "operation_definition_sha256": spec.operation_definition_sha256,
+                "operation_id": spec.operation_id,
+                "value": 1,
+            }
+            and n["cgroup.memory_oom_group"]
+            == {
+                "authorization_sha256": authorization.authorization_sha256,
+                "cgroup": negative["process_binding"]["cgroup"],
+                "invocation_id": negative["process_binding"]["invocation_id"],
+                "operation_definition_sha256": spec.operation_definition_sha256,
+                "operation_id": spec.operation_id,
+                "value": 0,
+            }
+            and p["cgroup.process_membership"]
+            == {
+                "authorization_sha256": authorization.authorization_sha256,
+                "cgroup": positive["process_binding"]["cgroup"],
+                "invocation_id": positive["process_binding"]["invocation_id"],
+                "member_pids_after": [],
+                "member_pids_before": [pid_p],
+                "operation_definition_sha256": spec.operation_definition_sha256,
+                "operation_id": spec.operation_id,
+            }
+            and n["cgroup.process_membership"]
+            == {
+                "authorization_sha256": authorization.authorization_sha256,
+                "cgroup": negative["process_binding"]["cgroup"],
+                "invocation_id": negative["process_binding"]["invocation_id"],
+                "member_pids_after": [pid_n],
+                "member_pids_before": [pid_n],
+                "operation_definition_sha256": spec.operation_definition_sha256,
+                "operation_id": spec.operation_id,
+            }
+        )
+
+    if target in ("EC-DYNAMICUSER-SUID", "EC-DYNAMICUSER-IPC"):
+        return _equivalence_observations_prove_effect(
+            target, positive, negative, authorization
+        )
+    return True
+
+
+def _derive_differential_classification(
+    evidence: Mapping[str, Any],
+    positive: Mapping[str, Any],
+    negative: Mapping[str, Any],
+) -> str:
+    """Derive exactly one terminal state from already validated evidence."""
+    if positive["executed"] is not True or negative["executed"] is not True:
+        return "witness_unusable"
+    fresh_run_complete = _validate_differential_fresh_runs(
+        evidence["fresh_run_evidence"], evidence
+    )
+    if evidence["errors"]:
+        return "implementation_defect"
+    positive_result = positive["operation_result"]
+    negative_result = negative["operation_result"]
+    causal = (
+        positive["executed"]
+        and negative["executed"]
+        and positive_result["effect_observed"]
+        and negative_result["control_reached"]
+        and positive_result["manager_window_preserved"]
+        and negative_result["manager_window_preserved"]
+        and not positive_result["supervisor_fallback_started"]
+        and not negative_result["supervisor_fallback_started"]
+        and _target_observations_prove_effect(
+            evidence["target"],
+            positive,
+            negative,
+            _validate_differential_future_authorization(
+                evidence["future_authorization"], evidence
+            ),
+        )
+    )
+    if causal:
+        return "effect_proven"
+    if fresh_run_complete:
+        return "repeated_platform_wall"
+    return "global_policy_or_platform_ambiguous"
+
+
+def _classify_differential_future_evidence_snapshot(
+    evidence: Mapping[str, Any],
+) -> str:
+    """Classify one immutable snapshot decoded from canonical bounded bytes."""
+    verify_differential_target_model_synchronized()
+    evidence = _differential_require_exact_fields(
+        evidence, DIFFERENTIAL_ROOT_FIELDS, "evidence"
+    )
+    if evidence["schema_version"] != DIFFERENTIAL_SCHEMA_VERSION:
+        raise ProbeError("DIFFERENTIAL_VERSION_MISMATCH", "schema_version")
+    if evidence["evidence_kind"] != DIFFERENTIAL_EVIDENCE_KIND:
+        raise ProbeError("DIFFERENTIAL_KIND_MISMATCH", "evidence_kind")
+    if evidence["notice"] != DIFFERENTIAL_NOTICE:
+        raise ProbeError("DIFFERENTIAL_NOTICE_MISMATCH", "notice")
+    if evidence["authoring_task_sha256"] != DIFFERENTIAL_AUTHORING_TASK_SHA256:
+        raise ProbeError("DIFFERENTIAL_SOURCE_MISMATCH", "authoring task")
+    if evidence["authoring_parent"] != DIFFERENTIAL_AUTHORING_PARENT:
+        raise ProbeError("DIFFERENTIAL_SOURCE_MISMATCH", "authoring parent")
+    if evidence["authoring_parent_tree"] != DIFFERENTIAL_AUTHORING_PARENT_TREE:
+        raise ProbeError("DIFFERENTIAL_SOURCE_MISMATCH", "authoring parent tree")
+    if evidence["authority_scope"] != DIFFERENTIAL_FUTURE_AUTHORITY:
+        raise ProbeError(
+            "DIFFERENTIAL_EFFECT_AUTHORITY_REQUIRED", "authority_scope"
+        )
+    if evidence["proof_eligible"] is not True:
+        raise ProbeError("DIFFERENTIAL_EFFECT_AUTHORITY_REQUIRED", "proof_eligible")
+    if evidence["proof_ineligible_reason"] is not None:
+        raise ProbeError(
+            "DIFFERENTIAL_EFFECT_AUTHORITY_REQUIRED", "proof_ineligible_reason"
+        )
+    if evidence["execution_state"] != DIFFERENTIAL_EXECUTED_UNCLASSIFIED_STATE:
+        raise ProbeError("DIFFERENTIAL_STATE_INVALID", "execution_state")
+    if evidence["classification"] is not None:
+        raise ProbeError(
+            "DIFFERENTIAL_STATE_INVALID",
+            "caller-provided terminal classification is forbidden",
+        )
+    target = _differential_require_text(evidence["target"], "target", maximum=128)
+    properties = differential_target_properties(target)
+    if evidence["target_properties"] != list(properties):
+        raise ProbeError("DIFFERENTIAL_TARGET_INVALID", "target_properties mismatch")
+    _validate_differential_run_identity(evidence["run_identity"])
+    _validate_differential_error_records(evidence["errors"])
+    _validate_differential_future_authorization(
+        evidence["future_authorization"], evidence
+    )
+    if evidence["mandatory_effect_blockers"] != mandatory_effect_blockers():
+        raise ProbeError(
+            "DIFFERENTIAL_BLOCKER_DRIFT", "mandatory blockers changed or reordered"
+        )
+    try:
+        positive, negative = _validate_differential_pair(
+            evidence["witnesses"],
+            target,
+            evidence["execution_state"],
+            evidence["run_identity"],
+        )
+    except ProbeError:
+        return "witness_unusable"
+    if positive["executed"] is not True or negative["executed"] is not True:
+        return "witness_unusable"
+    return _derive_differential_classification(evidence, positive, negative)
+
+
+def validate_differential_witness_evidence(evidence: Mapping[str, Any]) -> None:
+    """Validate the closed, proof-ineligible F7-B4 authoring document.
+
+    This validator deliberately accepts only the local-authoring initial state.
+    The state machine above models later transitions, but this task cannot emit
+    or seal an operational effect record.
+    """
+    verify_differential_target_model_synchronized()
+    evidence = _differential_require_exact_fields(
+        evidence, DIFFERENTIAL_ROOT_FIELDS, "evidence"
+    )
+    if evidence["schema_version"] != DIFFERENTIAL_SCHEMA_VERSION:
+        raise ProbeError("DIFFERENTIAL_VERSION_MISMATCH", "schema_version")
+    if evidence["evidence_kind"] != DIFFERENTIAL_EVIDENCE_KIND:
+        raise ProbeError("DIFFERENTIAL_KIND_MISMATCH", "evidence_kind")
+    if evidence["notice"] != DIFFERENTIAL_NOTICE:
+        raise ProbeError("DIFFERENTIAL_NOTICE_MISMATCH", "notice")
+    if evidence["authoring_task_sha256"] != DIFFERENTIAL_AUTHORING_TASK_SHA256:
+        raise ProbeError("DIFFERENTIAL_SOURCE_MISMATCH", "authoring task")
+    if evidence["authoring_parent"] != DIFFERENTIAL_AUTHORING_PARENT:
+        raise ProbeError("DIFFERENTIAL_SOURCE_MISMATCH", "authoring parent")
+    if evidence["authoring_parent_tree"] != DIFFERENTIAL_AUTHORING_PARENT_TREE:
+        raise ProbeError("DIFFERENTIAL_SOURCE_MISMATCH", "authoring parent tree")
+    if evidence["authority_scope"] != DIFFERENTIAL_LOCAL_AUTHORITY:
+        raise ProbeError(
+            "DIFFERENTIAL_EFFECT_AUTHORITY_REQUIRED", "authority_scope"
+        )
+    if evidence["proof_eligible"] is not False:
+        raise ProbeError("DIFFERENTIAL_AUTHORING_OVERCLAIM", "proof_eligible")
+    if evidence["proof_ineligible_reason"] != DIFFERENTIAL_PROOF_INELIGIBLE_REASON:
+        raise ProbeError(
+            "DIFFERENTIAL_AUTHORING_OVERCLAIM", "proof_ineligible_reason"
+        )
+    if evidence["execution_state"] != DIFFERENTIAL_INITIAL_STATE:
+        raise ProbeError("DIFFERENTIAL_AUTHORING_OVERCLAIM", "execution_state")
+    if evidence["classification"] is not None:
+        raise ProbeError("DIFFERENTIAL_AUTHORING_OVERCLAIM", "classification")
+    if evidence["future_authorization"] is not None:
+        raise ProbeError(
+            "DIFFERENTIAL_AUTHORING_OVERCLAIM", "future_authorization"
+        )
+    if evidence["fresh_run_evidence"] != []:
+        raise ProbeError(
+            "DIFFERENTIAL_AUTHORING_OVERCLAIM", "fresh_run_evidence"
+        )
+    target = _differential_require_text(
+        evidence["target"], "target", maximum=128
+    )
+    properties = differential_target_properties(target)
+    if evidence["target_properties"] != list(properties):
+        raise ProbeError(
+            "DIFFERENTIAL_TARGET_INVALID", "target_properties mismatch"
+        )
+    _validate_differential_run_identity(evidence["run_identity"])
+    _validate_differential_pair(
+        evidence["witnesses"],
+        target,
+        evidence["execution_state"],
+        evidence["run_identity"],
+    )
+    if evidence["mandatory_effect_blockers"] != mandatory_effect_blockers():
+        raise ProbeError(
+            "DIFFERENTIAL_BLOCKER_DRIFT", "mandatory blockers changed or reordered"
+        )
+    if evidence["errors"] != []:
+        raise ProbeError(
+            "DIFFERENTIAL_AUTHORING_OVERCLAIM",
+            "authoring contract must be deterministic and error-free",
+        )
+    _scan_gate1_namespace(evidence, "differential")
+
+
+def differential_json_bytes(evidence: Mapping[str, Any]) -> bytes:
+    validate_differential_witness_evidence(evidence)
+    try:
+        payload = json.dumps(
+            evidence, ensure_ascii=False, sort_keys=False, separators=(",", ":")
+        ).encode("utf-8")
+    except (TypeError, ValueError, UnicodeError, RecursionError) as exc:
+        raise ProbeError("DIFFERENTIAL_ENCODING_INVALID", str(exc)) from exc
+    if len(payload) > DIFFERENTIAL_MAX_EVIDENCE_BYTES:
+        raise ProbeError(
+            "DIFFERENTIAL_SIZE_INVALID", f"{len(payload)} bytes"
+        )
+    return payload
+
+
+def _decode_canonical_differential_json_bytes(payload: bytes) -> Dict[str, Any]:
+    if not isinstance(payload, bytes) or not payload:
+        raise ProbeError("DIFFERENTIAL_ENCODING_INVALID", "bytes required")
+    if len(payload) > DIFFERENTIAL_MAX_EVIDENCE_BYTES:
+        raise ProbeError("DIFFERENTIAL_SIZE_INVALID", f"{len(payload)} bytes")
+    try:
+        text = payload.decode("utf-8", errors="strict")
+    except UnicodeDecodeError as exc:
+        raise ProbeError("DIFFERENTIAL_ENCODING_INVALID", str(exc)) from exc
+    depth = 0
+    in_string = False
+    escaped = False
+    for character in text:
+        if in_string:
+            if escaped:
+                escaped = False
+            elif character == "\\":
+                escaped = True
+            elif character == '"':
+                in_string = False
+            continue
+        if character == '"':
+            in_string = True
+        elif character in "[{":
+            depth += 1
+            if depth > 8:
+                raise ProbeError(
+                    "DIFFERENTIAL_ENCODING_INVALID",
+                    "JSON nesting exceeds the bounded evidence grammar",
+                )
+        elif character in "]}":
+            depth -= 1
+            if depth < 0:
+                raise ProbeError(
+                    "DIFFERENTIAL_ENCODING_INVALID", "unbalanced JSON nesting"
+                )
+
+    def unique_object(pairs: List[Tuple[str, Any]]) -> Dict[str, Any]:
+        result: Dict[str, Any] = {}
+        for key, value in pairs:
+            if key in result:
+                raise ProbeError(
+                    "DIFFERENTIAL_DUPLICATE_FIELD", key
+                )
+            result[key] = value
+        return result
+
+    def bounded_int(value: str) -> int:
+        if len(value.lstrip("-")) > 20:
+            raise ProbeError(
+                "DIFFERENTIAL_ENCODING_INVALID", "JSON integer is oversized"
+            )
+        return int(value)
+
+    try:
+        parsed = json.loads(
+            text,
+            object_pairs_hook=unique_object,
+            parse_int=bounded_int,
+            parse_constant=lambda value: (_ for _ in ()).throw(
+                ProbeError("DIFFERENTIAL_ENCODING_INVALID", value)
+            ),
+        )
+    except ProbeError:
+        raise
+    except (json.JSONDecodeError, UnicodeError, RecursionError, ValueError) as exc:
+        raise ProbeError("DIFFERENTIAL_ENCODING_INVALID", str(exc)) from exc
+    if not isinstance(parsed, dict):
+        raise ProbeError("DIFFERENTIAL_FIELD_SET_INVALID", "root is not object")
+    try:
+        canonical = json.dumps(
+            parsed, ensure_ascii=False, sort_keys=False, separators=(",", ":")
+        ).encode("utf-8")
+    except (TypeError, ValueError, UnicodeError, RecursionError) as exc:
+        raise ProbeError("DIFFERENTIAL_ENCODING_INVALID", str(exc)) from exc
+    if canonical != payload:
+        raise ProbeError(
+            "DIFFERENTIAL_NONCANONICAL", "encoding or field order changed"
+        )
+    return parsed
+
+
+def parse_differential_json_bytes(payload: bytes) -> Dict[str, Any]:
+    parsed = _decode_canonical_differential_json_bytes(payload)
+    validate_differential_witness_evidence(parsed)
+    return parsed
+
+
+def classify_differential_future_evidence_bytes(payload: bytes) -> str:
+    """Classify future evidence only from canonical bounded immutable bytes."""
+    parsed = _decode_canonical_differential_json_bytes(payload)
+    return _classify_differential_future_evidence_snapshot(parsed)
+
+
+def build_differential_authoring_fixture(
+    target: str = "SystemCallArchitectures",
+) -> Dict[str, Any]:
+    """Return one deterministic, explicitly unexecuted grammar fixture."""
+    verify_differential_target_model_synchronized()
+    properties = differential_target_properties(target)
+    source_sha256 = hashlib.sha256(
+        b"F7-B4 authoring-only root-staged witness source"
+    ).hexdigest()
+    operation_result = {
+        "reviewed_exact_operation": False,
+        "operation_id": None,
+        "operation_authorization_sha256": None,
+        "operation_non_mutating": False,
+        "control_reached": False,
+        "effect_observed": False,
+        "errno": None,
+        "secondary_abi_executed": False,
+        "supporting_dev_topology": False,
+        "supporting_bpf_query": False,
+        "manager_window_preserved": False,
+        "supervisor_fallback_started": False,
+    }
+
+    source_binding = {
+        "path": "/run/p0-v2-f7b4/witness.py",
+        "sha256": source_sha256,
+        "device": 1,
+        "inode": 1,
+        "uid": 0,
+        "gid": 0,
+        "mode": stat.S_IFREG | 0o500,
+        "descriptor_stable": True,
+        "substitution_rejected": True,
+        "authority": TRUSTED_BOOTSTRAP_OBSERVED,
+    }
+    run_identity = {
+        "repository": DIFFERENTIAL_CANONICAL_REPOSITORY,
+        "repository_id": DIFFERENTIAL_CANONICAL_REPOSITORY_ID,
+        "pr_number": DIFFERENTIAL_CANONICAL_PR_NUMBER,
+        "run_id": "LOCAL-F7B4",
+        "run_attempt": 0,
+        "head_sha": DIFFERENTIAL_AUTHORING_PARENT,
+        "base_sha": DIFFERENTIAL_CANONICAL_BASE_SHA,
+        "workflow_sha": DIFFERENTIAL_CANONICAL_WORKFLOW_SHA256,
+        "authorization_sha256": DIFFERENTIAL_AUTHORING_TASK_SHA256,
+        "nonce": "0" * 32,
+    }
+
+    def witness(role: str) -> Dict[str, Any]:
+        positive = role == "W+"
+        pid = 101 if positive else 102
+        start_time_ticks = 1001 if positive else 1002
+        pipe_inode = 2001 if positive else 2002
+        writer_fd = 4
+        return {
+            "role": role,
+            "unit_name": (
+                "p0-v2-f7b4-positive.service"
+                if role == "W+"
+                else "p0-v2-f7b4-negative.service"
+            ),
+            "report_authority": TRUSTED_BOOTSTRAP_OBSERVED,
+            "executed": False,
+            "run_binding": dict(run_identity),
+            "unit_ast": differential_unit_ast(target, role),
+            "source_binding": dict(source_binding),
+            "process_binding": {
+                "pid": pid,
+                "pid_authority": "kernel_observed",
+                "start_time_ticks": start_time_ticks,
+                "start_time_authority": "kernel_observed",
+                "uid": 65534,
+                "gid": 65534,
+                "credentials_authority": "kernel_observed",
+                "environment": [],
+                "environment_authority": "kernel_observed",
+                "cgroup": (
+                    "/system.slice/p0-v2-f7b4-positive.service"
+                    if positive
+                    else "/system.slice/p0-v2-f7b4-negative.service"
+                ),
+                "cgroup_authority": "kernel_observed",
+                "invocation_id": ("1" if positive else "2") * 32,
+                "invocation_id_authority": "systemd_observed",
+            },
+            "proof_channel": {
+                "kind": "anonymous_pipe",
+                "pipe_inode": pipe_inode,
+                "writer_fd": writer_fd,
+                "writer_processes": [pid],
+                "writer_open_file_description_count": 1,
+                "writer_cloexec": True,
+                "duplicate_writer_fds": [],
+                "descendant_writer_refs": [],
+                "bootstrap_descendant_pids": [],
+                "eof_observed": False,
+                "eof_before_hostile_transition": False,
+                "post_exec_writer_fds": [],
+                "pathname_reopenable": False,
+                "authority": "supervisor_observed",
+                "process_tree": [
+                    {
+                        "pid": pid,
+                        "start_time_ticks": start_time_ticks,
+                        "parent_pid": 1,
+                        "writer_fds": [writer_fd],
+                    }
+                ],
+                "open_file_descriptions": [
+                    {
+                        "ofd_id": ("a" if positive else "b") * 32,
+                        "pipe_inode": pipe_inode,
+                        "holder_pid": pid,
+                        "holder_fd": writer_fd,
+                        "write_end": True,
+                    }
+                ],
+            },
+            "operation_result": dict(operation_result),
+            "observations": [],
+        }
+
+    value = {
+        "schema_version": DIFFERENTIAL_SCHEMA_VERSION,
+        "evidence_kind": DIFFERENTIAL_EVIDENCE_KIND,
+        "notice": DIFFERENTIAL_NOTICE,
+        "authoring_task_sha256": DIFFERENTIAL_AUTHORING_TASK_SHA256,
+        "authoring_parent": DIFFERENTIAL_AUTHORING_PARENT,
+        "authoring_parent_tree": DIFFERENTIAL_AUTHORING_PARENT_TREE,
+        "authority_scope": DIFFERENTIAL_LOCAL_AUTHORITY,
+        "proof_eligible": False,
+        "proof_ineligible_reason": DIFFERENTIAL_PROOF_INELIGIBLE_REASON,
+        "execution_state": DIFFERENTIAL_INITIAL_STATE,
+        "classification": None,
+        "target": target,
+        "target_properties": list(properties),
+        "run_identity": run_identity,
+        "future_authorization": None,
+        "witnesses": [witness("W+"), witness("W-")],
+        "fresh_run_evidence": [],
+        "mandatory_effect_blockers": mandatory_effect_blockers(),
+        "errors": [],
+    }
+    validate_differential_witness_evidence(value)
+    return value
 
 
 def candidate_run_succeeds(

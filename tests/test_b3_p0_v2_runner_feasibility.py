@@ -18,6 +18,7 @@ import time
 import unittest
 import zipfile
 from contextlib import ExitStack, redirect_stderr, redirect_stdout
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -1407,18 +1408,35 @@ class WorkflowTests(unittest.TestCase):
             "\n    steps:\n", 1
         )[0]
         expected_bindings = {
-            "EXPECTED_PROBE_SHA256": TOOL_PATH,
-            "EXPECTED_SCHEMA_SHA256": SCHEMA_PATH,
-            "EXPECTED_TEST_SHA256": Path(__file__).resolve(),
+            # F7-B4 is intentionally local-only.  The byte-unchanged hosted
+            # workflow must remain pinned to the exact reviewed authoring parent,
+            # not silently accept these new uncommitted source/test bytes.
+            "EXPECTED_PROBE_SHA256": (
+                probe.DIFFERENTIAL_AUTHORING_PARENT_PROBE_SHA256
+            ),
+            "EXPECTED_SCHEMA_SHA256": hashlib.sha256(
+                SCHEMA_PATH.read_bytes()
+            ).hexdigest(),
+            "EXPECTED_TEST_SHA256": (
+                probe.DIFFERENTIAL_AUTHORING_PARENT_TEST_SHA256
+            ),
         }
-        for variable, path in expected_bindings.items():
+        for variable, expected_digest in expected_bindings.items():
             prefix = f"      {variable}: "
             values = [
                 line.removeprefix(prefix)
                 for line in discovery_env.splitlines()
                 if line.startswith(prefix)
             ]
-            self.assertEqual([hashlib.sha256(path.read_bytes()).hexdigest()], values)
+            self.assertEqual([expected_digest], values)
+        self.assertNotEqual(
+            probe.DIFFERENTIAL_AUTHORING_PARENT_PROBE_SHA256,
+            hashlib.sha256(TOOL_PATH.read_bytes()).hexdigest(),
+        )
+        self.assertNotEqual(
+            probe.DIFFERENTIAL_AUTHORING_PARENT_TEST_SHA256,
+            hashlib.sha256(Path(__file__).resolve().read_bytes()).hexdigest(),
+        )
         discovery_schema_prefix = (
             "      EXPECTED_DISCOVERY_SCHEMA_SHA256: "
         )
@@ -8220,6 +8238,2332 @@ class ProofIneligibleDiscoveryContractTests(unittest.TestCase):
         success = _discovery_evidence()
         success["outcome"] = "SUCCESS"
         self.assertDiscoveryInvalid(success)
+
+
+def _differential_evidence(target="SystemCallArchitectures"):
+    return probe.build_differential_authoring_fixture(target)
+
+
+def _future_differential_evidence(target="SystemCallFilter"):
+    value = _differential_evidence(target)
+    value["authority_scope"] = probe.DIFFERENTIAL_FUTURE_AUTHORITY
+    value["proof_eligible"] = True
+    value["proof_ineligible_reason"] = None
+    value["execution_state"] = probe.DIFFERENTIAL_EXECUTED_UNCLASSIFIED_STATE
+    value["run_identity"]["run_id"] = "4001"
+    value["run_identity"]["run_attempt"] = 1
+    value["run_identity"]["authorization_sha256"] = "a" * 64
+    value["future_authorization"] = {"authorization_sha256": "a" * 64}
+    spec = probe.differential_operation_spec(target)
+    for witness in value["witnesses"]:
+        witness["run_binding"] = dict(value["run_identity"])
+        witness["executed"] = True
+        witness["proof_channel"]["eof_observed"] = True
+        witness["proof_channel"]["eof_before_hostile_transition"] = True
+        result = witness["operation_result"]
+        result["manager_window_preserved"] = True
+        result["reviewed_exact_operation"] = True
+        result["operation_id"] = spec.operation_id
+        result["operation_authorization_sha256"] = "a" * 64
+        result["operation_non_mutating"] = True
+    value["witnesses"][0]["operation_result"]["effect_observed"] = True
+    value["witnesses"][0]["operation_result"]["errno"] = errno.EPERM
+    value["witnesses"][1]["operation_result"]["control_reached"] = True
+    for witness, outcome in zip(value["witnesses"], ("blocked", "reached")):
+        record = {
+            "authorization_sha256": "a" * 64,
+            "errno": witness["operation_result"]["errno"] if outcome == "blocked" else None,
+            "invocation_id": witness["process_binding"]["invocation_id"],
+            "operation_definition_sha256": spec.operation_definition_sha256,
+            "operation_id": spec.operation_id,
+            "outcome": outcome,
+            "target": target,
+        }
+        if target == "SystemCallArchitectures":
+            witness["operation_result"]["secondary_abi_executed"] = True
+            record.update(
+                {
+                    "abi": spec.secondary_abi,
+                    "build_provenance_sha256": spec.build_provenance_sha256,
+                    "helper_path": spec.helper_path,
+                    "helper_sha256": spec.helper_sha256,
+                    "syscall_operation": spec.syscall_operation,
+                }
+            )
+            record = {name: record[name] for name in sorted(record)}
+        witness["observations"] = [
+            {
+                "name": spec.observation_name,
+                "authority": "kernel_observed",
+                "value": record,
+            }
+        ]
+    authorization = _future_authorization_record(value).authorization_sha256
+    value["run_identity"]["authorization_sha256"] = authorization
+    value["future_authorization"]["authorization_sha256"] = authorization
+    for witness in value["witnesses"]:
+        witness["run_binding"] = dict(value["run_identity"])
+        witness["operation_result"][
+            "operation_authorization_sha256"
+        ] = authorization
+        for observation in witness["observations"]:
+            observation["value"]["authorization_sha256"] = authorization
+    return value
+
+
+def _future_authorization_record(value):
+    run = value["run_identity"]
+    spec = probe.differential_operation_spec(value["target"])
+    record = probe.DifferentialFutureAuthorizationRecord(
+        authorization_sha256=run["authorization_sha256"],
+        authority_kind=probe.DIFFERENTIAL_FUTURE_AUTHORITY_KIND,
+        approved_task_sha256=hashlib.sha256(
+            f"approved-task:{run['run_id']}".encode("ascii")
+        ).hexdigest(),
+        owner_approval_sha256=hashlib.sha256(
+            f"owner-approval:{run['run_id']}".encode("ascii")
+        ).hexdigest(),
+        review_sha256=hashlib.sha256(
+            f"independent-review:{run['run_id']}".encode("ascii")
+        ).hexdigest(),
+        repository=run["repository"],
+        repository_id=run["repository_id"],
+        pr_number=run["pr_number"],
+        base_sha=run["base_sha"],
+        head_sha=run["head_sha"],
+        workflow_sha=run["workflow_sha"],
+        target=value["target"],
+        run_id=run["run_id"],
+        run_attempt=run["run_attempt"],
+        nonce=run["nonce"],
+        positive_invocation_id=value["witnesses"][0]["process_binding"][
+            "invocation_id"
+        ],
+        negative_invocation_id=value["witnesses"][1]["process_binding"][
+            "invocation_id"
+        ],
+        one_shot_disposition="authorize_exactly_once",
+        operation_id=spec.operation_id,
+        operation_definition_sha256=spec.operation_definition_sha256,
+        positive_witness_report_sha256=probe._differential_witness_report_sha256(
+            value["witnesses"][0]
+        ),
+        negative_witness_report_sha256=probe._differential_witness_report_sha256(
+            value["witnesses"][1]
+        ),
+        device_operation_authorization_sha256=(
+            "c" * 64 if value["target"] == "EC-DEVICE-ACCESS" else None
+        ),
+    )
+    record = replace(
+        record,
+        authorization_sha256=(
+            probe._differential_future_authorization_identity_sha256(record)
+        ),
+    )
+    if value["target"] == "EC-DEVICE-ACCESS":
+        device = _device_operation_record_from_future(
+            value, record, f"current:{run['run_id']}"
+        )
+        record = replace(
+            record,
+            device_operation_authorization_sha256=device.authorization_sha256,
+        )
+    return record
+
+
+def _device_operation_record_from_future(value, future, label):
+    spec = probe.differential_operation_spec(value["target"])
+    record = probe.DifferentialDeviceOperationAuthorizationRecord(
+        authorization_sha256="0" * 64,
+        authority_kind=probe.DIFFERENTIAL_DEVICE_AUTHORITY_KIND,
+        approved_task_sha256=hashlib.sha256(
+            f"device-approved-task:{label}".encode("ascii")
+        ).hexdigest(),
+        owner_approval_sha256=hashlib.sha256(
+            f"device-owner-approval:{label}".encode("ascii")
+        ).hexdigest(),
+        review_sha256=hashlib.sha256(
+            f"device-independent-review:{label}".encode("ascii")
+        ).hexdigest(),
+        future_authorization_sha256=future.authorization_sha256,
+        repository=future.repository,
+        repository_id=future.repository_id,
+        pr_number=future.pr_number,
+        base_sha=future.base_sha,
+        target=value["target"],
+        head_sha=future.head_sha,
+        workflow_sha=future.workflow_sha,
+        run_id=future.run_id,
+        run_attempt=future.run_attempt,
+        nonce=future.nonce,
+        positive_invocation_id=future.positive_invocation_id,
+        negative_invocation_id=future.negative_invocation_id,
+        operation_id=spec.operation_id,
+        operation_definition_sha256=spec.operation_definition_sha256,
+        device_path="/dev/null",
+        device_major=1,
+        device_minor=3,
+        non_mutating=True,
+    )
+    return replace(
+        record,
+        authorization_sha256=(
+            probe._differential_device_authorization_identity_sha256(record)
+        ),
+    )
+
+
+def _device_operation_record(value):
+    future = _future_authorization_record(value)
+    return _device_operation_record_from_future(
+        value, future, f"current:{value['run_identity']['run_id']}"
+    )
+
+
+def _reidentity_future_record(record):
+    return replace(
+        record,
+        authorization_sha256=(
+            probe._differential_future_authorization_identity_sha256(record)
+        ),
+    )
+
+
+def _reidentity_device_record(record):
+    return replace(
+        record,
+        authorization_sha256=(
+            probe._differential_device_authorization_identity_sha256(record)
+        ),
+    )
+
+
+def _future_payload(value):
+    return json.dumps(
+        value, ensure_ascii=False, sort_keys=False, separators=(",", ":")
+    ).encode("utf-8")
+
+
+def _historical_authorization_record(value, index):
+    run = value["run_identity"]
+    spec = probe.differential_operation_spec(value["target"])
+    record = probe.DifferentialFutureAuthorizationRecord(
+        authorization_sha256="0" * 64,
+        authority_kind=probe.DIFFERENTIAL_FUTURE_AUTHORITY_KIND,
+        approved_task_sha256=hashlib.sha256(
+            f"historical-approved-task:{index}".encode("ascii")
+        ).hexdigest(),
+        owner_approval_sha256=hashlib.sha256(
+            f"historical-owner-approval:{index}".encode("ascii")
+        ).hexdigest(),
+        review_sha256=hashlib.sha256(
+            f"historical-independent-review:{index}".encode("ascii")
+        ).hexdigest(),
+        repository=run["repository"],
+        repository_id=run["repository_id"],
+        pr_number=run["pr_number"],
+        base_sha=run["base_sha"],
+        head_sha=run["head_sha"],
+        workflow_sha=run["workflow_sha"],
+        target=value["target"],
+        run_id=str(5000 + index),
+        run_attempt=1,
+        nonce=str(index + 1) * 32,
+        positive_invocation_id=hashlib.sha256(
+            f"historical-positive-invocation-{index}".encode("ascii")
+        ).hexdigest()[:32],
+        negative_invocation_id=hashlib.sha256(
+            f"historical-negative-invocation-{index}".encode("ascii")
+        ).hexdigest()[:32],
+        one_shot_disposition="authorize_exactly_once",
+        operation_id=spec.operation_id,
+        operation_definition_sha256=spec.operation_definition_sha256,
+        positive_witness_report_sha256=hashlib.sha256(
+            f"historical-positive-witness-report:{index}".encode("ascii")
+        ).hexdigest(),
+        negative_witness_report_sha256=hashlib.sha256(
+            f"historical-negative-witness-report:{index}".encode("ascii")
+        ).hexdigest(),
+        device_operation_authorization_sha256=(
+            hashlib.sha256(
+                f"historical-device-authorization-{index}".encode("ascii")
+            ).hexdigest()
+            if value["target"] == "EC-DEVICE-ACCESS"
+            else None
+        ),
+    )
+    record = replace(
+        record,
+        authorization_sha256=(
+            probe._differential_future_authorization_identity_sha256(record)
+        ),
+    )
+    if value["target"] == "EC-DEVICE-ACCESS":
+        device = _device_operation_record_from_future(
+            value, record, f"historical:{index}"
+        )
+        record = replace(
+            record,
+            device_operation_authorization_sha256=device.authorization_sha256,
+        )
+    return record
+
+
+def _historical_device_operation_record(value, index):
+    future = _historical_authorization_record(value, index)
+    return _device_operation_record_from_future(
+        value, future, f"historical:{index}"
+    )
+
+
+def _ambiguous_run_record(value, index):
+    run = value["run_identity"]
+    authorization = _historical_authorization_record(value, index)
+    return probe.DifferentialAmbiguousRunRecord(
+        evidence_sha256=hashlib.sha256(
+            f"historical-evidence:{index}".encode("ascii")
+        ).hexdigest(),
+        authorization_sha256=authorization.authorization_sha256,
+        reviewer_disposition_sha256=hashlib.sha256(
+            f"historical-reviewer-disposition:{index}".encode("ascii")
+        ).hexdigest(),
+        repository=run["repository"],
+        repository_id=run["repository_id"],
+        pr_number=run["pr_number"],
+        base_sha=run["base_sha"],
+        head_sha=run["head_sha"],
+        workflow_sha=run["workflow_sha"],
+        target=value["target"],
+        run_id=authorization.run_id,
+        run_attempt=1,
+        nonce=authorization.nonce,
+        operation_id=authorization.operation_id,
+        operation_definition_sha256=authorization.operation_definition_sha256,
+        positive_witness_report_sha256=authorization.positive_witness_report_sha256,
+        negative_witness_report_sha256=authorization.negative_witness_report_sha256,
+        raw_platform_state_sha256=hashlib.sha256(
+            f"historical-raw-platform-state:{index}".encode("ascii")
+        ).hexdigest(),
+        classification="global_policy_or_platform_ambiguous",
+    )
+
+
+class DifferentialWitnessTargetModelTests(unittest.TestCase):
+    """F7-B4 target accounting stays exact and cannot silently collapse controls."""
+
+    def test_target_model_covers_exactly_all_27_blockers_once(self):
+        probe.verify_differential_target_model_synchronized()
+        blockers = probe.mandatory_effect_blockers()
+        covered = []
+        for target in probe.differential_targets():
+            covered.extend(probe.differential_target_properties(target))
+        self.assertEqual(27, len(blockers))
+        self.assertEqual(blockers, sorted(covered))
+        self.assertEqual(len(covered), len(set(covered)))
+
+    def test_target_delta_property_name_drift_fails_closed(self):
+        mutated = dict(probe.DIFFERENTIAL_TARGET_UNIT_DELTAS)
+        positive, negative = mutated["ProtectClock"]
+        mutated["ProtectClock"] = (
+            (("ProtectKernelLogs", positive[0][1]),),
+            negative,
+        )
+        with mock.patch.object(
+            probe, "DIFFERENTIAL_TARGET_UNIT_DELTAS", mutated
+        ), self.assertRaises(probe.ProbeError) as caught:
+            probe.verify_differential_target_model_synchronized()
+        self.assertEqual(
+            "DIFFERENTIAL_TARGET_MODEL_DRIFT", caught.exception.code
+        )
+
+    def test_only_four_exact_equivalence_classes_exist(self):
+        self.assertEqual(
+            (
+                "EC-DEVICE-ACCESS",
+                "EC-KERNEL-OOM-GROUP",
+                "EC-DYNAMICUSER-SUID",
+                "EC-DYNAMICUSER-IPC",
+            ),
+            probe.DIFFERENTIAL_EQUIVALENCE_CLASSES,
+        )
+        self.assertEqual(
+            ("DevicePolicy", "PrivateDevices"),
+            probe.differential_target_properties("EC-DEVICE-ACCESS"),
+        )
+        self.assertEqual(
+            ("OOMPolicy",),
+            probe.differential_target_properties("EC-KERNEL-OOM-GROUP"),
+        )
+        self.assertEqual(
+            ("RestrictSUIDSGID",),
+            probe.differential_target_properties("EC-DYNAMICUSER-SUID"),
+        )
+        self.assertEqual(
+            ("RemoveIPC",),
+            probe.differential_target_properties("EC-DYNAMICUSER-IPC"),
+        )
+
+    def test_equivalence_class_property_cannot_be_targeted_individually(self):
+        for property_name in (
+            "DevicePolicy",
+            "PrivateDevices",
+            "OOMPolicy",
+            "RestrictSUIDSGID",
+            "RemoveIPC",
+        ):
+            with self.assertRaises(probe.ProbeError) as caught:
+                probe.differential_target_properties(property_name)
+            self.assertEqual("DIFFERENTIAL_TARGET_INVALID", caught.exception.code)
+
+    def test_equivalence_class_never_satisfies_an_unrelated_property(self):
+        for target in probe.DIFFERENTIAL_EQUIVALENCE_CLASSES:
+            properties = set(probe.differential_target_properties(target))
+            unrelated = set(probe.mandatory_effect_blockers()) - properties
+            self.assertTrue(unrelated)
+            self.assertTrue(properties.isdisjoint(unrelated))
+
+    def test_every_target_has_exact_closed_generated_unit_asts(self):
+        self.assertEqual(
+            set(probe.differential_targets()),
+            set(probe.DIFFERENTIAL_TARGET_UNIT_DELTAS),
+        )
+        for target in probe.differential_targets():
+            with self.subTest(target=target):
+                positive = probe.differential_unit_ast(target, "W+")
+                negative = probe.differential_unit_ast(target, "W-")
+                self.assertNotEqual(positive, negative)
+                self.assertEqual(positive[:-1], negative[:-1]) if len(
+                    probe.differential_target_properties(target)
+                ) == 1 else self.assertEqual(positive[:-2], negative[:-2])
+
+
+class DifferentialWitnessAuthoringContractTests(unittest.TestCase):
+    def assertDifferentialInvalid(self, value, code=None):
+        with self.assertRaises(probe.ProbeError) as caught:
+            probe.validate_differential_witness_evidence(value)
+        if code is not None:
+            self.assertEqual(code, caught.exception.code)
+
+    def test_reference_contract_is_canonical_and_proof_ineligible(self):
+        value = _differential_evidence()
+        probe.validate_differential_witness_evidence(value)
+        payload = probe.differential_json_bytes(value)
+        self.assertEqual(value, probe.parse_differential_json_bytes(payload))
+        self.assertFalse(value["proof_eligible"])
+        self.assertEqual("declared_not_executed", value["execution_state"])
+        self.assertIsNone(value["classification"])
+        self.assertEqual([], value["errors"])
+        self.assertTrue(all(not item["executed"] for item in value["witnesses"]))
+
+    def test_authoring_contract_never_moves_a_blocker_or_reaches_success(self):
+        value = _differential_evidence("SystemCallFilter")
+        self.assertEqual(
+            probe.mandatory_effect_blockers(),
+            value["mandatory_effect_blockers"],
+        )
+        self.assertFalse(
+            probe.candidate_run_succeeds(
+                cases=[_perfect_case(case_id) for case_id in probe.CASES],
+                requested_case_ids=probe.CASES,
+                errors=[],
+                witness_ok=True,
+                mandatory_blockers=value["mandatory_effect_blockers"],
+            )
+        )
+        self.assertNotIn("SUCCESS", {value["execution_state"], value["classification"]})
+
+    def test_candidate_discovery_and_differential_evidence_are_mutually_rejected(self):
+        differential = _differential_evidence()
+        with self.assertRaises(probe.ProbeError):
+            probe.validate_evidence(differential, SCHEMA_PATH)
+        with self.assertRaises(probe.ProbeError):
+            probe.validate_discovery_evidence(differential, SCHEMA_PATH)
+        self.assertDifferentialInvalid(_evidence())
+        self.assertDifferentialInvalid(_discovery_evidence())
+
+    def test_missing_unknown_and_reordered_root_fields_are_rejected(self):
+        missing = _differential_evidence()
+        del missing["errors"]
+        self.assertDifferentialInvalid(missing, "DIFFERENTIAL_FIELD_SET_INVALID")
+
+        unknown = _differential_evidence()
+        unknown["unknown"] = None
+        self.assertDifferentialInvalid(unknown, "DIFFERENTIAL_FIELD_SET_INVALID")
+
+        reordered = _differential_evidence()
+        reordered["schema_version"] = reordered.pop("schema_version")
+        self.assertDifferentialInvalid(reordered, "DIFFERENTIAL_FIELD_SET_INVALID")
+
+    def test_duplicate_noncanonical_and_oversized_encoding_are_rejected(self):
+        payload = probe.differential_json_bytes(_differential_evidence())
+        version_prefix = (
+            '{"schema_version":"'
+            + probe.DIFFERENTIAL_SCHEMA_VERSION
+            + '",'
+        ).encode("ascii")
+        duplicate = payload.replace(
+            version_prefix,
+            version_prefix + version_prefix[len(b"{") :],
+            1,
+        )
+        with self.assertRaises(probe.ProbeError) as caught:
+            probe.parse_differential_json_bytes(duplicate)
+        self.assertEqual("DIFFERENTIAL_DUPLICATE_FIELD", caught.exception.code)
+
+        with self.assertRaises(probe.ProbeError) as caught:
+            probe.parse_differential_json_bytes(payload + b" ")
+        self.assertEqual("DIFFERENTIAL_NONCANONICAL", caught.exception.code)
+
+        with self.assertRaises(probe.ProbeError) as caught:
+            probe.parse_differential_json_bytes(
+                b"{" + b"x" * probe.DIFFERENTIAL_MAX_EVIDENCE_BYTES + b"}"
+            )
+        self.assertEqual("DIFFERENTIAL_SIZE_INVALID", caught.exception.code)
+
+        with self.assertRaises(probe.ProbeError) as caught:
+            probe.parse_differential_json_bytes(
+                b'{"oversized_integer":123456789012345678901}'
+            )
+        self.assertEqual(
+            "DIFFERENTIAL_ENCODING_INVALID", caught.exception.code
+        )
+
+    def test_unpaired_surrogates_and_deep_malformed_values_raise_probe_error(self):
+        for mutate in (
+            lambda value: value["witnesses"][0]["unit_ast"][2].__setitem__(
+                "value", "\ud800"
+            ),
+            lambda value: value["witnesses"][0]["source_binding"].__setitem__(
+                "path", "/run/p0-v2-f7b4/\ud800.py"
+            ),
+            lambda value: value["witnesses"][0]["observations"].append(
+                {
+                    "name": "malformed.value",
+                    "authority": "kernel_observed",
+                    "value": "\ud800",
+                }
+            ),
+        ):
+            with self.subTest(mutate=mutate):
+                value = _differential_evidence()
+                mutate(value)
+                with self.assertRaises(probe.ProbeError):
+                    probe.differential_json_bytes(value)
+
+        value = _differential_evidence()
+        nested = True
+        for _ in range(10):
+            nested = {"nested": nested}
+        value["witnesses"][0]["observations"].append(
+            {
+                "name": "malformed.deep",
+                "authority": "kernel_observed",
+                "value": nested,
+            }
+        )
+        self.assertDifferentialInvalid(value, "DIFFERENTIAL_TYPE_INVALID")
+
+    def test_invalid_target_types_and_oversized_text_are_rejected(self):
+        invalid_target = _differential_evidence()
+        invalid_target["target"] = True
+        self.assertDifferentialInvalid(invalid_target, "DIFFERENTIAL_TYPE_INVALID")
+
+        oversized = _differential_evidence()
+        oversized["witnesses"][0]["unit_ast"][0]["value"] = (
+            "x" * (probe.DIFFERENTIAL_MAX_TEXT_BYTES + 1)
+        )
+        self.assertDifferentialInvalid(oversized, "DIFFERENTIAL_TEXT_INVALID")
+
+        bool_count = _differential_evidence()
+        bool_count["witnesses"][0]["proof_channel"][
+            "writer_open_file_description_count"
+        ] = True
+        self.assertDifferentialInvalid(bool_count, "DIFFERENTIAL_TYPE_INVALID")
+
+    def test_every_public_unhashable_target_and_parser_recursion_fail_closed(self):
+        for call in (
+            lambda: probe.differential_target_properties([]),
+            lambda: probe.differential_unit_ast([], "W+"),
+            lambda: probe.build_differential_authoring_fixture([]),
+        ):
+            with self.subTest(call=call), self.assertRaises(probe.ProbeError):
+                call()
+        deeply_nested = b"[" * 2000 + b"0" + b"]" * 2000
+        with self.assertRaises(probe.ProbeError) as caught:
+            probe.parse_differential_json_bytes(deeply_nested)
+        self.assertEqual(
+            "DIFFERENTIAL_ENCODING_INVALID", caught.exception.code
+        )
+
+    def test_self_promotion_and_authority_substitution_are_rejected(self):
+        mutations = []
+
+        promoted = _differential_evidence()
+        promoted["proof_eligible"] = True
+        mutations.append(promoted)
+
+        classified = _differential_evidence()
+        classified["classification"] = "effect_proven"
+        mutations.append(classified)
+
+        executed = _differential_evidence()
+        executed["execution_state"] = "effect_proven"
+        mutations.append(executed)
+
+        hostile_authority = _differential_evidence()
+        hostile_authority["witnesses"][0]["report_authority"] = "child_untrusted"
+        mutations.append(hostile_authority)
+
+        github_authority = _differential_evidence()
+        github_authority["witnesses"][0]["source_binding"][
+            "authority"
+        ] = "github_context_claim"
+        mutations.append(github_authority)
+
+        reviewer_token = _differential_evidence()
+        reviewer_token["witnesses"][0]["unit_ast"][0][
+            "value"
+        ] = "GATE1_APPROVE"
+        mutations.append(reviewer_token)
+
+        for value in mutations:
+            with self.subTest(value=value):
+                self.assertDifferentialInvalid(value)
+
+    def test_every_shared_pair_difference_is_rejected(self):
+        mutations = {
+            "source_digest": lambda value: value["witnesses"][1][
+                "source_binding"
+            ].__setitem__(
+                "sha256", "f" * 64
+            ),
+            "argv": lambda value: value["witnesses"][1]["unit_ast"][2].__setitem__(
+                "value", "/usr/bin/python3 -I /run/p0-v2-f7b4/other.py"
+            ),
+            "identity": lambda value: value["witnesses"][1]["unit_ast"][3].__setitem__(
+                "value", "no"
+            ),
+            "resource": lambda value: value["witnesses"][1]["unit_ast"][6].__setitem__(
+                "value", "536870912"
+            ),
+            "timing": lambda value: value["witnesses"][1]["unit_ast"][8].__setitem__(
+                "value", "30000001"
+            ),
+            "unknown_setting": lambda value: value["witnesses"][1][
+                "unit_ast"
+            ].append(
+                {"section": "Service", "name": "NoNewPrivileges", "value": "yes"}
+            ),
+        }
+        for label, mutate in mutations.items():
+            with self.subTest(label=label):
+                value = _differential_evidence()
+                mutate(value)
+                self.assertDifferentialInvalid(value)
+
+    def test_pair_role_count_order_and_target_delta_are_closed(self):
+        one = _differential_evidence()
+        one["witnesses"].pop()
+        self.assertDifferentialInvalid(one, "DIFFERENTIAL_WITNESS_COUNT_INVALID")
+
+        reversed_pair = _differential_evidence()
+        reversed_pair["witnesses"].reverse()
+        self.assertDifferentialInvalid(
+            reversed_pair, "DIFFERENTIAL_WITNESS_ORDER_INVALID"
+        )
+
+        duplicate_target = _differential_evidence()
+        duplicate_target["witnesses"][1]["unit_ast"] = list(
+            duplicate_target["witnesses"][0]["unit_ast"]
+        )
+        self.assertDifferentialInvalid(
+            duplicate_target
+        )
+
+        same_unit = _differential_evidence()
+        same_unit["witnesses"][1]["unit_name"] = same_unit["witnesses"][0][
+            "unit_name"
+        ]
+        self.assertDifferentialInvalid(same_unit)
+
+    def test_unexecuted_contract_rejects_every_effect_like_field(self):
+        mutations = {
+            "executed": lambda value: [
+                witness.__setitem__("executed", True)
+                for witness in value["witnesses"]
+            ],
+            "reviewed": lambda value: value["witnesses"][0][
+                "operation_result"
+            ].update(
+                {
+                    "reviewed_exact_operation": True,
+                    "operation_id": "reviewed.non-mutating",
+                    "operation_authorization_sha256": "f" * 64,
+                    "operation_non_mutating": True,
+                }
+            ),
+            "control": lambda value: value["witnesses"][0]["operation_result"].__setitem__(
+                "control_reached", True
+            ),
+            "effect": lambda value: value["witnesses"][0]["operation_result"].__setitem__(
+                "effect_observed", True
+            ),
+            "errno": lambda value: value["witnesses"][0]["operation_result"].__setitem__(
+                "errno", errno.EPERM
+            ),
+            "abi": lambda value: value["witnesses"][0]["operation_result"].__setitem__(
+                "secondary_abi_executed", True
+            ),
+            "bpf": lambda value: value["witnesses"][0]["operation_result"].__setitem__(
+                "supporting_bpf_query", True
+            ),
+            "observation": lambda value: value["witnesses"][0][
+                "observations"
+            ].append(
+                {
+                    "name": "effect.claim",
+                    "authority": "kernel_observed",
+                    "value": True,
+                }
+            ),
+            "eof": lambda value: value["witnesses"][0]["proof_channel"].__setitem__(
+                "eof_observed", True
+            ),
+        }
+        for label, mutate in mutations.items():
+            with self.subTest(label=label):
+                value = _differential_evidence()
+                mutate(value)
+                self.assertDifferentialInvalid(
+                    value, "DIFFERENTIAL_AUTHORING_OVERCLAIM"
+                )
+
+
+class DifferentialWitnessBindingAndChannelTests(unittest.TestCase):
+    def assertInvalid(self, mutate, code=None):
+        value = _differential_evidence()
+        mutate(value)
+        with self.assertRaises(probe.ProbeError) as caught:
+            probe.validate_differential_witness_evidence(value)
+        if code is not None:
+            self.assertEqual(code, caught.exception.code)
+
+    def test_wrong_source_identity_and_substitution_bindings_are_rejected(self):
+        mutations = (
+            lambda value: value["witnesses"][0]["source_binding"].__setitem__("sha256", "f" * 64),
+            lambda value: value["witnesses"][0]["source_binding"].__setitem__("device", 0),
+            lambda value: value["witnesses"][0]["source_binding"].__setitem__("inode", 0),
+            lambda value: value["witnesses"][0]["source_binding"].__setitem__("uid", 1),
+            lambda value: value["witnesses"][0]["source_binding"].__setitem__("gid", 1),
+            lambda value: value["witnesses"][0]["source_binding"].__setitem__("mode", stat.S_IFREG | 0o522),
+            lambda value: value["witnesses"][0]["source_binding"].__setitem__(
+                "descriptor_stable", False
+            ),
+            lambda value: value["witnesses"][0]["source_binding"].__setitem__(
+                "substitution_rejected", False
+            ),
+            lambda value: value["witnesses"][0]["source_binding"].__setitem__(
+                "path", "/run/p0-v2-f7b4/other.py"
+            ),
+        )
+        for mutate in mutations:
+            with self.subTest(mutate=mutate):
+                self.assertInvalid(mutate)
+
+    def test_wrong_process_run_and_replay_bindings_are_rejected(self):
+        mutations = (
+            lambda value: value["witnesses"][0]["process_binding"].__setitem__("pid", 0),
+            lambda value: value["witnesses"][0]["process_binding"].__setitem__("start_time_ticks", 0),
+            lambda value: value["witnesses"][0]["process_binding"].__setitem__("uid", -1),
+            lambda value: value["witnesses"][0]["process_binding"].__setitem__("gid", -1),
+            lambda value: value["witnesses"][0]["process_binding"].__setitem__("cgroup", "relative"),
+            lambda value: value["witnesses"][0]["process_binding"].__setitem__("cgroup", "/"),
+            lambda value: value["witnesses"][0]["process_binding"].__setitem__(
+                "invocation_id", "x" * 32
+            ),
+            lambda value: value["witnesses"][0]["process_binding"].__setitem__(
+                "pid_authority", "systemd_observed"
+            ),
+            lambda value: value["run_identity"].__setitem__("run_attempt", -1),
+            lambda value: value["run_identity"].__setitem__("head_sha", "f" * 39),
+            lambda value: value["run_identity"].__setitem__("nonce", "f" * 31),
+        )
+        for mutate in mutations:
+            with self.subTest(mutate=mutate):
+                self.assertInvalid(mutate)
+
+    def test_root_credentials_environment_and_attacker_cgroup_are_rejected(self):
+        mutations = (
+            lambda value: value["witnesses"][0]["process_binding"].__setitem__(
+                "uid", 0
+            ),
+            lambda value: value["witnesses"][0]["process_binding"].__setitem__(
+                "gid", 0
+            ),
+            lambda value: value["witnesses"][0]["process_binding"].__setitem__(
+                "environment", ["TOKEN=forged"]
+            ),
+            lambda value: value["witnesses"][0]["process_binding"].__setitem__(
+                "cgroup", "/attacker/p0-v2-f7b4-positive.service"
+            ),
+        )
+        for mutate in mutations:
+            with self.subTest(mutate=mutate):
+                self.assertInvalid(mutate)
+
+    def test_pipe_alias_duplicate_writer_and_retention_are_rejected(self):
+        mutations = (
+            lambda value: value["witnesses"][0]["proof_channel"].__setitem__("kind", "fifo"),
+            lambda value: value["witnesses"][0]["proof_channel"].__setitem__("pipe_inode", 0),
+            lambda value: value["witnesses"][0]["proof_channel"].__setitem__("writer_fd", 2),
+            lambda value: value["witnesses"][0]["proof_channel"].__setitem__(
+                "writer_processes", [1, 2]
+            ),
+            lambda value: value["witnesses"][0]["proof_channel"].__setitem__(
+                "writer_processes", [999]
+            ),
+            lambda value: value["witnesses"][0]["proof_channel"].__setitem__(
+                "writer_open_file_description_count", 2
+            ),
+            lambda value: value["witnesses"][0]["proof_channel"].__setitem__("writer_cloexec", False),
+            lambda value: value["witnesses"][0]["proof_channel"].__setitem__(
+                "duplicate_writer_fds", [9]
+            ),
+            lambda value: value["witnesses"][0]["proof_channel"].__setitem__(
+                "descendant_writer_refs", ["/proc/2/fd/9"]
+            ),
+            lambda value: value["witnesses"][0]["proof_channel"].__setitem__(
+                "bootstrap_descendant_pids", [2]
+            ),
+            lambda value: value["witnesses"][0]["proof_channel"].__setitem__(
+                "post_exec_writer_fds", [9]
+            ),
+            lambda value: value["witnesses"][0]["proof_channel"].__setitem__(
+                "pathname_reopenable", True
+            ),
+            lambda value: value["witnesses"][0]["proof_channel"].__setitem__(
+                "authority", "child_untrusted"
+            ),
+            lambda value: value["witnesses"][0]["proof_channel"]["process_tree"][0].__setitem__(
+                "pid", 999
+            ),
+            lambda value: value["witnesses"][0]["proof_channel"][
+                "open_file_descriptions"
+            ][0].__setitem__("holder_pid", 999),
+            lambda value: value["witnesses"][0]["proof_channel"][
+                "open_file_descriptions"
+            ][0].__setitem__("pipe_inode", 999),
+        )
+        for mutate in mutations:
+            with self.subTest(mutate=mutate):
+                self.assertInvalid(mutate)
+
+    def test_truthy_eof_strings_and_integers_are_rejected(self):
+        for field in ("eof_observed", "eof_before_hostile_transition"):
+            for forged in ("yes", 1):
+                with self.subTest(field=field, forged=forged):
+                    self.assertInvalid(
+                        lambda value, f=field, v=forged: value["witnesses"][0][
+                            "proof_channel"
+                        ].__setitem__(f, v),
+                        "DIFFERENTIAL_TYPE_INVALID",
+                    )
+
+    def test_witness_process_and_invocation_id_cannot_be_cross_attributed(self):
+        for field in ("pid", "invocation_id"):
+            with self.subTest(field=field):
+                value = _differential_evidence()
+                value["witnesses"][1]["process_binding"][field] = value[
+                    "witnesses"
+                ][0]["process_binding"][field]
+                with self.assertRaises(probe.ProbeError):
+                    probe.validate_differential_witness_evidence(value)
+
+    def test_cgroup_identity_is_required_before_oom_class_can_be_modelled(self):
+        value = _differential_evidence("EC-KERNEL-OOM-GROUP")
+        probe.validate_differential_witness_evidence(value)
+        for bad in ("", "system.slice/unit.service"):
+            changed = _differential_evidence("EC-KERNEL-OOM-GROUP")
+            changed["witnesses"][0]["process_binding"]["cgroup"] = bad
+            with self.assertRaises(probe.ProbeError):
+                probe.validate_differential_witness_evidence(changed)
+
+    def test_manager_effect_cannot_be_credited_after_supervisor_fallback(self):
+        value = _differential_evidence("KillMode")
+        result = value["witnesses"][0]["operation_result"]
+        result["manager_window_preserved"] = True
+        result["supervisor_fallback_started"] = True
+        with self.assertRaises(probe.ProbeError) as caught:
+            probe.validate_differential_witness_evidence(value)
+        self.assertEqual(
+            "DIFFERENTIAL_LIFECYCLE_CONTRADICTION", caught.exception.code
+        )
+
+
+class DifferentialWitnessStateMachineTests(unittest.TestCase):
+    def derive(self, value):
+        device_records = (
+            (_device_operation_record(value),)
+            if value["target"] == "EC-DEVICE-ACCESS"
+            else ()
+        )
+        with mock.patch.object(
+            probe,
+            "DIFFERENTIAL_REVIEWED_FUTURE_AUTHORIZATIONS",
+            (_future_authorization_record(value),),
+        ), mock.patch.object(
+            probe,
+            "DIFFERENTIAL_REVIEWED_DEVICE_OPERATION_AUTHORIZATIONS",
+            device_records,
+        ):
+            positive, negative = probe._validate_differential_pair(
+                value["witnesses"],
+                value["target"],
+                value["execution_state"],
+                value["run_identity"],
+            )
+            return probe._derive_differential_classification(
+                value, positive, negative
+            )
+
+    def test_local_and_fake_future_authority_cannot_classify(self):
+        with self.assertRaises(probe.ProbeError) as caught:
+            probe.classify_differential_future_evidence_bytes(
+                probe.differential_json_bytes(_differential_evidence())
+            )
+        self.assertEqual(
+            "DIFFERENTIAL_EFFECT_AUTHORITY_REQUIRED", caught.exception.code
+        )
+
+        fake = _future_differential_evidence()
+        with self.assertRaises(probe.ProbeError) as caught:
+            probe.classify_differential_future_evidence_bytes(
+                _future_payload(fake)
+            )
+        self.assertEqual(
+            "DIFFERENTIAL_EFFECT_AUTHORITY_REQUIRED", caught.exception.code
+        )
+        self.assertEqual(
+            (), probe.DIFFERENTIAL_REVIEWED_FUTURE_AUTHORIZATIONS
+        )
+        self.assertFalse(
+            hasattr(probe, "classify_differential_future_evidence")
+        )
+
+    def test_caller_cannot_request_or_prewrite_a_terminal_state(self):
+        value = _future_differential_evidence()
+        value["classification"] = "effect_proven"
+        with self.assertRaises(probe.ProbeError) as caught:
+            probe.classify_differential_future_evidence_bytes(
+                _future_payload(value)
+            )
+        self.assertEqual("DIFFERENTIAL_STATE_INVALID", caught.exception.code)
+
+    def test_complete_authorization_record_binds_every_run_identity_field(self):
+        mutations = (
+            lambda value: value["run_identity"].__setitem__(
+                "repository_id", 1
+            ),
+            lambda value: value["run_identity"].__setitem__("pr_number", 999),
+            lambda value: value["run_identity"].__setitem__("base_sha", "c" * 40),
+            lambda value: value["run_identity"].__setitem__(
+                "workflow_sha", "d" * 64
+            ),
+            lambda value: value["run_identity"].__setitem__("head_sha", "e" * 40),
+            lambda value: value["run_identity"].__setitem__("nonce", "f" * 32),
+        )
+        for mutate in mutations:
+            with self.subTest(mutate=mutate):
+                value = _future_differential_evidence()
+                installed = _future_authorization_record(value)
+                mutate(value)
+                with mock.patch.object(
+                    probe,
+                    "DIFFERENTIAL_REVIEWED_FUTURE_AUTHORIZATIONS",
+                    (installed,),
+                ), self.assertRaises(probe.ProbeError) as caught:
+                    probe.classify_differential_future_evidence_bytes(
+                        _future_payload(value)
+                    )
+                self.assertEqual(
+                    "DIFFERENTIAL_EFFECT_AUTHORITY_REQUIRED",
+                    caught.exception.code,
+                )
+
+    def test_matching_but_noncanonical_repository_context_is_rejected(self):
+        mutations = (
+            ("repository_id", 1),
+            ("pr_number", 999),
+            ("base_sha", "c" * 40),
+            ("head_sha", "e" * 40),
+            ("workflow_sha", "d" * 64),
+        )
+        for field, invalid in mutations:
+            with self.subTest(field=field):
+                value = _future_differential_evidence()
+                value["run_identity"][field] = invalid
+                for witness in value["witnesses"]:
+                    witness["run_binding"] = dict(value["run_identity"])
+                installed = _future_authorization_record(value)
+                with mock.patch.object(
+                    probe,
+                    "DIFFERENTIAL_REVIEWED_FUTURE_AUTHORIZATIONS",
+                    (installed,),
+                ), self.assertRaises(probe.ProbeError) as caught:
+                    probe.classify_differential_future_evidence_bytes(
+                        _future_payload(value)
+                    )
+                self.assertEqual(
+                    "DIFFERENTIAL_EFFECT_AUTHORITY_REQUIRED",
+                    caught.exception.code,
+                )
+
+    def test_local_and_collapsed_digest_authorities_are_rejected(self):
+        local = _future_differential_evidence()
+        local_digest = probe.DIFFERENTIAL_AUTHORING_TASK_SHA256
+        local["run_identity"]["authorization_sha256"] = local_digest
+        local["future_authorization"]["authorization_sha256"] = local_digest
+        for witness in local["witnesses"]:
+            witness["run_binding"] = dict(local["run_identity"])
+            witness["operation_result"][
+                "operation_authorization_sha256"
+            ] = local_digest
+            witness["observations"][0]["value"][
+                "authorization_sha256"
+            ] = local_digest
+        with mock.patch.object(
+            probe,
+            "DIFFERENTIAL_REVIEWED_FUTURE_AUTHORIZATIONS",
+            (_future_authorization_record(local),),
+        ), self.assertRaises(probe.ProbeError) as caught:
+            probe.classify_differential_future_evidence_bytes(
+                _future_payload(local)
+            )
+        self.assertEqual(
+            "DIFFERENTIAL_EFFECT_AUTHORITY_REQUIRED", caught.exception.code
+        )
+
+        value = _future_differential_evidence()
+        authorization = _future_authorization_record(value)
+        collapsed = replace(
+            authorization, review_sha256=authorization.authorization_sha256
+        )
+        with mock.patch.object(
+            probe,
+            "DIFFERENTIAL_REVIEWED_FUTURE_AUTHORIZATIONS",
+            (collapsed,),
+        ), self.assertRaises(probe.ProbeError) as caught:
+            probe.classify_differential_future_evidence_bytes(
+                _future_payload(value)
+            )
+        self.assertEqual(
+            "DIFFERENTIAL_EFFECT_AUTHORITY_REQUIRED", caught.exception.code
+        )
+
+    def test_current_v6_artifact_digests_cannot_become_authority(self):
+        local_artifact_digests = (
+            "c7913b9c3f84f2ee476a1f552eda52bca55fbbaa185746607fa5a52e43c32122",
+            "1a23e6a7d5f2b21dfd624c580b9a3f7ae94957be8ac3c9a539ba4d404f1ee90c",
+            "ff95d4b2b5969ef308b61bf280f01e5aaeb8583ec187a02783137c70506d91b9",
+            "cac2d005200c2d3c3f4028530c840b3c1d5b75d9fa6ef97c72622d9ebdf9754d",
+        )
+        for digest in local_artifact_digests:
+            with self.subTest(role="future", digest=digest):
+                value = _future_differential_evidence()
+                value["run_identity"]["authorization_sha256"] = digest
+                value["future_authorization"]["authorization_sha256"] = digest
+                for witness in value["witnesses"]:
+                    witness["run_binding"] = dict(value["run_identity"])
+                    witness["operation_result"][
+                        "operation_authorization_sha256"
+                    ] = digest
+                    witness["observations"][0]["value"][
+                        "authorization_sha256"
+                    ] = digest
+                installed = replace(
+                    _future_authorization_record(value),
+                    authorization_sha256=digest,
+                )
+                with mock.patch.object(
+                    probe,
+                    "DIFFERENTIAL_REVIEWED_FUTURE_AUTHORIZATIONS",
+                    (installed,),
+                ), self.assertRaises(probe.ProbeError) as caught:
+                    probe.classify_differential_future_evidence_bytes(
+                        _future_payload(value)
+                    )
+                self.assertEqual(
+                    "DIFFERENTIAL_EFFECT_AUTHORITY_REQUIRED",
+                    caught.exception.code,
+                )
+
+            with self.subTest(role="device", digest=digest):
+                value = _future_differential_evidence("EC-DEVICE-ACCESS")
+                future = replace(
+                    _future_authorization_record(value),
+                    device_operation_authorization_sha256=digest,
+                )
+                device = replace(
+                    _device_operation_record(value),
+                    authorization_sha256=digest,
+                )
+                with mock.patch.object(
+                    probe,
+                    "DIFFERENTIAL_REVIEWED_FUTURE_AUTHORIZATIONS",
+                    (future,),
+                ), mock.patch.object(
+                    probe,
+                    "DIFFERENTIAL_REVIEWED_DEVICE_OPERATION_AUTHORIZATIONS",
+                    (device,),
+                ), self.assertRaises(probe.ProbeError) as caught:
+                    probe.classify_differential_future_evidence_bytes(
+                        _future_payload(value)
+                    )
+                self.assertEqual(
+                    "DIFFERENTIAL_DEVICE_OPERATION_UNREVIEWED",
+                    caught.exception.code,
+                )
+
+    def test_global_current_decision_roles_must_be_pairwise_distinct(self):
+        value = _future_differential_evidence("EC-DEVICE-ACCESS")
+        future = _future_authorization_record(value)
+        base_device = _device_operation_record(value)
+        collapsed_reviews = (
+            future.review_sha256,
+            future.positive_witness_report_sha256,
+        )
+        for review_digest in collapsed_reviews:
+            with self.subTest(review_digest=review_digest):
+                device = _reidentity_device_record(
+                    replace(base_device, review_sha256=review_digest)
+                )
+                installed_future = replace(
+                    future,
+                    device_operation_authorization_sha256=(
+                        device.authorization_sha256
+                    ),
+                )
+                with mock.patch.object(
+                    probe,
+                    "DIFFERENTIAL_REVIEWED_FUTURE_AUTHORIZATIONS",
+                    (installed_future,),
+                ), mock.patch.object(
+                    probe,
+                    "DIFFERENTIAL_REVIEWED_DEVICE_OPERATION_AUTHORIZATIONS",
+                    (device,),
+                ), self.assertRaises(probe.ProbeError) as caught:
+                    probe.classify_differential_future_evidence_bytes(
+                        _future_payload(value)
+                    )
+                self.assertEqual(
+                    "DIFFERENTIAL_EFFECT_AUTHORITY_REQUIRED",
+                    caught.exception.code,
+                )
+
+    def test_retry_attempt_two_is_rejected_even_by_matching_record(self):
+        value = _future_differential_evidence()
+        value["run_identity"]["run_attempt"] = 2
+        installed = _future_authorization_record(value)
+        with mock.patch.object(
+            probe,
+            "DIFFERENTIAL_REVIEWED_FUTURE_AUTHORIZATIONS",
+            (installed,),
+        ), self.assertRaises(probe.ProbeError) as caught:
+            probe.classify_differential_future_evidence_bytes(
+                _future_payload(value)
+            )
+        self.assertEqual(
+            "DIFFERENTIAL_EFFECT_AUTHORITY_REQUIRED", caught.exception.code
+        )
+
+    def test_installed_current_authorization_rejects_boolean_attempt(self):
+        value = _future_differential_evidence()
+        installed = replace(_future_authorization_record(value), run_attempt=True)
+        with mock.patch.object(
+            probe,
+            "DIFFERENTIAL_REVIEWED_FUTURE_AUTHORIZATIONS",
+            (installed,),
+        ), self.assertRaises(probe.ProbeError) as caught:
+            probe.classify_differential_future_evidence_bytes(
+                _future_payload(value)
+            )
+        self.assertEqual(
+            "DIFFERENTIAL_TYPE_INVALID", caught.exception.code
+        )
+
+    def test_complete_witness_replay_under_another_run_is_unusable(self):
+        original = _future_differential_evidence()
+        replay = json.loads(json.dumps(original))
+        replay["run_identity"]["run_id"] = "4002"
+        replay["run_identity"]["nonce"] = "e" * 32
+        replay_authorization = _future_authorization_record(
+            replay
+        ).authorization_sha256
+        replay["run_identity"][
+            "authorization_sha256"
+        ] = replay_authorization
+        replay["future_authorization"][
+            "authorization_sha256"
+        ] = replay_authorization
+        for witness in replay["witnesses"]:
+            witness["operation_result"][
+                "operation_authorization_sha256"
+            ] = replay_authorization
+            witness["observations"][0]["value"][
+                "authorization_sha256"
+            ] = replay_authorization
+        installed_replay = _future_authorization_record(replay)
+        with mock.patch.object(
+            probe,
+            "DIFFERENTIAL_REVIEWED_FUTURE_AUTHORIZATIONS",
+            (
+                _future_authorization_record(original),
+                installed_replay,
+            ),
+        ):
+            self.assertEqual(
+                "effect_proven",
+                probe.classify_differential_future_evidence_bytes(
+                    _future_payload(original)
+                ),
+            )
+            self.assertEqual(
+                "witness_unusable",
+                probe.classify_differential_future_evidence_bytes(
+                    _future_payload(replay)
+                ),
+            )
+
+    def test_malformed_bound_witness_never_escapes_as_raw_key_error(self):
+        value = _future_differential_evidence()
+        installed = _future_authorization_record(value)
+        del value["witnesses"][0]["process_binding"]
+        installed = replace(
+            installed,
+            positive_witness_report_sha256=(
+                probe._differential_witness_report_sha256(
+                    value["witnesses"][0]
+                )
+            ),
+        )
+        with mock.patch.object(
+            probe,
+            "DIFFERENTIAL_REVIEWED_FUTURE_AUTHORIZATIONS",
+            (installed,),
+        ), self.assertRaises(probe.ProbeError) as caught:
+            probe.classify_differential_future_evidence_bytes(
+                _future_payload(value)
+            )
+        self.assertEqual(
+            "DIFFERENTIAL_WITNESS_ORDER_INVALID",
+            caught.exception.code,
+        )
+
+    def test_blocker_drift_precedes_witness_unusable_terminal_return(self):
+        value = _future_differential_evidence()
+        value["witnesses"][1]["role"] = "W+"
+        value["mandatory_effect_blockers"] = []
+        with mock.patch.object(
+            probe,
+            "DIFFERENTIAL_REVIEWED_FUTURE_AUTHORIZATIONS",
+            (_future_authorization_record(value),),
+        ), self.assertRaises(probe.ProbeError) as caught:
+            probe.classify_differential_future_evidence_bytes(
+                _future_payload(value)
+            )
+        self.assertEqual("DIFFERENTIAL_BLOCKER_DRIFT", caught.exception.code)
+
+    def test_unexecuted_witnesses_cannot_become_repeated_platform_wall(self):
+        value = _future_differential_evidence()
+        for witness in value["witnesses"]:
+            witness["executed"] = False
+        self.assertEqual("witness_unusable", self.derive(value))
+
+    def test_deterministic_classifier_outputs_exactly_one_state(self):
+        effect = _future_differential_evidence()
+        self.assertEqual("effect_proven", self.derive(effect))
+        with mock.patch.object(
+            probe,
+            "DIFFERENTIAL_REVIEWED_FUTURE_AUTHORIZATIONS",
+            (_future_authorization_record(effect),),
+        ):
+            self.assertEqual(
+                "effect_proven",
+                probe.classify_differential_future_evidence_bytes(
+                    _future_payload(effect)
+                ),
+            )
+
+        defect = _future_differential_evidence()
+        defect["errors"] = [
+            {
+                "code": "IMPLEMENTATION_BROKEN",
+                "authority": "supervisor_observed",
+                "detail": "producer failed before causal decision",
+            }
+        ]
+        self.assertEqual("implementation_defect", self.derive(defect))
+
+        ambiguous = _future_differential_evidence()
+        ambiguous["witnesses"][0]["operation_result"][
+            "effect_observed"
+        ] = False
+        self.assertEqual(
+            "global_policy_or_platform_ambiguous", self.derive(ambiguous)
+        )
+
+    def test_target_operation_authority_cannot_be_laundered(self):
+        value = _future_differential_evidence("ProtectClock")
+        self.assertEqual("effect_proven", self.derive(value))
+        value["witnesses"][0]["observations"][0][
+            "authority"
+        ] = "platform_file_observed"
+        self.assertEqual(
+            "global_policy_or_platform_ambiguous", self.derive(value)
+        )
+
+    def test_dynamicuser_equivalence_classes_have_satisfiable_exact_effects(self):
+        cases = {
+            "EC-DYNAMICUSER-SUID": (
+                {
+                    "suid.denial_or_bit_clearing_in_w_plus": True,
+                    "suid.operation_reached_in_w_minus": False,
+                    "suid.synthetic_file_identity": True,
+                },
+                {
+                    "suid.denial_or_bit_clearing_in_w_plus": False,
+                    "suid.operation_reached_in_w_minus": True,
+                    "suid.synthetic_file_identity": True,
+                },
+            ),
+            "EC-DYNAMICUSER-IPC": (
+                {
+                    "ipc.removed_in_w_plus": True,
+                    "ipc.retained_in_w_minus": False,
+                    "ipc.synthetic_object_identity": True,
+                },
+                {
+                    "ipc.removed_in_w_plus": False,
+                    "ipc.retained_in_w_minus": True,
+                    "ipc.synthetic_object_identity": True,
+                },
+            ),
+        }
+        for target, witness_flags in cases.items():
+            with self.subTest(target=target):
+                value = _future_differential_evidence(target)
+                names = probe.DIFFERENTIAL_EQUIVALENCE_CLASS_REQUIRED_OBSERVATIONS[
+                    target
+                ]
+                for witness, flags in zip(value["witnesses"], witness_flags):
+                    witness["observations"].extend(
+                        {
+                            "name": name,
+                            "authority": "kernel_observed",
+                            "value": (
+                                {
+                                    "authorization_sha256": value[
+                                        "run_identity"
+                                    ]["authorization_sha256"],
+                                    "file_device": 41,
+                                    "file_inode": 73,
+                                    "invocation_id": witness[
+                                        "process_binding"
+                                    ]["invocation_id"],
+                                    "observed": flags[name],
+                                    "operation_definition_sha256": probe.differential_operation_spec(
+                                        target
+                                    ).operation_definition_sha256,
+                                    "operation_id": probe.differential_operation_spec(
+                                        target
+                                    ).operation_id,
+                                }
+                                if target == "EC-DYNAMICUSER-SUID"
+                                else {
+                                    "authorization_sha256": value[
+                                        "run_identity"
+                                    ]["authorization_sha256"],
+                                    "invocation_id": witness[
+                                        "process_binding"
+                                    ]["invocation_id"],
+                                    "ipc_namespace_inode": 83,
+                                    "object_id": 97,
+                                    "observed": flags[name],
+                                    "operation_definition_sha256": probe.differential_operation_spec(
+                                        target
+                                    ).operation_definition_sha256,
+                                    "operation_id": probe.differential_operation_spec(
+                                        target
+                                    ).operation_id,
+                                }
+                            ),
+                        }
+                        for name in names
+                    )
+                    witness["observations"].sort(
+                        key=lambda item: item["name"]
+                    )
+                self.assertEqual("effect_proven", self.derive(value))
+
+                identity_key = (
+                    "file_device"
+                    if target == "EC-DYNAMICUSER-SUID"
+                    else "ipc_namespace_inode"
+                )
+                causal_record = next(
+                    item
+                    for item in value["witnesses"][0]["observations"]
+                    if item["name"] in names
+                )["value"]
+                causal_record["authorization_sha256"] = "e" * 64
+                self.assertEqual(
+                    "global_policy_or_platform_ambiguous",
+                    self.derive(value),
+                )
+                causal_record["authorization_sha256"] = value[
+                    "run_identity"
+                ]["authorization_sha256"]
+                causal_record[identity_key] = True
+                self.assertEqual(
+                    "global_policy_or_platform_ambiguous",
+                    self.derive(value),
+                )
+
+    def test_invalid_witness_is_not_a_causal_classification(self):
+        value = _future_differential_evidence()
+        value["witnesses"][1]["unit_ast"].append(
+            {"section": "Service", "name": "NoNewPrivileges", "value": "yes"}
+        )
+        with self.assertRaises(probe.ProbeError) as caught:
+            probe._validate_differential_pair(
+                value["witnesses"],
+                value["target"],
+                value["execution_state"],
+                value["run_identity"],
+            )
+        self.assertIn(
+            caught.exception.code,
+            {
+                "DIFFERENTIAL_UNIT_CONFIGURATION_INVALID",
+                "DIFFERENTIAL_EXTRA_DELTA",
+            },
+        )
+
+    def test_system_call_architectures_requires_w_minus_secondary_abi(self):
+        value = _future_differential_evidence("SystemCallArchitectures")
+        self.assertEqual("effect_proven", self.derive(value))
+
+        boolean_observation_errno = _future_differential_evidence(
+            "SystemCallArchitectures"
+        )
+        boolean_observation_errno["witnesses"][0]["observations"][0][
+            "value"
+        ]["errno"] = True
+        self.assertEqual(
+            "global_policy_or_platform_ambiguous",
+            self.derive(boolean_observation_errno),
+        )
+
+        both_enosys = _future_differential_evidence("SystemCallArchitectures")
+        both_enosys["witnesses"][0]["operation_result"]["errno"] = errno.ENOSYS
+        both_enosys["witnesses"][0]["observations"][0]["value"][
+            "errno"
+        ] = errno.ENOSYS
+        both_enosys["witnesses"][1]["operation_result"]["errno"] = errno.ENOSYS
+        self.assertEqual(
+            "global_policy_or_platform_ambiguous", self.derive(both_enosys)
+        )
+
+        forged_helper = _future_differential_evidence("SystemCallArchitectures")
+        forged_helper["witnesses"][1]["observations"][0]["value"][
+            "helper_sha256"
+        ] = "f" * 64
+        self.assertEqual(
+            "global_policy_or_platform_ambiguous", self.derive(forged_helper)
+        )
+        for invalid_errno in (None, 0, errno.ENOENT, errno.EINVAL):
+            with self.subTest(invalid_errno=invalid_errno):
+                invalid = _future_differential_evidence(
+                    "SystemCallArchitectures"
+                )
+                invalid["witnesses"][0]["operation_result"][
+                    "errno"
+                ] = invalid_errno
+                invalid["witnesses"][0]["observations"][0]["value"][
+                    "errno"
+                ] = invalid_errno
+                self.assertEqual(
+                    "global_policy_or_platform_ambiguous",
+                    self.derive(invalid),
+                )
+
+    def test_one_pair_and_fake_three_run_set_cannot_become_platform_wall(self):
+        value = _future_differential_evidence()
+        value["witnesses"][0]["operation_result"]["effect_observed"] = False
+        self.assertEqual(
+            "global_policy_or_platform_ambiguous", self.derive(value)
+        )
+
+    def test_device_authorization_rejects_unbound_head_path_review_and_bool_identity(self):
+        value = _future_differential_evidence("EC-DEVICE-ACCESS")
+        base_device = _device_operation_record(value)
+        invalid_records = (
+            replace(base_device, head_sha="f" * 40),
+            replace(base_device, future_authorization_sha256="e" * 64),
+            replace(base_device, run_attempt=True),
+            replace(base_device, positive_invocation_id="f" * 32),
+            replace(base_device, device_path="/dev/../etc/passwd"),
+            replace(base_device, device_path="/dev/."),
+            replace(base_device, device_path="/dev/.."),
+            replace(base_device, review_sha256="not-a-digest"),
+            replace(
+                base_device,
+                review_sha256=base_device.authorization_sha256,
+            ),
+            replace(base_device, device_major=True),
+            replace(base_device, device_minor=True),
+        )
+        for device_record in invalid_records:
+            with self.subTest(device_record=device_record), mock.patch.object(
+                probe,
+                "DIFFERENTIAL_REVIEWED_FUTURE_AUTHORIZATIONS",
+                (_future_authorization_record(value),),
+            ), mock.patch.object(
+                probe,
+                "DIFFERENTIAL_REVIEWED_DEVICE_OPERATION_AUTHORIZATIONS",
+                (device_record,),
+            ), self.assertRaises(probe.ProbeError):
+                probe.classify_differential_future_evidence_bytes(
+                    _future_payload(value)
+                )
+        value["fresh_run_evidence"] = [
+            {
+                "evidence_sha256": str(index + 7) * 64,
+                "reviewer_disposition_sha256": str(index + 3) * 64,
+                "run_id": str(5000 + index),
+                "run_attempt": 1,
+                "head_sha": value["run_identity"]["head_sha"],
+                "authorization_sha256": str(index + 1) * 64,
+                "raw_platform_state_sha256": str(index + 4) * 64,
+                "classification": "global_policy_or_platform_ambiguous",
+            }
+            for index in range(3)
+        ]
+        with self.assertRaises(probe.ProbeError) as caught:
+            self.derive(value)
+        self.assertEqual(
+            "DIFFERENTIAL_PLATFORM_WALL_UNPROVED", caught.exception.code
+        )
+
+    def test_device_authorization_cannot_be_reused_by_another_future_run(self):
+        original = _future_differential_evidence("EC-DEVICE-ACCESS")
+        replay = json.loads(json.dumps(original))
+        replay["run_identity"]["run_id"] = "4002"
+        replay["run_identity"]["nonce"] = "e" * 32
+        replay_authorization = _future_authorization_record(
+            replay
+        ).authorization_sha256
+        replay["run_identity"][
+            "authorization_sha256"
+        ] = replay_authorization
+        replay["future_authorization"][
+            "authorization_sha256"
+        ] = replay_authorization
+        for witness in replay["witnesses"]:
+            witness["run_binding"] = dict(replay["run_identity"])
+            witness["operation_result"][
+                "operation_authorization_sha256"
+            ] = replay_authorization
+            witness["observations"][0]["value"][
+                "authorization_sha256"
+            ] = replay_authorization
+        installed_replay = _future_authorization_record(replay)
+        with mock.patch.object(
+            probe,
+            "DIFFERENTIAL_REVIEWED_FUTURE_AUTHORIZATIONS",
+            (
+                _future_authorization_record(original),
+                installed_replay,
+            ),
+        ), mock.patch.object(
+            probe,
+            "DIFFERENTIAL_REVIEWED_DEVICE_OPERATION_AUTHORIZATIONS",
+            (_device_operation_record(original),),
+        ), self.assertRaises(probe.ProbeError) as caught:
+            probe.classify_differential_future_evidence_bytes(
+                _future_payload(replay)
+            )
+        self.assertEqual(
+            "DIFFERENTIAL_DEVICE_OPERATION_UNREVIEWED",
+            caught.exception.code,
+        )
+
+    def test_local_digest_cannot_authorize_device_operation(self):
+        value = _future_differential_evidence("EC-DEVICE-ACCESS")
+        local_digest = probe.DIFFERENTIAL_AUTHORING_TASK_SHA256
+        future = replace(
+            _future_authorization_record(value),
+            device_operation_authorization_sha256=local_digest,
+        )
+        device = replace(
+            _device_operation_record(value),
+            authorization_sha256=local_digest,
+        )
+        with mock.patch.object(
+            probe,
+            "DIFFERENTIAL_REVIEWED_FUTURE_AUTHORIZATIONS",
+            (future,),
+        ), mock.patch.object(
+            probe,
+            "DIFFERENTIAL_REVIEWED_DEVICE_OPERATION_AUTHORIZATIONS",
+            (device,),
+        ), self.assertRaises(probe.ProbeError) as caught:
+            probe.classify_differential_future_evidence_bytes(
+                _future_payload(value)
+            )
+        self.assertEqual(
+            "DIFFERENTIAL_DEVICE_OPERATION_UNREVIEWED",
+            caught.exception.code,
+        )
+
+    def test_historical_roles_and_invocation_ids_are_globally_fresh(self):
+        value = _future_differential_evidence()
+        value["witnesses"][0]["operation_result"]["effect_observed"] = False
+        current = _future_authorization_record(value)
+        historical = tuple(
+            _historical_authorization_record(value, index)
+            for index in range(3)
+        )
+        ambiguous = tuple(
+            _ambiguous_run_record(value, index) for index in range(3)
+        )
+        positive, negative = probe._validate_differential_pair(
+            value["witnesses"],
+            value["target"],
+            value["execution_state"],
+            value["run_identity"],
+        )
+
+        def assert_rejected(records, dispositions):
+            candidate = json.loads(json.dumps(value))
+            candidate["fresh_run_evidence"] = [
+                {
+                    "evidence_sha256": record.evidence_sha256,
+                    "reviewer_disposition_sha256": (
+                        record.reviewer_disposition_sha256
+                    ),
+                    "run_id": record.run_id,
+                    "run_attempt": record.run_attempt,
+                    "head_sha": record.head_sha,
+                    "authorization_sha256": record.authorization_sha256,
+                    "raw_platform_state_sha256": (
+                        record.raw_platform_state_sha256
+                    ),
+                    "classification": record.classification,
+                }
+                for record in dispositions
+            ]
+            with mock.patch.object(
+                probe,
+                "DIFFERENTIAL_REVIEWED_FUTURE_AUTHORIZATIONS",
+                (current,) + tuple(records),
+            ), mock.patch.object(
+                probe,
+                "DIFFERENTIAL_REVIEWED_AMBIGUOUS_RUNS",
+                tuple(dispositions),
+            ), self.assertRaises(probe.ProbeError) as caught:
+                probe._derive_differential_classification(
+                    candidate, positive, negative
+                )
+            self.assertEqual(
+                "DIFFERENTIAL_PLATFORM_WALL_UNPROVED",
+                caught.exception.code,
+            )
+
+        repeated_disposition = tuple(
+            replace(
+                record,
+                reviewer_disposition_sha256=(
+                    ambiguous[0].reviewer_disposition_sha256
+                ),
+            )
+            for record in ambiguous
+        )
+        assert_rejected(historical, repeated_disposition)
+
+        repeated_reports = tuple(
+            replace(
+                record,
+                positive_witness_report_sha256=(
+                    historical[0].positive_witness_report_sha256
+                ),
+                negative_witness_report_sha256=(
+                    historical[0].negative_witness_report_sha256
+                ),
+            )
+            for record in historical
+        )
+        repeated_report_dispositions = tuple(
+            replace(
+                record,
+                positive_witness_report_sha256=(
+                    repeated_reports[index].positive_witness_report_sha256
+                ),
+                negative_witness_report_sha256=(
+                    repeated_reports[index].negative_witness_report_sha256
+                ),
+            )
+            for index, record in enumerate(ambiguous)
+        )
+        assert_rejected(repeated_reports, repeated_report_dispositions)
+
+        repeated_review_records = tuple(
+            _reidentity_future_record(
+                replace(record, review_sha256=historical[0].review_sha256)
+            )
+            for record in historical
+        )
+        repeated_review_dispositions = tuple(
+            replace(
+                record,
+                authorization_sha256=(
+                    repeated_review_records[index].authorization_sha256
+                ),
+            )
+            for index, record in enumerate(ambiguous)
+        )
+        assert_rejected(
+            repeated_review_records, repeated_review_dispositions
+        )
+
+        repeated_invocation_records = tuple(
+            _reidentity_future_record(
+                replace(
+                    record,
+                    positive_invocation_id=(
+                        historical[0].positive_invocation_id
+                    ),
+                    negative_invocation_id=(
+                        historical[0].negative_invocation_id
+                    ),
+                )
+            )
+            for record in historical
+        )
+        repeated_invocation_dispositions = tuple(
+            replace(
+                record,
+                authorization_sha256=(
+                    repeated_invocation_records[index].authorization_sha256
+                ),
+            )
+            for index, record in enumerate(ambiguous)
+        )
+        assert_rejected(
+            repeated_invocation_records,
+            repeated_invocation_dispositions,
+        )
+
+        current_identity_record = _reidentity_future_record(
+            replace(
+                historical[0],
+                review_sha256=current.review_sha256,
+                positive_invocation_id=current.positive_invocation_id,
+                negative_invocation_id=current.negative_invocation_id,
+                positive_witness_report_sha256=(
+                    current.positive_witness_report_sha256
+                ),
+                negative_witness_report_sha256=(
+                    current.negative_witness_report_sha256
+                ),
+            )
+        )
+        current_identity_records = (
+            current_identity_record,
+        ) + historical[1:]
+        current_identity_dispositions = (
+            replace(
+                ambiguous[0],
+                authorization_sha256=(
+                    current_identity_record.authorization_sha256
+                ),
+                reviewer_disposition_sha256=(
+                    probe._differential_mapping_sha256(
+                        value, "current_evidence"
+                    )
+                ),
+                positive_witness_report_sha256=(
+                    current.positive_witness_report_sha256
+                ),
+                negative_witness_report_sha256=(
+                    current.negative_witness_report_sha256
+                ),
+            ),
+        ) + ambiguous[1:]
+        assert_rejected(
+            current_identity_records, current_identity_dispositions
+        )
+
+    def test_platform_wall_requires_three_complete_distinct_authorizations(self):
+        value = _future_differential_evidence()
+        value["witnesses"][0]["operation_result"]["effect_observed"] = False
+        ambiguous = tuple(_ambiguous_run_record(value, index) for index in range(3))
+        historical = tuple(
+            _historical_authorization_record(value, index) for index in range(3)
+        )
+        value["fresh_run_evidence"] = [
+            {
+                "evidence_sha256": record.evidence_sha256,
+                "reviewer_disposition_sha256": record.reviewer_disposition_sha256,
+                "run_id": record.run_id,
+                "run_attempt": record.run_attempt,
+                "head_sha": record.head_sha,
+                "authorization_sha256": record.authorization_sha256,
+                "raw_platform_state_sha256": record.raw_platform_state_sha256,
+                "classification": record.classification,
+            }
+            for record in ambiguous
+        ]
+        with mock.patch.object(
+            probe,
+            "DIFFERENTIAL_REVIEWED_FUTURE_AUTHORIZATIONS",
+            (_future_authorization_record(value),) + historical,
+        ), mock.patch.object(
+            probe, "DIFFERENTIAL_REVIEWED_AMBIGUOUS_RUNS", ambiguous
+        ):
+            positive, negative = probe._validate_differential_pair(
+                value["witnesses"],
+                value["target"],
+                value["execution_state"],
+                value["run_identity"],
+            )
+            self.assertEqual(
+                "repeated_platform_wall",
+                probe._derive_differential_classification(
+                    value, positive, negative
+                ),
+            )
+
+            repeated = json.loads(json.dumps(value))
+            repeated["fresh_run_evidence"][1][
+                "authorization_sha256"
+            ] = repeated["fresh_run_evidence"][0]["authorization_sha256"]
+            with self.assertRaises(probe.ProbeError) as caught:
+                probe._derive_differential_classification(
+                    repeated, positive, negative
+                )
+            self.assertEqual(
+                "DIFFERENTIAL_PLATFORM_WALL_UNPROVED",
+                caught.exception.code,
+            )
+
+            repeated_state = json.loads(json.dumps(value))
+            repeated_state["fresh_run_evidence"][1][
+                "raw_platform_state_sha256"
+            ] = repeated_state["fresh_run_evidence"][0][
+                "raw_platform_state_sha256"
+            ]
+            with self.assertRaises(probe.ProbeError) as caught:
+                probe._derive_differential_classification(
+                    repeated_state, positive, negative
+                )
+            self.assertEqual(
+                "DIFFERENTIAL_PLATFORM_WALL_UNPROVED",
+                caught.exception.code,
+            )
+
+            current_reuse = json.loads(json.dumps(value))
+            current_reuse["fresh_run_evidence"][0][
+                "authorization_sha256"
+            ] = value["run_identity"]["authorization_sha256"]
+            with self.assertRaises(probe.ProbeError) as caught:
+                probe._derive_differential_classification(
+                    current_reuse, positive, negative
+                )
+            self.assertEqual(
+                "DIFFERENTIAL_PLATFORM_WALL_UNPROVED",
+                caught.exception.code,
+            )
+
+        repeated_nonce_authorizations = tuple(
+            replace(record, nonce="f" * 32) for record in historical
+        )
+        repeated_nonce_ambiguous = tuple(
+            replace(record, nonce="f" * 32) for record in ambiguous
+        )
+        with mock.patch.object(
+            probe,
+            "DIFFERENTIAL_REVIEWED_FUTURE_AUTHORIZATIONS",
+            (_future_authorization_record(value),)
+            + repeated_nonce_authorizations,
+        ), mock.patch.object(
+            probe,
+            "DIFFERENTIAL_REVIEWED_AMBIGUOUS_RUNS",
+            repeated_nonce_ambiguous,
+        ), self.assertRaises(probe.ProbeError) as caught:
+            probe._derive_differential_classification(
+                value, positive, negative
+            )
+        self.assertEqual(
+            "DIFFERENTIAL_EFFECT_AUTHORITY_REQUIRED",
+            caught.exception.code,
+        )
+
+        current_run_history = json.loads(json.dumps(value))
+        current_run_history["fresh_run_evidence"][0]["run_id"] = value[
+            "run_identity"
+        ]["run_id"]
+        current_run_authorizations = (
+            replace(historical[0], run_id=value["run_identity"]["run_id"]),
+        ) + historical[1:]
+        current_run_ambiguous = (
+            replace(ambiguous[0], run_id=value["run_identity"]["run_id"]),
+        ) + ambiguous[1:]
+        with mock.patch.object(
+            probe,
+            "DIFFERENTIAL_REVIEWED_FUTURE_AUTHORIZATIONS",
+            (_future_authorization_record(value),)
+            + current_run_authorizations,
+        ), mock.patch.object(
+            probe,
+            "DIFFERENTIAL_REVIEWED_AMBIGUOUS_RUNS",
+            current_run_ambiguous,
+        ), self.assertRaises(probe.ProbeError) as caught:
+            probe._derive_differential_classification(
+                current_run_history, positive, negative
+            )
+        self.assertEqual(
+            "DIFFERENTIAL_PLATFORM_WALL_UNPROVED", caught.exception.code
+        )
+
+        same_reports_authorizations = (
+            replace(
+                historical[0],
+                negative_witness_report_sha256=historical[
+                    0
+                ].positive_witness_report_sha256,
+            ),
+        ) + historical[1:]
+        same_reports_ambiguous = (
+            replace(
+                ambiguous[0],
+                negative_witness_report_sha256=ambiguous[
+                    0
+                ].positive_witness_report_sha256,
+            ),
+        ) + ambiguous[1:]
+        with mock.patch.object(
+            probe,
+            "DIFFERENTIAL_REVIEWED_FUTURE_AUTHORIZATIONS",
+            (_future_authorization_record(value),)
+            + same_reports_authorizations,
+        ), mock.patch.object(
+            probe,
+            "DIFFERENTIAL_REVIEWED_AMBIGUOUS_RUNS",
+            same_reports_ambiguous,
+        ), self.assertRaises(probe.ProbeError) as caught:
+            probe._derive_differential_classification(
+                value, positive, negative
+            )
+        self.assertEqual(
+            "DIFFERENTIAL_EFFECT_AUTHORITY_REQUIRED", caught.exception.code
+        )
+
+        collapsed_disposition = json.loads(json.dumps(value))
+        collapsed_disposition["fresh_run_evidence"][0][
+            "reviewer_disposition_sha256"
+        ] = ambiguous[0].authorization_sha256
+        collapsed_ambiguous = (
+            replace(
+                ambiguous[0],
+                reviewer_disposition_sha256=ambiguous[
+                    0
+                ].authorization_sha256,
+            ),
+        ) + ambiguous[1:]
+        with mock.patch.object(
+            probe,
+            "DIFFERENTIAL_REVIEWED_FUTURE_AUTHORIZATIONS",
+            (_future_authorization_record(value),) + historical,
+        ), mock.patch.object(
+            probe,
+            "DIFFERENTIAL_REVIEWED_AMBIGUOUS_RUNS",
+            collapsed_ambiguous,
+        ), self.assertRaises(probe.ProbeError) as caught:
+            probe._derive_differential_classification(
+                collapsed_disposition, positive, negative
+            )
+        self.assertEqual(
+            "DIFFERENTIAL_EFFECT_AUTHORITY_REQUIRED", caught.exception.code
+        )
+
+        malformed_historical = tuple(
+            replace(
+                record,
+                review_sha256="not-a-digest",
+                operation_id="unrelated.operation",
+                operation_definition_sha256="f" * 64,
+                run_attempt=True,
+            )
+            for record in historical
+        )
+        with mock.patch.object(
+            probe,
+            "DIFFERENTIAL_REVIEWED_FUTURE_AUTHORIZATIONS",
+            (_future_authorization_record(value),) + malformed_historical,
+        ), mock.patch.object(
+            probe, "DIFFERENTIAL_REVIEWED_AMBIGUOUS_RUNS", ambiguous
+        ), self.assertRaises(probe.ProbeError):
+            positive, negative = probe._validate_differential_pair(
+                value["witnesses"],
+                value["target"],
+                value["execution_state"],
+                value["run_identity"],
+            )
+            probe._derive_differential_classification(
+                value, positive, negative
+            )
+
+        malformed_ambiguous = (
+            replace(
+                ambiguous[0],
+                operation_id="unrelated.operation",
+                operation_definition_sha256="f" * 64,
+            ),
+        ) + ambiguous[1:]
+        with mock.patch.object(
+            probe,
+            "DIFFERENTIAL_REVIEWED_FUTURE_AUTHORIZATIONS",
+            (_future_authorization_record(value),) + historical,
+        ), mock.patch.object(
+            probe,
+            "DIFFERENTIAL_REVIEWED_AMBIGUOUS_RUNS",
+            malformed_ambiguous,
+        ), self.assertRaises(probe.ProbeError):
+            positive, negative = probe._validate_differential_pair(
+                value["witnesses"],
+                value["target"],
+                value["execution_state"],
+                value["run_identity"],
+            )
+            probe._derive_differential_classification(
+                value, positive, negative
+            )
+
+    def test_historical_device_runs_require_installed_bound_authorizations(self):
+        value = _future_differential_evidence("EC-DEVICE-ACCESS")
+        value["witnesses"][0]["operation_result"]["effect_observed"] = False
+        historical = tuple(
+            _historical_authorization_record(value, index)
+            for index in range(3)
+        )
+        ambiguous = tuple(
+            _ambiguous_run_record(value, index) for index in range(3)
+        )
+        historical_devices = tuple(
+            _historical_device_operation_record(value, index)
+            for index in range(3)
+        )
+        value["fresh_run_evidence"] = [
+            {
+                "evidence_sha256": record.evidence_sha256,
+                "reviewer_disposition_sha256": record.reviewer_disposition_sha256,
+                "run_id": record.run_id,
+                "run_attempt": record.run_attempt,
+                "head_sha": record.head_sha,
+                "authorization_sha256": record.authorization_sha256,
+                "raw_platform_state_sha256": record.raw_platform_state_sha256,
+                "classification": record.classification,
+            }
+            for record in ambiguous
+        ]
+        positive, negative = probe._validate_differential_pair(
+            value["witnesses"],
+            value["target"],
+            value["execution_state"],
+            value["run_identity"],
+        )
+        all_devices = (_device_operation_record(value),) + historical_devices
+        with mock.patch.object(
+            probe,
+            "DIFFERENTIAL_REVIEWED_FUTURE_AUTHORIZATIONS",
+            (_future_authorization_record(value),) + historical,
+        ), mock.patch.object(
+            probe, "DIFFERENTIAL_REVIEWED_AMBIGUOUS_RUNS", ambiguous
+        ), mock.patch.object(
+            probe,
+            "DIFFERENTIAL_REVIEWED_DEVICE_OPERATION_AUTHORIZATIONS",
+            all_devices,
+        ):
+            self.assertEqual(
+                "repeated_platform_wall",
+                probe._derive_differential_classification(
+                    value, positive, negative
+                ),
+            )
+
+        with mock.patch.object(
+            probe,
+            "DIFFERENTIAL_REVIEWED_FUTURE_AUTHORIZATIONS",
+            (_future_authorization_record(value),) + historical,
+        ), mock.patch.object(
+            probe, "DIFFERENTIAL_REVIEWED_AMBIGUOUS_RUNS", ambiguous
+        ), mock.patch.object(
+            probe,
+            "DIFFERENTIAL_REVIEWED_DEVICE_OPERATION_AUTHORIZATIONS",
+            all_devices[:-1],
+        ), self.assertRaises(probe.ProbeError) as caught:
+            probe._derive_differential_classification(
+                value, positive, negative
+            )
+        self.assertEqual(
+            "DIFFERENTIAL_PLATFORM_WALL_UNPROVED", caught.exception.code
+        )
+
+    def test_equivalence_class_observations_are_required_for_effect(self):
+        value = _future_differential_evidence("EC-KERNEL-OOM-GROUP")
+        self.assertEqual(
+            "global_policy_or_platform_ambiguous", self.derive(value)
+        )
+        names = probe.DIFFERENTIAL_EQUIVALENCE_CLASS_REQUIRED_OBSERVATIONS[
+            "EC-KERNEL-OOM-GROUP"
+        ]
+        spec = probe.differential_operation_spec(value["target"])
+        for index, witness in enumerate(value["witnesses"]):
+            process = witness["process_binding"]
+            positive = index == 0
+            binding = {
+                "authorization_sha256": value["run_identity"][
+                    "authorization_sha256"
+                ],
+                "invocation_id": process["invocation_id"],
+                "operation_definition_sha256": spec.operation_definition_sha256,
+                "operation_id": spec.operation_id,
+            }
+            concrete = {
+                "cgroup.complete_death": {
+                    "all_members_dead": positive,
+                    "cgroup": process["cgroup"],
+                    **binding,
+                },
+                "cgroup.events": {
+                    "cgroup": process["cgroup"],
+                    "populated_after": 0 if positive else 1,
+                    "populated_before": 1,
+                    **binding,
+                },
+                "cgroup.memory_events": {
+                    "cgroup": process["cgroup"],
+                    "oom_kill_after": 8,
+                    "oom_kill_before": 7,
+                    **binding,
+                },
+                "cgroup.memory_oom_group": {
+                    "cgroup": process["cgroup"],
+                    "value": 1 if positive else 0,
+                    **binding,
+                },
+                "cgroup.process_membership": {
+                    "cgroup": process["cgroup"],
+                    "member_pids_after": [] if positive else [process["pid"]],
+                    "member_pids_before": [process["pid"]],
+                    **binding,
+                },
+            }
+            concrete = {
+                name: {key: record[key] for key in sorted(record)}
+                for name, record in concrete.items()
+            }
+            witness["observations"].extend(
+                {
+                    "name": name,
+                    "authority": (
+                        "platform_file_observed"
+                        if name == "device.private_dev_topology_supporting"
+                        else "kernel_observed"
+                    ),
+                    "value": concrete[name],
+                }
+                for name in names
+            )
+            witness["observations"].sort(key=lambda item: item["name"])
+        positive, negative = probe._validate_differential_pair(
+            value["witnesses"],
+            value["target"],
+            value["execution_state"],
+            value["run_identity"],
+        )
+        self.assertTrue(
+            probe._target_observations_prove_effect(
+                value["target"],
+                positive,
+                negative,
+                _future_authorization_record(value),
+            )
+        )
+        self.assertEqual(
+            "effect_proven",
+            self.derive(value),
+        )
+        complete_death = next(
+            item
+            for item in value["witnesses"][0]["observations"]
+            if item["name"] == "cgroup.complete_death"
+        )["value"]
+        complete_death["all_members_dead"] = 1
+        self.assertEqual(
+            "global_policy_or_platform_ambiguous", self.derive(value)
+        )
+        complete_death["all_members_dead"] = True
+        oom_group = next(
+            item
+            for item in value["witnesses"][0]["observations"]
+            if item["name"] == "cgroup.memory_oom_group"
+        )["value"]
+        oom_group["value"] = True
+        self.assertEqual(
+            "global_policy_or_platform_ambiguous", self.derive(value)
+        )
+        oom_group["value"] = 1
+
+        memory_events = next(
+            item
+            for item in value["witnesses"][0]["observations"]
+            if item["name"] == "cgroup.memory_events"
+        )["value"]
+        memory_events["oom_kill_before"] = True
+        self.assertEqual(
+            "global_policy_or_platform_ambiguous", self.derive(value)
+        )
+        memory_events["oom_kill_before"] = 7
+        memory_events["authorization_sha256"] = "e" * 64
+        self.assertEqual(
+            "global_policy_or_platform_ambiguous", self.derive(value)
+        )
+        memory_events["authorization_sha256"] = value["run_identity"][
+            "authorization_sha256"
+        ]
+        next(
+            item
+            for item in value["witnesses"][0]["observations"]
+            if item["name"] == "cgroup.complete_death"
+        )["value"]["cgroup"] = value["witnesses"][1]["process_binding"]["cgroup"]
+        positive, negative = probe._validate_differential_pair(
+            value["witnesses"],
+            value["target"],
+            value["execution_state"],
+            value["run_identity"],
+        )
+        self.assertEqual(
+            "global_policy_or_platform_ambiguous",
+            self.derive(value),
+        )
+
+    def test_device_supporting_metadata_cannot_replace_operation_authority(self):
+        self.assertEqual(166, probe.DIFFERENTIAL_DEVICE_INVENTORY_COUNT)
+        value = _future_differential_evidence("EC-DEVICE-ACCESS")
+        names = probe.DIFFERENTIAL_EQUIVALENCE_CLASS_REQUIRED_OBSERVATIONS[
+            "EC-DEVICE-ACCESS"
+        ]
+        positive_flags = {
+            "device.cgroup_bpf_attachment_supporting": True,
+            "device.operation_denied_in_w_plus": True,
+            "device.operation_reached_in_w_minus": False,
+            "device.private_dev_topology_supporting": True,
+        }
+        negative_flags = dict(positive_flags)
+        negative_flags["device.operation_denied_in_w_plus"] = False
+        negative_flags["device.operation_reached_in_w_minus"] = True
+        spec = probe.differential_operation_spec(value["target"])
+        device_authorization_sha256 = (
+            _device_operation_record(value).authorization_sha256
+        )
+        for witness, flags in zip(
+            value["witnesses"], (positive_flags, negative_flags)
+        ):
+            witness["observations"].extend(
+                {
+                    "name": name,
+                    "authority": (
+                        "platform_file_observed"
+                        if name == "device.private_dev_topology_supporting"
+                        else "kernel_observed"
+                    ),
+                    "value": {
+                        "authorization_sha256": value["run_identity"][
+                            "authorization_sha256"
+                        ],
+                        "device_major": 1,
+                        "device_minor": 3,
+                        "device_path": "/dev/null",
+                        "invocation_id": witness["process_binding"][
+                            "invocation_id"
+                        ],
+                        "observed": flags[name],
+                        "operation_authorization_sha256": (
+                            device_authorization_sha256
+                        ),
+                        "operation_definition_sha256": spec.operation_definition_sha256,
+                        "operation_id": spec.operation_id,
+                    },
+                }
+                for name in names
+            )
+            witness["observations"].sort(key=lambda item: item["name"])
+
+        with mock.patch.object(
+            probe,
+            "DIFFERENTIAL_REVIEWED_FUTURE_AUTHORIZATIONS",
+            (_future_authorization_record(value),),
+        ):
+            positive, negative = probe._validate_differential_pair(
+                value["witnesses"],
+                value["target"],
+                value["execution_state"],
+                value["run_identity"],
+            )
+            with self.assertRaises(probe.ProbeError) as caught:
+                probe._derive_differential_classification(
+                    value, positive, negative
+                )
+            self.assertEqual(
+                "DIFFERENTIAL_DEVICE_OPERATION_UNREVIEWED",
+                caught.exception.code,
+            )
+
+        self.assertEqual("effect_proven", self.derive(value))
+        integer_booleans = json.loads(json.dumps(value))
+        for witness in integer_booleans["witnesses"]:
+            for item in witness["observations"]:
+                if item["name"].startswith("device."):
+                    item["value"]["observed"] = int(
+                        item["value"]["observed"]
+                    )
+        self.assertEqual(
+            "global_policy_or_platform_ambiguous",
+            self.derive(integer_booleans),
+        )
+        device_observation = next(
+            item
+            for item in value["witnesses"][0]["observations"]
+            if item["name"] == "device.operation_denied_in_w_plus"
+        )["value"]
+        device_observation["invocation_id"] = value["witnesses"][1][
+            "process_binding"
+        ]["invocation_id"]
+        self.assertEqual(
+            "global_policy_or_platform_ambiguous", self.derive(value)
+        )
+        device_observation["invocation_id"] = value["witnesses"][0][
+            "process_binding"
+        ]["invocation_id"]
+        value["witnesses"][0]["operation_result"][
+            "operation_authorization_sha256"
+        ] = "d" * 64
+        self.assertEqual(
+            "global_policy_or_platform_ambiguous", self.derive(value)
+        )
 
 
 if __name__ == "__main__":
