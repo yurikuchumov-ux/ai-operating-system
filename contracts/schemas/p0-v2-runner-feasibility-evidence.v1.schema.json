@@ -1,155 +1,145 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/yurikuchumov-ux/ai-operating-system/contracts/schemas/p0-v2-runner-feasibility-evidence.v1.schema.json",
-  "title": "P0 v2 GitHub-hosted runner feasibility candidate evidence v1",
+  "title": "P0 v2 Gate 1 trusted control-plane evidence v2",
+  "description": "Final trusted evidence. Candidate reports are untrusted inputs and never authorization.",
   "type": "object",
   "additionalProperties": false,
   "required": [
     "schema_version",
     "evidence_kind",
-    "candidate_notice",
+    "authority",
     "outcome",
-    "outcome_authority",
-    "identity",
-    "source",
-    "host",
-    "controls",
-    "lifecycle",
-    "cases",
+    "evidence_stage",
+    "candidate_report_state",
+    "authorization",
+    "candidate",
+    "control",
+    "event",
+    "workflow",
+    "digests",
+    "synthetic_merge",
+    "snapshots",
+    "staging",
+    "broker",
+    "replay",
     "cancellation",
+    "artifact",
     "errors"
   ],
   "properties": {
     "schema_version": {
-      "const": "1.0.0"
+      "const": "2.0.0"
     },
     "evidence_kind": {
-      "const": "p0-v2-runner-feasibility-candidate"
+      "const": "p0-v2-gate1-trusted-control-plane-evidence"
     },
-    "candidate_notice": {
-      "const": "candidate evidence only; an independent reviewer owns the GATE1_* decision"
+    "authority": {
+      "const": "trusted_default_branch_control_plane"
     },
     "outcome": {
-      "$ref": "#/$defs/outcome"
+      "enum": [
+        "SUCCESS",
+        "ACTIONS_CANCELLED",
+        "FAILED"
+      ]
     },
-    "outcome_authority": {
-      "const": "supervisor_observed"
-    },
-    "identity": {
-      "type": "array",
-      "minItems": 19,
-      "maxItems": 19,
-      "uniqueItems": true,
-      "items": {
-        "$ref": "#/$defs/observation"
-      }
-    },
-    "source": {
-      "type": "array",
-      "minItems": 6,
-      "maxItems": 6,
-      "uniqueItems": true,
-      "items": {
-        "$ref": "#/$defs/observation"
-      }
-    },
-    "host": {
-      "type": "array",
-      "minItems": 8,
-      "uniqueItems": true,
-      "items": {
-        "$ref": "#/$defs/observation"
-      }
-    },
-    "controls": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "requested",
-        "systemd_reported",
-        "effective_observed"
-      ],
-      "properties": {
-        "requested": {
-          "type": "array",
-          "minItems": 1,
-          "uniqueItems": true,
-          "items": {
-            "$ref": "#/$defs/observation"
-          }
+    "evidence_stage": {
+      "description": "Stage-specific truth contract. authorization_rejected means a structurally valid canonical authorization was rejected before acquisition; malformed raw input is not represented as a valid canonical authorization. broker_failed is the closed broker/client failure envelope and includes the exact normal 22/22 complete transcript when candidate-report construction, write, or flush fails before report bytes are accepted.",
+      "oneOf": [
+        {
+          "const": "completed"
         },
-        "systemd_reported": {
-          "type": "array",
-          "minItems": 1,
-          "uniqueItems": true,
-          "items": {
-            "$ref": "#/$defs/systemd_observation"
-          }
+        {
+          "const": "cancelled_after_wait"
         },
-        "effective_observed": {
-          "type": "array",
-          "minItems": 1,
-          "uniqueItems": true,
-          "items": {
-            "$ref": "#/$defs/effective_observation"
-          }
+        {
+          "enum": [
+            "authorization_rejected",
+            "pre_acquisition_rejected",
+            "pre_broker_rejected",
+            "broker_failed",
+            "post_cleanup_snapshot_rejected",
+            "artifact_failed",
+            "cancellation_cleanup_failed",
+            "cancellation_artifact_failed"
+          ]
         }
-      }
+      ]
     },
-    "lifecycle": {
-      "type": "array",
-      "minItems": 4,
-      "items": {
-        "$ref": "#/$defs/lifecycle_event"
-      }
+    "candidate_report_state": {
+      "enum": [
+        "complete",
+        "absent_due_to_cancellation",
+        "absent_before_candidate_start",
+        "absent_due_to_failure"
+      ]
     },
-    "cases": {
-      "type": "array",
-      "minItems": 1,
-      "maxItems": 19,
-      "items": {
-        "$ref": "#/$defs/case"
-      }
+    "authorization": {
+      "$ref": "#/$defs/authorization"
+    },
+    "candidate": {
+      "$ref": "#/$defs/candidate"
+    },
+    "control": {
+      "$ref": "#/$defs/control"
+    },
+    "event": {
+      "$ref": "#/$defs/event"
+    },
+    "workflow": {
+      "$ref": "#/$defs/workflow"
+    },
+    "digests": {
+      "$ref": "#/$defs/digests"
+    },
+    "synthetic_merge": {
+      "$ref": "#/$defs/synthetic_merge"
+    },
+    "snapshots": {
+      "$ref": "#/$defs/stage_aware_snapshots"
+    },
+    "staging": {
+      "description": "Null means no complete staging set was accepted and no candidate process was started. Any partial untrusted bytes must be removed before this record and are bound only by the error/recovery evidence; arrays contain only the complete trusted staging set.",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/complete_staging"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "broker": {
+      "description": "Null means no candidate process, broker instance, transcript, UID/GID, isolation claim, accepted request, or completed response existed.",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/broker"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "replay": {
+      "$ref": "#/$defs/replay"
     },
     "cancellation": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "claim_type",
-        "authority",
-        "finalizer_ran",
-        "same_vm_cleanup_observed",
-        "force_cancellation_proven"
-      ],
-      "properties": {
-        "claim_type": {
-          "enum": [
-            "not_requested",
-            "synthetic_signal",
-            "ordinary_github_cancellation",
-            "force_cancellation",
-            "unobserved"
-          ]
+      "$ref": "#/$defs/cancellation"
+    },
+    "artifact": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/artifact"
         },
-        "authority": {
-          "enum": [
-            "supervisor_observed",
-            "github_context_claim"
-          ]
-        },
-        "finalizer_ran": {
-          "type": "boolean"
-        },
-        "same_vm_cleanup_observed": {
-          "type": "boolean"
-        },
-        "force_cancellation_proven": {
-          "const": false
+        {
+          "type": "null"
         }
-      }
+      ]
     },
     "errors": {
       "type": "array",
+      "maxItems": 64,
       "items": {
         "$ref": "#/$defs/error"
       }
@@ -169,25 +159,91 @@
       },
       "then": {
         "properties": {
-          "cases": {
-            "minItems": 19,
-            "maxItems": 19
+          "evidence_stage": {
+            "const": "completed"
           },
-          "errors": {
-            "maxItems": 0
+          "candidate_report_state": {
+            "const": "complete"
+          },
+          "authorization": {
+            "properties": {
+              "phase": {
+                "enum": [
+                  "1",
+                  "2",
+                  "3"
+                ]
+              }
+            }
+          },
+          "snapshots": {
+            "$ref": "#/$defs/complete_snapshots"
+          },
+          "staging": {
+            "$ref": "#/$defs/complete_staging"
+          },
+          "broker": {
+            "allOf": [
+              {
+                "$ref": "#/$defs/broker"
+              },
+              {
+                "properties": {
+                  "candidate_report_sha256": {
+                    "$ref": "#/$defs/sha256"
+                  },
+                  "transcript_state": {
+                    "const": "complete"
+                  },
+                  "transcript_sha256": {
+                    "$ref": "#/$defs/sha256"
+                  },
+                  "accepted_request_count": {
+                    "const": 22
+                  },
+                  "completed_response_count": {
+                    "const": 22
+                  },
+                  "candidate_subtree_empty": {
+                    "const": true
+                  },
+                  "host_restored": {
+                    "const": true
+                  },
+                  "channel_closed": {
+                    "const": true
+                  }
+                }
+              }
+            ]
           },
           "cancellation": {
             "properties": {
-              "claim_type": {
-                "const": "not_requested"
-              },
-              "finalizer_ran": {
+              "requested": {
                 "const": false
               },
-              "same_vm_cleanup_observed": {
+              "ordinary": {
                 "const": false
+              },
+              "active_marker_sha256": {
+                "type": "null"
+              },
+              "trusted_finalizer_complete": {
+                "const": true
+              },
+              "candidate_subtree_empty": {
+                "const": true
+              },
+              "host_restored": {
+                "const": true
               }
             }
+          },
+          "artifact": {
+            "$ref": "#/$defs/artifact"
+          },
+          "errors": {
+            "maxItems": 0
           }
         }
       }
@@ -205,366 +261,2518 @@
       },
       "then": {
         "properties": {
-          "cases": {
-            "minItems": 1,
-            "maxItems": 1
+          "evidence_stage": {
+            "const": "cancelled_after_wait"
           },
-          "errors": {
-            "maxItems": 0
+          "candidate_report_state": {
+            "const": "absent_due_to_cancellation"
+          },
+          "authorization": {
+            "properties": {
+              "phase": {
+                "const": "c"
+              }
+            }
+          },
+          "snapshots": {
+            "$ref": "#/$defs/complete_snapshots"
+          },
+          "staging": {
+            "$ref": "#/$defs/complete_staging"
+          },
+          "broker": {
+            "allOf": [
+              {
+                "$ref": "#/$defs/broker"
+              },
+              {
+                "properties": {
+                  "candidate_report_sha256": {
+                    "type": "null"
+                  },
+                  "transcript_state": {
+                    "const": "partial_due_to_cancellation"
+                  },
+                  "transcript_sha256": {
+                    "$ref": "#/$defs/sha256"
+                  },
+                  "accepted_request_count": {
+                    "const": 4
+                  },
+                  "completed_response_count": {
+                    "const": 3
+                  },
+                  "candidate_subtree_empty": {
+                    "const": true
+                  },
+                  "host_restored": {
+                    "const": true
+                  },
+                  "channel_closed": {
+                    "const": true
+                  }
+                }
+              }
+            ]
           },
           "cancellation": {
             "properties": {
-              "claim_type": {
-                "const": "ordinary_github_cancellation"
-              },
-              "finalizer_ran": {
+              "requested": {
                 "const": true
               },
-              "same_vm_cleanup_observed": {
+              "ordinary": {
+                "const": true
+              },
+              "force": {
+                "const": false
+              },
+              "active_marker_sha256": {
+                "$ref": "#/$defs/sha256"
+              },
+              "trusted_finalizer_complete": {
+                "const": true
+              },
+              "candidate_subtree_empty": {
+                "const": true
+              },
+              "host_restored": {
+                "const": true
+              }
+            }
+          },
+          "artifact": {
+            "$ref": "#/$defs/artifact"
+          },
+          "errors": {
+            "maxItems": 0
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "outcome": {
+            "const": "FAILED"
+          }
+        },
+        "required": [
+          "outcome"
+        ]
+      },
+      "then": {
+        "properties": {
+          "evidence_stage": {
+            "enum": [
+              "authorization_rejected",
+              "pre_acquisition_rejected",
+              "pre_broker_rejected",
+              "broker_failed",
+              "post_cleanup_snapshot_rejected",
+              "artifact_failed",
+              "cancellation_cleanup_failed",
+              "cancellation_artifact_failed"
+            ]
+          },
+          "errors": {
+            "minItems": 1
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "outcome": {
+            "const": "FAILED"
+          },
+          "evidence_stage": {
+            "enum": [
+              "authorization_rejected",
+              "pre_acquisition_rejected"
+            ]
+          }
+        },
+        "required": [
+          "outcome",
+          "evidence_stage"
+        ]
+      },
+      "then": {
+        "properties": {
+          "snapshots": {
+            "$ref": "#/$defs/absent_snapshots"
+          },
+          "candidate_report_state": {
+            "const": "absent_before_candidate_start"
+          },
+          "staging": {
+            "type": "null"
+          },
+          "broker": {
+            "type": "null"
+          },
+          "cancellation": {
+            "$ref": "#/$defs/pre_candidate_cancellation_state"
+          },
+          "artifact": {
+            "type": "null"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "outcome": {
+            "const": "FAILED"
+          },
+          "evidence_stage": {
+            "const": "pre_broker_rejected"
+          }
+        },
+        "required": [
+          "outcome",
+          "evidence_stage"
+        ]
+      },
+      "then": {
+        "properties": {
+          "snapshots": {
+            "$ref": "#/$defs/pre_broker_rejection_snapshots"
+          },
+          "candidate_report_state": {
+            "const": "absent_before_candidate_start"
+          },
+          "staging": {
+            "type": "null"
+          },
+          "broker": {
+            "type": "null"
+          },
+          "cancellation": {
+            "$ref": "#/$defs/pre_candidate_cancellation_state"
+          },
+          "artifact": {
+            "type": "null"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "outcome": {
+            "const": "FAILED"
+          },
+          "evidence_stage": {
+            "const": "broker_failed"
+          }
+        },
+        "required": [
+          "outcome",
+          "evidence_stage"
+        ]
+      },
+      "then": {
+        "properties": {
+          "snapshots": {
+            "$ref": "#/$defs/broker_failure_snapshots"
+          },
+          "candidate_report_state": {
+            "const": "absent_due_to_failure"
+          },
+          "staging": {
+            "$ref": "#/$defs/complete_staging"
+          },
+          "broker": {
+            "allOf": [
+              {
+                "$ref": "#/$defs/broker"
+              },
+              {
+                "properties": {
+                  "candidate_report_sha256": {
+                    "type": "null"
+                  },
+                  "candidate_subtree_empty": {
+                    "const": true
+                  },
+                  "host_restored": {
+                    "const": true
+                  },
+                  "channel_closed": {
+                    "const": true
+                  }
+                }
+              }
+            ]
+          },
+          "cancellation": {
+            "$ref": "#/$defs/post_candidate_non_cancellation_state"
+          },
+          "artifact": {
+            "type": "null"
+          }
+        },
+        "oneOf": [
+          {
+            "properties": {
+              "authorization": {
+                "properties": {
+                  "phase": {
+                    "enum": [
+                      "1",
+                      "2",
+                      "3"
+                    ]
+                  }
+                }
+              },
+              "broker": {
+                "oneOf": [
+                  {
+                    "allOf": [
+                      {
+                        "$ref": "#/$defs/partial_broker_count_order_normal"
+                      },
+                      {
+                        "properties": {
+                          "transcript_state": {
+                            "const": "partial_due_to_failure"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "$ref": "#/$defs/complete_broker_without_candidate_report"
+                  }
+                ]
+              },
+              "cancellation": {
+                "properties": {
+                  "active_marker_sha256": {
+                    "type": "null"
+                  }
+                }
+              }
+            }
+          },
+          {
+            "properties": {
+              "authorization": {
+                "properties": {
+                  "phase": {
+                    "const": "c"
+                  }
+                }
+              },
+              "broker": {
+                "allOf": [
+                  {
+                    "$ref": "#/$defs/partial_broker_count_order_cancellation"
+                  },
+                  {
+                    "properties": {
+                      "transcript_state": {
+                        "const": "partial_due_to_failure"
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            "oneOf": [
+              {
+                "properties": {
+                  "broker": {
+                    "oneOf": [
+                      {
+                        "properties": {
+                          "accepted_request_count": {
+                            "const": 1
+                          }
+                        }
+                      },
+                      {
+                        "properties": {
+                          "accepted_request_count": {
+                            "const": 2
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  "cancellation": {
+                    "properties": {
+                      "active_marker_sha256": {
+                        "type": "null"
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "properties": {
+                  "broker": {
+                    "properties": {
+                      "accepted_request_count": {
+                        "const": 3
+                      },
+                      "completed_response_count": {
+                        "const": 2
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "properties": {
+                  "broker": {
+                    "oneOf": [
+                      {
+                        "properties": {
+                          "accepted_request_count": {
+                            "const": 3
+                          },
+                          "completed_response_count": {
+                            "const": 3
+                          }
+                        }
+                      },
+                      {
+                        "properties": {
+                          "accepted_request_count": {
+                            "const": 4
+                          },
+                          "completed_response_count": {
+                            "const": 3
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  "cancellation": {
+                    "properties": {
+                      "active_marker_sha256": {
+                        "$ref": "#/$defs/sha256"
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "outcome": {
+            "const": "FAILED"
+          },
+          "evidence_stage": {
+            "enum": [
+              "post_cleanup_snapshot_rejected",
+              "artifact_failed"
+            ]
+          }
+        },
+        "required": [
+          "outcome",
+          "evidence_stage"
+        ]
+      },
+      "then": {
+        "properties": {
+          "candidate_report_state": {
+            "const": "complete"
+          },
+          "authorization": {
+            "properties": {
+              "phase": {
+                "enum": [
+                  "1",
+                  "2",
+                  "3"
+                ]
+              }
+            }
+          },
+          "staging": {
+            "$ref": "#/$defs/complete_staging"
+          },
+          "broker": {
+            "allOf": [
+              {
+                "$ref": "#/$defs/broker"
+              },
+              {
+                "properties": {
+                  "candidate_subtree_empty": {
+                    "const": true
+                  },
+                  "host_restored": {
+                    "const": true
+                  },
+                  "channel_closed": {
+                    "const": true
+                  }
+                }
+              }
+            ]
+          },
+          "cancellation": {
+            "properties": {
+              "requested": {
+                "const": false
+              },
+              "ordinary": {
+                "const": false
+              },
+              "active_marker_sha256": {
+                "type": "null"
+              },
+              "trusted_finalizer_complete": {
+                "const": true
+              },
+              "candidate_subtree_empty": {
+                "const": true
+              },
+              "host_restored": {
+                "const": true
+              }
+            }
+          },
+          "artifact": {
+            "type": "null"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "outcome": {
+            "const": "FAILED"
+          },
+          "evidence_stage": {
+            "const": "post_cleanup_snapshot_rejected"
+          }
+        },
+        "required": [
+          "outcome",
+          "evidence_stage"
+        ]
+      },
+      "then": {
+        "properties": {
+          "snapshots": {
+            "$ref": "#/$defs/broker_failure_snapshots"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "outcome": {
+            "const": "FAILED"
+          },
+          "evidence_stage": {
+            "const": "artifact_failed"
+          }
+        },
+        "required": [
+          "outcome",
+          "evidence_stage"
+        ]
+      },
+      "then": {
+        "properties": {
+          "snapshots": {
+            "$ref": "#/$defs/complete_snapshots"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "outcome": {
+            "const": "FAILED"
+          },
+          "evidence_stage": {
+            "enum": [
+              "cancellation_cleanup_failed",
+              "cancellation_artifact_failed"
+            ]
+          }
+        },
+        "required": [
+          "outcome",
+          "evidence_stage"
+        ]
+      },
+      "then": {
+        "properties": {
+          "candidate_report_state": {
+            "const": "absent_due_to_cancellation"
+          },
+          "authorization": {
+            "properties": {
+              "phase": {
+                "const": "c"
+              }
+            }
+          },
+          "staging": {
+            "$ref": "#/$defs/complete_staging"
+          },
+          "broker": {
+            "$ref": "#/$defs/broker"
+          },
+          "artifact": {
+            "type": "null"
+          },
+          "cancellation": {
+            "properties": {
+              "requested": {
+                "const": true
+              },
+              "ordinary": {
+                "const": true
+              },
+              "force": {
+                "const": false
+              },
+              "active_marker_sha256": {
+                "$ref": "#/$defs/sha256"
+              }
+            }
+          }
+        },
+        "allOf": [
+          {
+            "oneOf": [
+              {
+                "properties": {
+                  "broker": {
+                    "properties": {
+                      "candidate_subtree_empty": {
+                        "const": true
+                      }
+                    }
+                  },
+                  "cancellation": {
+                    "properties": {
+                      "candidate_subtree_empty": {
+                        "const": true
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "properties": {
+                  "broker": {
+                    "properties": {
+                      "candidate_subtree_empty": {
+                        "const": false
+                      }
+                    }
+                  },
+                  "cancellation": {
+                    "properties": {
+                      "candidate_subtree_empty": {
+                        "const": false
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "oneOf": [
+              {
+                "properties": {
+                  "broker": {
+                    "properties": {
+                      "host_restored": {
+                        "const": true
+                      }
+                    }
+                  },
+                  "cancellation": {
+                    "properties": {
+                      "host_restored": {
+                        "const": true
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "properties": {
+                  "broker": {
+                    "properties": {
+                      "host_restored": {
+                        "const": false
+                      }
+                    }
+                  },
+                  "cancellation": {
+                    "properties": {
+                      "host_restored": {
+                        "const": false
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "outcome": {
+            "const": "FAILED"
+          },
+          "evidence_stage": {
+            "const": "cancellation_cleanup_failed"
+          }
+        },
+        "required": [
+          "outcome",
+          "evidence_stage"
+        ]
+      },
+      "then": {
+        "properties": {
+          "snapshots": {
+            "$ref": "#/$defs/broker_failure_snapshots"
+          }
+        },
+        "anyOf": [
+          {
+            "properties": {
+              "broker": {
+                "properties": {
+                  "channel_closed": {
+                    "const": false
+                  }
+                }
+              }
+            }
+          },
+          {
+            "properties": {
+              "cancellation": {
+                "properties": {
+                  "trusted_finalizer_complete": {
+                    "const": false
+                  }
+                }
+              }
+            }
+          },
+          {
+            "properties": {
+              "cancellation": {
+                "properties": {
+                  "candidate_subtree_empty": {
+                    "const": false
+                  }
+                }
+              }
+            }
+          },
+          {
+            "properties": {
+              "cancellation": {
+                "properties": {
+                  "host_restored": {
+                    "const": false
+                  }
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "outcome": {
+            "const": "FAILED"
+          },
+          "evidence_stage": {
+            "const": "cancellation_artifact_failed"
+          }
+        },
+        "required": [
+          "outcome",
+          "evidence_stage"
+        ]
+      },
+      "then": {
+        "properties": {
+          "snapshots": {
+            "$ref": "#/$defs/complete_snapshots"
+          },
+          "broker": {
+            "allOf": [
+              {
+                "$ref": "#/$defs/broker"
+              },
+              {
+                "properties": {
+                  "candidate_subtree_empty": {
+                    "const": true
+                  },
+                  "host_restored": {
+                    "const": true
+                  },
+                  "channel_closed": {
+                    "const": true
+                  }
+                }
+              }
+            ]
+          },
+          "cancellation": {
+            "properties": {
+              "trusted_finalizer_complete": {
+                "const": true
+              },
+              "candidate_subtree_empty": {
+                "const": true
+              },
+              "host_restored": {
                 "const": true
               }
             }
           }
         }
       }
+    },
+    {
+      "if": {
+        "properties": {
+          "candidate_report_state": {
+            "const": "complete"
+          }
+        },
+        "required": [
+          "candidate_report_state"
+        ]
+      },
+      "then": {
+        "properties": {
+          "broker": {
+            "allOf": [
+              {
+                "$ref": "#/$defs/broker"
+              },
+              {
+                "properties": {
+                  "candidate_report_sha256": {
+                    "$ref": "#/$defs/sha256"
+                  },
+                  "transcript_state": {
+                    "const": "complete"
+                  },
+                  "accepted_request_count": {
+                    "const": 22
+                  },
+                  "completed_response_count": {
+                    "const": 22
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "candidate_report_state": {
+            "const": "absent_due_to_cancellation"
+          }
+        },
+        "required": [
+          "candidate_report_state"
+        ]
+      },
+      "then": {
+        "properties": {
+          "broker": {
+            "allOf": [
+              {
+                "$ref": "#/$defs/broker"
+              },
+              {
+                "properties": {
+                  "candidate_report_sha256": {
+                    "type": "null"
+                  },
+                  "transcript_state": {
+                    "const": "partial_due_to_cancellation"
+                  },
+                  "accepted_request_count": {
+                    "const": 4
+                  },
+                  "completed_response_count": {
+                    "const": 3
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "candidate_report_state": {
+            "const": "absent_before_candidate_start"
+          }
+        },
+        "required": [
+          "candidate_report_state"
+        ]
+      },
+      "then": {
+        "properties": {
+          "broker": {
+            "type": "null"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "candidate_report_state": {
+            "const": "absent_due_to_failure"
+          }
+        },
+        "required": [
+          "candidate_report_state"
+        ]
+      },
+      "then": {
+        "properties": {
+          "broker": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "oneOf": [
+                  {
+                    "allOf": [
+                      {
+                        "$ref": "#/$defs/broker"
+                      },
+                      {
+                        "properties": {
+                          "candidate_report_sha256": {
+                            "type": "null"
+                          },
+                          "transcript_state": {
+                            "const": "partial_due_to_failure"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "$ref": "#/$defs/complete_broker_without_candidate_report"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      }
     }
   ],
   "$defs": {
-    "authority": {
-      "enum": [
-        "kernel_observed",
-        "systemd_observed",
-        "supervisor_observed",
-        "platform_file_observed",
-        "github_context_claim",
-        "child_untrusted"
-      ]
+    "sha1": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
     },
-    "json_value": {
-      "type": [
-        "null",
-        "boolean",
-        "number",
-        "string",
-        "array",
-        "object"
-      ]
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
     },
-    "observation": {
+    "positive_integer": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "timestamp": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]{1,9})?Z$"
+    },
+    "authorization": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "phase",
+        "label",
+        "trusted_main_sha"
+      ],
+      "properties": {
+        "version": {
+          "const": "g1v1"
+        },
+        "phase": {
+          "enum": [
+            "1",
+            "2",
+            "3",
+            "c"
+          ]
+        },
+        "label": {
+          "type": "string",
+          "pattern": "^g1v1-[0-9a-f]{40}-[123c]$",
+          "minLength": 47,
+          "maxLength": 47
+        },
+        "trusted_main_sha": {
+          "$ref": "#/$defs/sha1"
+        }
+      }
+    },
+    "candidate_path": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "mode",
+        "git_blob_sha",
+        "sha256"
+      ],
+      "properties": {
+        "path": {
+          "enum": [
+            ".github/workflows/p0-v2-runner-feasibility.yml",
+            "contracts/schemas/p0-v2-runner-feasibility-evidence.v1.schema.json",
+            "tests/test_b3_p0_v2_runner_feasibility.py",
+            "tools/p0_v2_runner_probe.py"
+          ]
+        },
+        "mode": {
+          "const": "100644"
+        },
+        "git_blob_sha": {
+          "$ref": "#/$defs/sha1"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "candidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "origin_base_sha",
+        "head_sha",
+        "parent_sha",
+        "tree_sha",
+        "repository",
+        "repository_id",
+        "head_repository",
+        "head_repository_id",
+        "owner_login",
+        "owner_id",
+        "same_repository",
+        "no_fork",
+        "branch",
+        "pr_number",
+        "paths"
+      ],
+      "properties": {
+        "origin_base_sha": {
+          "$ref": "#/$defs/sha1"
+        },
+        "head_sha": {
+          "$ref": "#/$defs/sha1"
+        },
+        "parent_sha": {
+          "$ref": "#/$defs/sha1"
+        },
+        "tree_sha": {
+          "$ref": "#/$defs/sha1"
+        },
+        "repository": {
+          "const": "yurikuchumov-ux/ai-operating-system"
+        },
+        "repository_id": {
+          "const": 1296950956
+        },
+        "head_repository": {
+          "const": "yurikuchumov-ux/ai-operating-system"
+        },
+        "head_repository_id": {
+          "const": 1296950956
+        },
+        "owner_login": {
+          "const": "yurikuchumov-ux"
+        },
+        "owner_id": {
+          "const": 299144523
+        },
+        "same_repository": {
+          "const": true
+        },
+        "no_fork": {
+          "const": true
+        },
+        "branch": {
+          "const": "agent/issue-70-p0-v2-feasibility-gate1"
+        },
+        "pr_number": {
+          "const": 71
+        },
+        "paths": {
+          "type": "array",
+          "minItems": 4,
+          "maxItems": 4,
+          "uniqueItems": true,
+          "prefixItems": [
+            {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/candidate_path"
+                },
+                {
+                  "properties": {
+                    "path": {
+                      "const": ".github/workflows/p0-v2-runner-feasibility.yml"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/candidate_path"
+                },
+                {
+                  "properties": {
+                    "path": {
+                      "const": "contracts/schemas/p0-v2-runner-feasibility-evidence.v1.schema.json"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/candidate_path"
+                },
+                {
+                  "properties": {
+                    "path": {
+                      "const": "tests/test_b3_p0_v2_runner_feasibility.py"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/candidate_path"
+                },
+                {
+                  "properties": {
+                    "path": {
+                      "const": "tools/p0_v2_runner_probe.py"
+                    }
+                  }
+                }
+              ]
+            }
+          ],
+          "items": false
+        }
+      }
+    },
+    "control": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repository",
+        "repository_id",
+        "owner_login",
+        "owner_id",
+        "issue_number",
+        "issue_id",
+        "issue_node_id",
+        "issue_state",
+        "issue_is_pull_request",
+        "live_pr_base_sha"
+      ],
+      "properties": {
+        "repository": {
+          "const": "yurikuchumov-ux/ai-operating-system"
+        },
+        "repository_id": {
+          "const": 1296950956
+        },
+        "owner_login": {
+          "const": "yurikuchumov-ux"
+        },
+        "owner_id": {
+          "const": 299144523
+        },
+        "issue_number": {
+          "const": 70
+        },
+        "issue_id": {
+          "$ref": "#/$defs/positive_integer"
+        },
+        "issue_node_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 255
+        },
+        "issue_state": {
+          "const": "open"
+        },
+        "issue_is_pull_request": {
+          "const": false
+        },
+        "live_pr_base_sha": {
+          "$ref": "#/$defs/sha1"
+        }
+      }
+    },
+    "event": {
       "type": "object",
       "additionalProperties": false,
       "required": [
         "name",
-        "authority",
-        "value"
+        "action",
+        "event_path_sha256",
+        "issue_event_id",
+        "issue_event_node_id",
+        "label_id",
+        "label_node_id",
+        "label_name",
+        "label_color",
+        "label_description",
+        "label_default",
+        "created_at",
+        "actor_login",
+        "actor_id",
+        "triggering_actor_login",
+        "triggering_actor_id",
+        "sender_login",
+        "sender_id",
+        "run_id",
+        "run_attempt",
+        "run_created_at",
+        "boot_id"
       ],
       "properties": {
         "name": {
+          "const": "issues"
+        },
+        "action": {
+          "const": "labeled"
+        },
+        "event_path_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "issue_event_id": {
+          "$ref": "#/$defs/positive_integer"
+        },
+        "issue_event_node_id": {
           "type": "string",
-          "pattern": "^[a-z][a-z0-9_.-]*$"
+          "minLength": 1,
+          "maxLength": 255
         },
-        "authority": {
-          "$ref": "#/$defs/authority"
+        "label_id": {
+          "$ref": "#/$defs/positive_integer"
         },
-        "value": {
-          "$ref": "#/$defs/json_value"
+        "label_node_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 255
+        },
+        "label_name": {
+          "type": "string",
+          "pattern": "^g1v1-[0-9a-f]{40}-[123c]$",
+          "minLength": 47,
+          "maxLength": 47
+        },
+        "label_color": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{6}$"
+        },
+        "label_description": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 1024
+        },
+        "label_default": {
+          "type": "boolean"
+        },
+        "created_at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "actor_login": {
+          "const": "yurikuchumov-ux"
+        },
+        "actor_id": {
+          "const": 299144523
+        },
+        "triggering_actor_login": {
+          "const": "yurikuchumov-ux"
+        },
+        "triggering_actor_id": {
+          "const": 299144523
+        },
+        "sender_login": {
+          "const": "yurikuchumov-ux"
+        },
+        "sender_id": {
+          "const": 299144523
+        },
+        "run_id": {
+          "$ref": "#/$defs/positive_integer"
+        },
+        "run_attempt": {
+          "const": 1
+        },
+        "run_created_at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "boot_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
         }
       }
     },
-    "systemd_observation": {
-      "allOf": [
+    "workflow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "ref",
+        "sha",
+        "blob_sha",
+        "github_ref",
+        "github_workflow_sha"
+      ],
+      "properties": {
+        "path": {
+          "const": ".github/workflows/p0-v2-gate1-trusted-canary.yml"
+        },
+        "ref": {
+          "const": "yurikuchumov-ux/ai-operating-system/.github/workflows/p0-v2-gate1-trusted-canary.yml@refs/heads/main"
+        },
+        "sha": {
+          "$ref": "#/$defs/sha1"
+        },
+        "blob_sha": {
+          "$ref": "#/$defs/sha1"
+        },
+        "github_ref": {
+          "const": "refs/heads/main"
+        },
+        "github_workflow_sha": {
+          "$ref": "#/$defs/sha1"
+        }
+      }
+    },
+    "digests": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "authorization_manifest",
+        "controller",
+        "broker_protocol",
+        "candidate_probe",
+        "evidence_schema",
+        "synthetic_merge_tool",
+        "synthetic_merge_normalization",
+        "sealed_context",
+        "recovery_journal"
+      ],
+      "properties": {
+        "authorization_manifest": {
+          "$ref": "#/$defs/sha256"
+        },
+        "controller": {
+          "$ref": "#/$defs/sha256"
+        },
+        "broker_protocol": {
+          "$ref": "#/$defs/sha256"
+        },
+        "candidate_probe": {
+          "$ref": "#/$defs/sha256"
+        },
+        "evidence_schema": {
+          "$ref": "#/$defs/sha256"
+        },
+        "synthetic_merge_tool": {
+          "$ref": "#/$defs/sha256"
+        },
+        "synthetic_merge_normalization": {
+          "$ref": "#/$defs/sha256"
+        },
+        "sealed_context": {
+          "$ref": "#/$defs/sha256"
+        },
+        "recovery_journal": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "synthetic_merge": {
+      "oneOf": [
         {
-          "$ref": "#/$defs/observation"
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "sha",
+            "ordered_parents",
+            "tree_sha",
+            "algorithm",
+            "tool_version_sha256",
+            "normalization_sha256",
+            "construction_manifest_sha256",
+            "conflict",
+            "exact_tree_proof_sha256"
+          ],
+          "properties": {
+            "sha": {
+              "type": "null"
+            },
+            "ordered_parents": {
+              "type": "null"
+            },
+            "tree_sha": {
+              "type": "null"
+            },
+            "algorithm": {
+              "type": "null"
+            },
+            "tool_version_sha256": {
+              "type": "null"
+            },
+            "normalization_sha256": {
+              "type": "null"
+            },
+            "construction_manifest_sha256": {
+              "type": "null"
+            },
+            "conflict": {
+              "type": "null"
+            },
+            "exact_tree_proof_sha256": {
+              "type": "null"
+            }
+          }
         },
         {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "sha",
+            "ordered_parents",
+            "tree_sha",
+            "algorithm",
+            "tool_version_sha256",
+            "normalization_sha256",
+            "construction_manifest_sha256",
+            "conflict",
+            "exact_tree_proof_sha256"
+          ],
           "properties": {
-            "authority": {
-              "const": "systemd_observed"
+            "sha": {
+              "$ref": "#/$defs/sha1"
+            },
+            "ordered_parents": {
+              "description": "Trusted main SHA followed by the exact candidate head SHA.",
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 2,
+              "prefixItems": [
+                {
+                  "$ref": "#/$defs/sha1"
+                },
+                {
+                  "$ref": "#/$defs/sha1"
+                }
+              ],
+              "items": false
+            },
+            "tree_sha": {
+              "$ref": "#/$defs/sha1"
+            },
+            "algorithm": {
+              "const": "git-merge-tree-write-tree-v1"
+            },
+            "tool_version_sha256": {
+              "description": "Must equal digests.synthetic_merge_tool.",
+              "$ref": "#/$defs/sha256"
+            },
+            "normalization_sha256": {
+              "description": "Must equal digests.synthetic_merge_normalization.",
+              "$ref": "#/$defs/sha256"
+            },
+            "construction_manifest_sha256": {
+              "description": "Must equal digests.authorization_manifest.",
+              "$ref": "#/$defs/sha256"
+            },
+            "conflict": {
+              "const": false
+            },
+            "exact_tree_proof_sha256": {
+              "$ref": "#/$defs/sha256"
             }
           }
         }
       ]
     },
-    "effective_observation": {
+    "api_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "method",
+        "target",
+        "status",
+        "api_version",
+        "media_type",
+        "page",
+        "next_target",
+        "body_base64",
+        "body_sha256",
+        "etag",
+        "last_modified",
+        "rate_limit_limit",
+        "rate_limit_remaining",
+        "rate_limit_reset",
+        "retrieved_at"
+      ],
+      "properties": {
+        "method": {
+          "const": "GET"
+        },
+        "target": {
+          "type": "string",
+          "pattern": "^https://api\\.github\\.com/",
+          "maxLength": 2048
+        },
+        "status": {
+          "const": 200
+        },
+        "api_version": {
+          "const": "2022-11-28"
+        },
+        "media_type": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 255
+        },
+        "page": {
+          "$ref": "#/$defs/positive_integer"
+        },
+        "next_target": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 2048
+        },
+        "body_base64": {
+          "type": "string",
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$",
+          "maxLength": 1398104
+        },
+        "body_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "etag": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 512
+        },
+        "last_modified": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 128
+        },
+        "rate_limit_limit": {
+          "$ref": "#/$defs/positive_integer"
+        },
+        "rate_limit_remaining": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "rate_limit_reset": {
+          "$ref": "#/$defs/positive_integer"
+        },
+        "retrieved_at": {
+          "$ref": "#/$defs/timestamp"
+        }
+      }
+    },
+    "snapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "requests",
+        "raw_requests_sha256",
+        "canonical_projection_sha256",
+        "authorization_state_sha256"
+      ],
+      "properties": {
+        "name": {
+          "enum": [
+            "pre_acquisition",
+            "pre_broker",
+            "post_cleanup"
+          ]
+        },
+        "requests": {
+          "type": "array",
+          "minItems": 6,
+          "maxItems": 64,
+          "items": {
+            "$ref": "#/$defs/api_request"
+          }
+        },
+        "raw_requests_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "canonical_projection_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "authorization_state_sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "stage_aware_snapshots": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pre_acquisition",
+        "pre_broker",
+        "post_cleanup"
+      ],
+      "properties": {
+        "pre_acquisition": {
+          "oneOf": [
+            {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/snapshot"
+                },
+                {
+                  "properties": {
+                    "name": {
+                      "const": "pre_acquisition"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "pre_broker": {
+          "oneOf": [
+            {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/snapshot"
+                },
+                {
+                  "properties": {
+                    "name": {
+                      "const": "pre_broker"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "post_cleanup": {
+          "oneOf": [
+            {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/snapshot"
+                },
+                {
+                  "properties": {
+                    "name": {
+                      "const": "post_cleanup"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "complete_snapshots": {
       "allOf": [
         {
-          "$ref": "#/$defs/observation"
+          "$ref": "#/$defs/stage_aware_snapshots"
         },
         {
           "properties": {
-            "authority": {
+            "pre_acquisition": {
+              "$ref": "#/$defs/snapshot"
+            },
+            "pre_broker": {
+              "$ref": "#/$defs/snapshot"
+            },
+            "post_cleanup": {
+              "$ref": "#/$defs/snapshot"
+            }
+          }
+        }
+      ]
+    },
+    "absent_snapshots": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/stage_aware_snapshots"
+        },
+        {
+          "properties": {
+            "pre_acquisition": {
+              "type": "null"
+            },
+            "pre_broker": {
+              "type": "null"
+            },
+            "post_cleanup": {
+              "type": "null"
+            }
+          }
+        }
+      ]
+    },
+    "pre_broker_rejection_snapshots": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/stage_aware_snapshots"
+        },
+        {
+          "properties": {
+            "pre_acquisition": {
+              "$ref": "#/$defs/snapshot"
+            },
+            "pre_broker": {
+              "type": "null"
+            },
+            "post_cleanup": {
+              "type": "null"
+            }
+          }
+        }
+      ]
+    },
+    "broker_failure_snapshots": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/stage_aware_snapshots"
+        },
+        {
+          "properties": {
+            "pre_acquisition": {
+              "$ref": "#/$defs/snapshot"
+            },
+            "pre_broker": {
+              "$ref": "#/$defs/snapshot"
+            },
+            "post_cleanup": {
+              "type": "null"
+            }
+          }
+        }
+      ]
+    },
+    "complete_staging": {
+      "type": "array",
+      "minItems": 6,
+      "maxItems": 16,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/staged_file"
+      }
+    },
+    "staged_file": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "device",
+        "inode",
+        "size",
+        "mode",
+        "link_count",
+        "sha256",
+        "source_sha256",
+        "readback_sha256"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "device": {
+          "$ref": "#/$defs/positive_integer"
+        },
+        "inode": {
+          "$ref": "#/$defs/positive_integer"
+        },
+        "size": {
+          "$ref": "#/$defs/positive_integer"
+        },
+        "mode": {
+          "enum": [
+            "0400",
+            "0444",
+            "0500",
+            "0555"
+          ]
+        },
+        "link_count": {
+          "const": 1
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "source_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "readback_sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "partial_broker_count_order_normal": {
+      "description": "A partial normal-phase synchronous transcript can have at most one accepted request without a completed response and cannot be the terminal complete 22/22 pair.",
+      "oneOf": [
+        {
+          "properties": {
+            "accepted_request_count": {
+              "const": 1
+            },
+            "completed_response_count": {
               "enum": [
-                "kernel_observed",
-                "platform_file_observed",
-                "systemd_observed",
-                "supervisor_observed"
+                0,
+                1
               ]
             }
           }
+        },
+        {
+          "properties": {
+            "accepted_request_count": {
+              "const": 2
+            },
+            "completed_response_count": {
+              "enum": [
+                1,
+                2
+              ]
+            }
+          }
+        },
+        {
+          "properties": {
+            "accepted_request_count": {
+              "const": 3
+            },
+            "completed_response_count": {
+              "enum": [
+                2,
+                3
+              ]
+            }
+          }
+        },
+        {
+          "properties": {
+            "accepted_request_count": {
+              "const": 4
+            },
+            "completed_response_count": {
+              "enum": [
+                3,
+                4
+              ]
+            }
+          }
+        },
+        {
+          "properties": {
+            "accepted_request_count": {
+              "const": 5
+            },
+            "completed_response_count": {
+              "enum": [
+                4,
+                5
+              ]
+            }
+          }
+        },
+        {
+          "properties": {
+            "accepted_request_count": {
+              "const": 6
+            },
+            "completed_response_count": {
+              "enum": [
+                5,
+                6
+              ]
+            }
+          }
+        },
+        {
+          "properties": {
+            "accepted_request_count": {
+              "const": 7
+            },
+            "completed_response_count": {
+              "enum": [
+                6,
+                7
+              ]
+            }
+          }
+        },
+        {
+          "properties": {
+            "accepted_request_count": {
+              "const": 8
+            },
+            "completed_response_count": {
+              "enum": [
+                7,
+                8
+              ]
+            }
+          }
+        },
+        {
+          "properties": {
+            "accepted_request_count": {
+              "const": 9
+            },
+            "completed_response_count": {
+              "enum": [
+                8,
+                9
+              ]
+            }
+          }
+        },
+        {
+          "properties": {
+            "accepted_request_count": {
+              "const": 10
+            },
+            "completed_response_count": {
+              "enum": [
+                9,
+                10
+              ]
+            }
+          }
+        },
+        {
+          "properties": {
+            "accepted_request_count": {
+              "const": 11
+            },
+            "completed_response_count": {
+              "enum": [
+                10,
+                11
+              ]
+            }
+          }
+        },
+        {
+          "properties": {
+            "accepted_request_count": {
+              "const": 12
+            },
+            "completed_response_count": {
+              "enum": [
+                11,
+                12
+              ]
+            }
+          }
+        },
+        {
+          "properties": {
+            "accepted_request_count": {
+              "const": 13
+            },
+            "completed_response_count": {
+              "enum": [
+                12,
+                13
+              ]
+            }
+          }
+        },
+        {
+          "properties": {
+            "accepted_request_count": {
+              "const": 14
+            },
+            "completed_response_count": {
+              "enum": [
+                13,
+                14
+              ]
+            }
+          }
+        },
+        {
+          "properties": {
+            "accepted_request_count": {
+              "const": 15
+            },
+            "completed_response_count": {
+              "enum": [
+                14,
+                15
+              ]
+            }
+          }
+        },
+        {
+          "properties": {
+            "accepted_request_count": {
+              "const": 16
+            },
+            "completed_response_count": {
+              "enum": [
+                15,
+                16
+              ]
+            }
+          }
+        },
+        {
+          "properties": {
+            "accepted_request_count": {
+              "const": 17
+            },
+            "completed_response_count": {
+              "enum": [
+                16,
+                17
+              ]
+            }
+          }
+        },
+        {
+          "properties": {
+            "accepted_request_count": {
+              "const": 18
+            },
+            "completed_response_count": {
+              "enum": [
+                17,
+                18
+              ]
+            }
+          }
+        },
+        {
+          "properties": {
+            "accepted_request_count": {
+              "const": 19
+            },
+            "completed_response_count": {
+              "enum": [
+                18,
+                19
+              ]
+            }
+          }
+        },
+        {
+          "properties": {
+            "accepted_request_count": {
+              "const": 20
+            },
+            "completed_response_count": {
+              "enum": [
+                19,
+                20
+              ]
+            }
+          }
+        },
+        {
+          "properties": {
+            "accepted_request_count": {
+              "const": 21
+            },
+            "completed_response_count": {
+              "enum": [
+                20,
+                21
+              ]
+            }
+          }
+        },
+        {
+          "properties": {
+            "accepted_request_count": {
+              "const": 22
+            },
+            "completed_response_count": {
+              "const": 21
+            }
+          }
         }
       ]
     },
-    "outcome": {
-      "enum": [
-        "SETUP_ERROR",
-        "SUCCESS",
-        "NONZERO_EXIT",
-        "SIGNAL",
-        "TIMEOUT",
-        "ACTIONS_CANCELLED",
-        "OUTPUT_LIMIT",
-        "RESOURCE_OOM",
-        "CLEANUP_FAILURE",
-        "EMPTY_PROOF_FAILURE",
-        "CAPTURE_FAILURE",
-        "EVIDENCE_SEAL_FAILURE",
-        "INCONCLUSIVE"
+    "complete_broker_without_candidate_report": {
+      "description": "The normal finite broker exchange completed all 22 request/response pairs, including FINISH, but candidate report construction, write, or flush failed before any candidate report bytes were accepted.",
+      "allOf": [
+        {
+          "$ref": "#/$defs/broker"
+        },
+        {
+          "properties": {
+            "candidate_report_sha256": {
+              "type": "null"
+            },
+            "transcript_state": {
+              "const": "complete"
+            },
+            "accepted_request_count": {
+              "const": 22
+            },
+            "completed_response_count": {
+              "const": 22
+            }
+          }
+        }
       ]
     },
-    "lifecycle_event": {
+    "partial_broker_count_order_cancellation": {
+      "description": "A partial cancellation-phase synchronous transcript is bounded by four requests, can trail by at most one response, and cannot complete a response to WAIT_CANCELLATION.",
+      "oneOf": [
+        {
+          "properties": {
+            "accepted_request_count": {
+              "const": 1
+            },
+            "completed_response_count": {
+              "enum": [
+                0,
+                1
+              ]
+            }
+          }
+        },
+        {
+          "properties": {
+            "accepted_request_count": {
+              "const": 2
+            },
+            "completed_response_count": {
+              "enum": [
+                1,
+                2
+              ]
+            }
+          }
+        },
+        {
+          "properties": {
+            "accepted_request_count": {
+              "const": 3
+            },
+            "completed_response_count": {
+              "enum": [
+                2,
+                3
+              ]
+            }
+          }
+        },
+        {
+          "properties": {
+            "accepted_request_count": {
+              "const": 4
+            },
+            "completed_response_count": {
+              "const": 3
+            }
+          }
+        }
+      ]
+    },
+    "broker": {
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "name",
-        "monotonic_ns",
-        "authority"
+        "protocol_version",
+        "instance_nonce_sha256",
+        "candidate_uid",
+        "candidate_gid",
+        "candidate_report_sha256",
+        "transcript_state",
+        "transcript_sha256",
+        "accepted_request_count",
+        "completed_response_count",
+        "candidate_subtree_empty",
+        "host_restored",
+        "channel_closed",
+        "isolation"
       ],
       "properties": {
-        "name": {
-          "enum": [
-            "supervisor_started",
-            "host_preflight_complete",
-            "core_pattern_suppressed",
-            "unit_created",
-            "bootstrap_observed",
-            "hostile_released",
-            "outcome_observed",
-            "cgroup_kill_written",
-            "cgroup_empty_observed",
-            "streams_eof_observed",
-            "core_pattern_restored",
-            "unit_unloaded",
-            "evidence_sealed",
-            "finalizer_started",
-            "finalizer_complete"
+        "protocol_version": {
+          "const": "g1-broker-v1"
+        },
+        "instance_nonce_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "candidate_uid": {
+          "$ref": "#/$defs/positive_integer"
+        },
+        "candidate_gid": {
+          "$ref": "#/$defs/positive_integer"
+        },
+        "candidate_report_sha256": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/sha256"
+            },
+            {
+              "type": "null"
+            }
           ]
         },
-        "monotonic_ns": {
+        "transcript_state": {
+          "enum": [
+            "complete",
+            "partial_due_to_cancellation",
+            "partial_due_to_failure"
+          ]
+        },
+        "transcript_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "accepted_request_count": {
           "type": "integer",
-          "minimum": 0
+          "minimum": 1,
+          "maximum": 22
         },
-        "authority": {
-          "const": "supervisor_observed"
-        }
-      }
-    },
-    "stream": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "authority",
-        "payload_authority",
-        "byte_count",
-        "sha256",
-        "retained_base64",
-        "retained_byte_count",
-        "truncated",
-        "eof_observed"
-      ],
-      "properties": {
-        "authority": {
-          "const": "supervisor_observed"
-        },
-        "payload_authority": {
-          "const": "child_untrusted"
-        },
-        "byte_count": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "sha256": {
-          "type": "string",
-          "pattern": "^[0-9a-f]{64}$"
-        },
-        "retained_base64": {
-          "type": "string",
-          "pattern": "^[A-Za-z0-9+/]*={0,2}$"
-        },
-        "retained_byte_count": {
+        "completed_response_count": {
           "type": "integer",
           "minimum": 0,
-          "maximum": 1048576
+          "maximum": 22
         },
-        "truncated": {
+        "candidate_subtree_empty": {
           "type": "boolean"
         },
-        "eof_observed": {
+        "host_restored": {
           "type": "boolean"
+        },
+        "channel_closed": {
+          "type": "boolean"
+        },
+        "isolation": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "no_supplementary_groups",
+            "capabilities_empty",
+            "no_new_privs",
+            "no_setid_elevation",
+            "private_pid",
+            "private_mount",
+            "private_ipc",
+            "private_uts",
+            "private_user",
+            "private_network",
+            "namespace_local_proc",
+            "host_pid_hidden",
+            "host_sockets_hidden",
+            "credentials_absent",
+            "command_files_absent",
+            "writable_descriptors_absent",
+            "loopback_disabled"
+          ],
+          "properties": {
+            "no_supplementary_groups": {
+              "const": true
+            },
+            "capabilities_empty": {
+              "const": true
+            },
+            "no_new_privs": {
+              "const": true
+            },
+            "no_setid_elevation": {
+              "const": true
+            },
+            "private_pid": {
+              "const": true
+            },
+            "private_mount": {
+              "const": true
+            },
+            "private_ipc": {
+              "const": true
+            },
+            "private_uts": {
+              "const": true
+            },
+            "private_user": {
+              "const": true
+            },
+            "private_network": {
+              "const": true
+            },
+            "namespace_local_proc": {
+              "const": true
+            },
+            "host_pid_hidden": {
+              "const": true
+            },
+            "host_sockets_hidden": {
+              "const": true
+            },
+            "credentials_absent": {
+              "const": true
+            },
+            "command_files_absent": {
+              "const": true
+            },
+            "writable_descriptors_absent": {
+              "const": true
+            },
+            "loopback_disabled": {
+              "const": true
+            }
+          }
         }
       }
     },
-    "cleanup": {
+    "replay": {
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "direct_cgroup_kill_written",
-        "direct_cgroup_kill_authority",
-        "recursive_populated_zero_observed",
-        "recursive_populated_zero_authority",
-        "path_absence_used_as_proof",
-        "streams_eof_after_empty",
-        "streams_eof_authority",
-        "unit_unloaded_after_empty",
-        "unit_unloaded_authority"
+        "phase_consumed",
+        "prior_phase_labels",
+        "prior_run_ids",
+        "overlapping_run",
+        "sequence_sha256"
       ],
       "properties": {
-        "direct_cgroup_kill_written": {
-          "type": "boolean"
-        },
-        "direct_cgroup_kill_authority": {
-          "const": "kernel_observed"
-        },
-        "recursive_populated_zero_observed": {
-          "type": "boolean"
-        },
-        "recursive_populated_zero_authority": {
-          "const": "kernel_observed"
-        },
-        "path_absence_used_as_proof": {
+        "phase_consumed": {
           "const": false
         },
-        "streams_eof_after_empty": {
-          "type": "boolean"
+        "prior_phase_labels": {
+          "type": "array",
+          "maxItems": 3,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^g1v1-[0-9a-f]{40}-[123]$"
+          }
         },
-        "streams_eof_authority": {
-          "const": "supervisor_observed"
+        "prior_run_ids": {
+          "type": "array",
+          "maxItems": 3,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/positive_integer"
+          }
         },
-        "unit_unloaded_after_empty": {
-          "type": "boolean"
+        "overlapping_run": {
+          "const": false
         },
-        "unit_unloaded_authority": {
-          "const": "systemd_observed"
+        "sequence_sha256": {
+          "$ref": "#/$defs/sha256"
         }
       }
     },
-    "case": {
+    "pre_candidate_cancellation_state": {
+      "description": "No candidate or broker existed, no cancellation was requested, no finalizer ran, and the untouched host is already in the safe empty/restored state.",
+      "type": "object",
+      "properties": {
+        "requested": {
+          "const": false
+        },
+        "ordinary": {
+          "const": false
+        },
+        "force": {
+          "const": false
+        },
+        "active_marker_sha256": {
+          "type": "null"
+        },
+        "trusted_finalizer_complete": {
+          "const": false
+        },
+        "candidate_subtree_empty": {
+          "const": true
+        },
+        "host_restored": {
+          "const": true
+        }
+      }
+    },
+    "post_candidate_non_cancellation_state": {
+      "description": "A broker existed but no ordinary cancellation was requested; trusted cleanup completed before failure evidence was accepted.",
+      "type": "object",
+      "properties": {
+        "requested": {
+          "const": false
+        },
+        "ordinary": {
+          "const": false
+        },
+        "force": {
+          "const": false
+        },
+        "trusted_finalizer_complete": {
+          "const": true
+        },
+        "candidate_subtree_empty": {
+          "const": true
+        },
+        "host_restored": {
+          "const": true
+        }
+      }
+    },
+    "cancellation": {
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "id",
-        "outcome",
-        "outcome_authority",
-        "started_monotonic_ns",
-        "finished_monotonic_ns",
-        "requested_argv",
-        "requested_argv_authority",
-        "kernel_observed_argv",
-        "kernel_observed_argv_authority",
-        "requested_environment",
-        "requested_environment_authority",
-        "kernel_observed_environment",
-        "kernel_observed_environment_authority",
-        "stdout",
-        "stderr",
-        "cleanup",
-        "observations",
-        "errors"
+        "requested",
+        "ordinary",
+        "force",
+        "active_marker_sha256",
+        "recovery_journal_sha256",
+        "trusted_finalizer_complete",
+        "candidate_subtree_empty",
+        "host_restored"
       ],
       "properties": {
-        "id": {
-          "enum": [
-            "success",
-            "nonzero",
-            "signal",
-            "timeout",
-            "background-child",
-            "setsid-child",
-            "double-fork-setsid",
-            "retained-writer",
-            "fd-tamper",
-            "writer-handoff",
-            "invalid-output",
-            "output-flood",
-            "fork-limit",
-            "memory-limit",
-            "nofile-limit",
-            "fsize-limit",
-            "tmpfs-limit",
-            "sandbox-probe",
-            "crash-storm",
-            "operator-cancel"
+        "requested": {
+          "type": "boolean"
+        },
+        "ordinary": {
+          "type": "boolean"
+        },
+        "force": {
+          "const": false
+        },
+        "active_marker_sha256": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/sha256"
+            },
+            {
+              "type": "null"
+            }
           ]
         },
-        "outcome": {
-          "$ref": "#/$defs/outcome"
+        "recovery_journal_sha256": {
+          "$ref": "#/$defs/sha256"
         },
-        "outcome_authority": {
-          "const": "supervisor_observed"
+        "trusted_finalizer_complete": {
+          "type": "boolean"
         },
-        "started_monotonic_ns": {
-          "type": "integer",
-          "minimum": 0
+        "candidate_subtree_empty": {
+          "type": "boolean"
         },
-        "finished_monotonic_ns": {
-          "type": "integer",
-          "minimum": 0
+        "host_restored": {
+          "type": "boolean"
+        }
+      }
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "manifest_sha256",
+        "archive_sha256",
+        "archive_size",
+        "constructed_after_post_cleanup_snapshot",
+        "upload_started_after_candidate_destruction"
+      ],
+      "properties": {
+        "manifest_sha256": {
+          "$ref": "#/$defs/sha256"
         },
-        "requested_argv": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
+        "archive_sha256": {
+          "$ref": "#/$defs/sha256"
         },
-        "requested_argv_authority": {
-          "const": "supervisor_observed"
+        "archive_size": {
+          "$ref": "#/$defs/positive_integer"
         },
-        "kernel_observed_argv": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
+        "constructed_after_post_cleanup_snapshot": {
+          "const": true
         },
-        "kernel_observed_argv_authority": {
-          "const": "kernel_observed"
-        },
-        "requested_environment": {
-          "type": "object",
-          "additionalProperties": {
-            "type": "string"
-          }
-        },
-        "requested_environment_authority": {
-          "const": "supervisor_observed"
-        },
-        "kernel_observed_environment": {
-          "type": "object",
-          "additionalProperties": {
-            "type": "string"
-          }
-        },
-        "kernel_observed_environment_authority": {
-          "const": "kernel_observed"
-        },
-        "stdout": {
-          "$ref": "#/$defs/stream"
-        },
-        "stderr": {
-          "$ref": "#/$defs/stream"
-        },
-        "cleanup": {
-          "$ref": "#/$defs/cleanup"
-        },
-        "observations": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/observation"
-          }
-        },
-        "errors": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/error"
-          }
+        "upload_started_after_candidate_destruction": {
+          "const": true
         }
       }
     },
@@ -573,20 +2781,15 @@
       "additionalProperties": false,
       "required": [
         "code",
-        "authority",
-        "detail"
+        "detail_sha256"
       ],
       "properties": {
         "code": {
           "type": "string",
-          "pattern": "^[A-Z][A-Z0-9_]*$"
+          "pattern": "^[A-Z][A-Z0-9_]{0,63}$"
         },
-        "authority": {
-          "$ref": "#/$defs/authority"
-        },
-        "detail": {
-          "type": "string",
-          "maxLength": 1000
+        "detail_sha256": {
+          "$ref": "#/$defs/sha256"
         }
       }
     }
